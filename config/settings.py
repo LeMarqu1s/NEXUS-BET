@@ -106,10 +106,12 @@ def load_settings() -> dict:
         model=_get_env("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
         max_tokens=_get_env_int("ANTHROPIC_MAX_TOKENS", 4096),
     )
+    _tg_token = _get_env("TELEGRAM_BOT_TOKEN") or _get_env("TELEGRAM_TOKEN")
+    _tg_chat = _get_env("TELEGRAM_CHAT_ID")
     telegram = TelegramSettings(
-        bot_token=_get_env("TELEGRAM_BOT_TOKEN"),
-        chat_id=_get_env("TELEGRAM_CHAT_ID"),
-        enabled=_get_env_bool("TELEGRAM_ENABLED", False),
+        bot_token=_tg_token,
+        chat_id=_tg_chat,
+        enabled=_get_env_bool("TELEGRAM_ENABLED", bool(_tg_token and _tg_chat)),
     )
     risk = RiskSettings(
         max_position_pct=_get_env_float("RISK_MAX_POSITION_PCT", 0.05),
@@ -164,7 +166,7 @@ class _SettingsProxy:
 
     @property
     def POLYMARKET_CAPITAL_USD(self) -> float:
-        val = os.getenv("POLYMARKET_CAPITAL_USD")
+        val = os.getenv("POLYMARKET_CAPITAL_USD") or os.getenv("TOTAL_CAPITAL")
         return float(val) if val else 1000.0
 
     @property

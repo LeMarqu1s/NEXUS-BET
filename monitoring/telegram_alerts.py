@@ -2,35 +2,52 @@
 NEXUS BET - Alertes Telegram
 Notifications pour trades, erreurs et signaux.
 """
-import asyncio
+import logging
 from typing import Optional
+
 import httpx
 
 from config.settings import SETTINGS
 
+log = logging.getLogger(__name__)
+
 
 def _is_enabled() -> bool:
-    t = SETTINGS.get("telegram", {})
-    return bool(t.get("enabled") and t.get("bot_token") and t.get("chat_id"))
+    t = SETTINGS.get("telegram")
+    if not t:
+        return False
+    token = getattr(t, "bot_token", None) or ""
+    chat_id = getattr(t, "chat_id", None) or ""
+    enabled = getattr(t, "enabled", False)
+    return bool(enabled and token and chat_id)
 
 
-async def send_telegram_message(text: str) -> bool:
+async def send_telegram_message(text: str, chat_id: Optional[str] = None) -> bool:
     """Envoie un message via le bot Telegram."""
     if not _is_enabled():
+        log.debug("Telegram disabled or not configured")
         return False
     t = SETTINGS["telegram"]
-    url = f"https://api.telegram.org/bot{t['bot_token']}/sendMessage"
+    token = getattr(t, "bot_token", None)
+    cid = chat_id or getattr(t, "chat_id", None)
+    if not token or not cid:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
-        "chat_id": t["chat_id"],
+        "chat_id": cid,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(url, json=payload, timeout=10.0)
-            return r.status_code == 200
-    except Exception:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(url, json=payload)
+            if r.status_code != 200:
+                log.warning("Telegram API error: %s %s", r.status_code, r.text[:200])
+                return False
+            return True
+    except Exception as e:
+        log.warning("Telegram send failed: %s", e)
         return False
 
 
@@ -81,6 +98,10 @@ async def alert_error(error: str, context: str = "") -> None:
     await send_telegram_message(msg)
 
 
-async def alert_startup() -> None:
-    """Alerte au démarrage du bot."""
-    await send_telegram_message("NEXUS BET bot started.")
+async def alert_startup() -> bool:
+    """Alerte au démarrage du bot. Retourne True si envoyé."""
+    msg = (
+        "<b>NEXUS BET</b> bot started.\n"
+        "Commands: /start /scan /debrief /portfolio /agents /btc /fomc"
+    )
+    return await send_telegram_message(msg)

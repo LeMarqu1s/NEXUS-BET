@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core.scanner import run_scanner
 from monitoring.telegram_alerts import alert_startup, alert_error
+from monitoring.telegram_bot import run_telegram_poller
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,13 +36,17 @@ async def main() -> None:
             pass
 
     log.info("NEXUS BET starting...")
-    try:
-        await alert_startup()
-    except Exception as e:
-        log.warning("Telegram startup alert failed: %s", e)
+    ok = await alert_startup()
+    if ok:
+        log.info("Telegram startup message sent")
+    else:
+        log.warning("Telegram startup message failed (check TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)")
 
     try:
-        await run_scanner()
+        await asyncio.gather(
+            run_scanner(),
+            run_telegram_poller(),
+        )
     except asyncio.CancelledError:
         log.info("NEXUS BET stopped.")
     except Exception as e:
