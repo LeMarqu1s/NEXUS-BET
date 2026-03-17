@@ -24,11 +24,17 @@ log = logging.getLogger("nexus")
 
 _main_task: asyncio.Task | None = None
 _loop: asyncio.AbstractEventLoop | None = None
+_shutdown_requested = False
 
 
 def _signal_handler(sig: int, frame: object) -> None:
     """Handle SIGINT/SIGTERM - cancel main task for graceful shutdown."""
-    log.info("Shutdown signal received, stopping gracefully...")
+    global _shutdown_requested
+    if _shutdown_requested:
+        log.info("Second signal received, forcing exit.")
+        sys.exit(1)
+    _shutdown_requested = True
+    log.info("Shutdown signal received (sig=%s), stopping gracefully...", sig)
     if _main_task and _loop and not _main_task.done():
         _loop.call_soon_threadsafe(_main_task.cancel)
 
@@ -37,10 +43,11 @@ async def main() -> None:
     """Boucle principale NEXUS BET."""
     global _main_task, _loop
 
+    # Enregistrer les handlers (SIGTERM non disponible sur Windows)
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(sig, _signal_handler)
-        except (ValueError, OSError):
+        except (ValueError, OSError, AttributeError):
             pass
 
     log.info("NEXUS BET starting...")
@@ -66,8 +73,11 @@ async def main() -> None:
         scanner_task.cancel()
         poller_task.cancel()
         try:
-            await asyncio.gather(scanner_task, poller_task, return_exceptions=True)
-        except asyncio.CancelledError:
+            await asyncio.wait_for(
+                asyncio.gather(scanner_task, poller_task, return_exceptions=True),
+                timeout=10.0,
+            )
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
         log.info("NEXUS BET stopped gracefully.")
     except Exception as e:
@@ -75,7 +85,10 @@ async def main() -> None:
         scanner_task.cancel()
         poller_task.cancel()
         try:
-            await asyncio.gather(scanner_task, poller_task, return_exceptions=True)
+            await asyncio.wait_for(
+                asyncio.gather(scanner_task, poller_task, return_exceptions=True),
+                timeout=5.0,
+            )
         except Exception:
             pass
         try:
@@ -92,3 +105,5 @@ if __name__ == "__main__":
         log.info("Interrupted.")
     except asyncio.CancelledError:
         log.info("Stopped.")
+    finally:
+        sys.exit(0)

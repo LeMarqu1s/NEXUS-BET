@@ -14,10 +14,8 @@ from pathlib import Path
 # Ajouter le projet au path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data.polymarket_client import PolymarketClient
-from core.edge_engine import EdgeEngine
+# Imports légers pour debate/propose/challenge/validate (sans Polymarket)
 from agents import AdversarialAITeam
-from execution.order_manager import OrderManager, OrderConfig
 
 try:
     from paperclip_bridge import get_pending_signals, clear_signal
@@ -29,6 +27,21 @@ except ImportError:
         pass
 
 
+def _get_polymarket():
+    from data.polymarket_client import PolymarketClient
+    return PolymarketClient()
+
+
+def _get_edge_engine():
+    from core.edge_engine import EdgeEngine
+    return EdgeEngine()
+
+
+def _get_order_manager():
+    from execution.order_manager import OrderManager, OrderConfig
+    return OrderManager, OrderConfig
+
+
 def _run(coro):
     """Exécute une coroutine."""
     return asyncio.run(coro)
@@ -38,8 +51,8 @@ def _run(coro):
 
 async def cmd_scan(limit: int = 20) -> str:
     """Exécute un scan des marchés et retourne les signaux en JSON."""
-    polymarket = PolymarketClient()
-    edge_engine = EdgeEngine()
+    polymarket = _get_polymarket()
+    edge_engine = _get_edge_engine()
     signals: list[dict] = []
     try:
         markets = await polymarket.get_markets(limit=limit)
@@ -125,7 +138,7 @@ async def cmd_execute(
     market_id: str, outcome: str, edge_pct: float, kelly: float, size_usd: float
 ) -> str:
     """Exécute un ordre si approuvé (Head Analyst)."""
-    polymarket = PolymarketClient()
+    polymarket = _get_polymarket()
     try:
         token_id = await polymarket.get_token_id_from_market(market_id, outcome)
         if not token_id:
@@ -135,6 +148,7 @@ async def cmd_execute(
         if price is None or price <= 0:
             return json.dumps({"error": "Price not available", "market_id": market_id})
 
+        OrderManager, OrderConfig = _get_order_manager()
         order_mgr = OrderManager()
         cfg = OrderConfig(
             market_id=market_id,
@@ -253,7 +267,7 @@ def main() -> None:
             sys.exit(1)
         print(out)
     except Exception as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        print(json.dumps({"error": str(e) or type(e).__name__}), file=sys.stderr)
         sys.exit(1)
 
 
