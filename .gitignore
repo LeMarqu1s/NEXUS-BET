@@ -1,6 +1,8 @@
 .env
 logs/
 paperclip_pending_signals.json
+nexus-terminal/node_modules/
+nexus-terminal/.next/
 __pycache__/
 *.py[cod]
 *$py.class

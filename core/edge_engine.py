@@ -162,5 +162,8 @@ class EdgeEngine:
             kelly_fraction=kelly,
             model=model,
             confidence=round(conf, 4),
-            metadata={"model": model.value},
+            metadata={
+                "model": model.value,
+                "question": (market.get("question") or "")[:120],
+            },
         )

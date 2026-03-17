@@ -34,6 +34,7 @@ def on_signal(sig: EdgeSignal) -> None:
             "market_id": sig.market_id,
             "token_id": sig.token_id,
             "side": sig.side,
+            "question": sig.metadata.get("question", "")[:120],
             "polymarket_price": sig.polymarket_price,
             "edge_pct": sig.edge_pct * 100,
             "kelly_fraction": sig.kelly_fraction,

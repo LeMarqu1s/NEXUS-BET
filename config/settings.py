@@ -106,6 +106,7 @@ def load_settings() -> dict:
         model=_get_env("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
         max_tokens=_get_env_int("ANTHROPIC_MAX_TOKENS", 4096),
     )
+    # Canonical: TELEGRAM_BOT_TOKEN (fallback: TELEGRAM_TOKEN)
     _tg_token = _get_env("TELEGRAM_BOT_TOKEN") or _get_env("TELEGRAM_TOKEN")
     _tg_chat = _get_env("TELEGRAM_CHAT_ID")
     telegram = TelegramSettings(

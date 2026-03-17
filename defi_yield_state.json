@@ -1,0 +1,12 @@
+{
+  "total_usdc": 50.0,
+  "deposited_aave": 50.0,
+  "apy": 2.0,
+  "yield_generated_usd": 0.0,
+  "yield_generated_today": 0.0,
+  "last_deposit_ts": "2026-03-17T14:26:29.014649Z",
+  "last_withdraw_ts": null,
+  "mode": "yielding",
+  "pending_trade": null,
+  "last_updated": "2026-03-17T15:19:38.586014Z"
+}

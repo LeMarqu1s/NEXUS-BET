@@ -1,0 +1,16 @@
+{
+  "suggestions": [
+    {
+      "id": "8c845326",
+      "market_id": "0x123",
+      "outcome": "YES",
+      "side": "BUY",
+      "size_usd": 25.0,
+      "limit_price": 0.55,
+      "question": "Test?",
+      "pct_yes": 94,
+      "profile": "degen",
+      "created": 1773759200.6241245
+    }
+  ]
+}
