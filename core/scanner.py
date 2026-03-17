@@ -132,10 +132,17 @@ async def run_scanner() -> None:
     """
     polymarket = PolymarketClient()
     edge_engine = EdgeEngine()
+    # Hook Paperclip: signaux écrits dans paperclip_pending_signals.json
+    try:
+        from paperclip_bridge import on_signal as paperclip_on_signal
+        _on_signal = paperclip_on_signal
+    except ImportError:
+        _on_signal = None
+
     scanner = MarketScanner(
         polymarket=polymarket,
         edge_engine=edge_engine,
-        on_signal=None,  # Hook for agents → execution pipeline
+        on_signal=_on_signal,  # Paperclip bridge ou pipeline execution
     )
     scanner.start()
     try:

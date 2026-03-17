@@ -1,0 +1,31 @@
+{
+  "agents": [
+    {
+      "name": "Head Quant",
+      "role": "Quantitative trader at NEXUS Capital. Propose trades based on mispricing. Use the scanner and edge engine to identify opportunities.",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "cwd": "C:\\Users\\emery\\NEXUS CAPITAL MATT",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    {
+      "name": "Risk Manager",
+      "role": "DESTROY every trade thesis if ruin risk is too high. Find flaws: liquidity, timing, model error, tail risk, slippage. Be harsh. REJECT if Kelly fraction implies ruin risk.",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "cwd": "C:\\Users\\emery\\NEXUS CAPITAL MATT",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    {
+      "name": "Head Analyst",
+      "role": "Weigh Quant thesis vs Risk Manager concerns. Validate final execution. Output VERDICT: APPROVE or REJECT. Only APPROVE if Risk Manager concerns are adequately addressed.",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "cwd": "C:\\Users\\emery\\NEXUS CAPITAL MATT",
+        "model": "claude-sonnet-4-20250514"
+      }
+    }
+  ]
+}

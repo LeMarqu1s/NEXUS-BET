@@ -1,5 +1,6 @@
 .env
 logs/
+paperclip_pending_signals.json
 __pycache__/
 *.py[cod]
 *$py.class

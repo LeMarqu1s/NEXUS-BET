@@ -1,6 +1,14 @@
 """
 NEXUS BET - Adversarial AI Team
 Quant proposes trades, Risk Manager challenges thesis, Head Analyst validates.
+
+ORCHESTRATION PAPERCLIP:
+Les agents Paperclip (Head Quant, Risk Manager, Head Analyst) appellent ce module
+via nexus_cli.py :
+  - python -m nexus_cli propose   → quant_propose_trade()
+  - python -m nexus_cli challenge → risk_manager_challenge()
+  - python -m nexus_cli validate  → head_analyst_validate()
+  - python -m nexus_cli debate    → full_debate()
 """
 
 import asyncio

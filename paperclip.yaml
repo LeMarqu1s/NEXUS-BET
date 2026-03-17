@@ -1,0 +1,42 @@
+# NEXUS BET - Configuration Paperclip
+# Workspace et définition des agents pour l'orchestration Paperclip
+
+workspace: "C:\\Users\\emery\\NEXUS CAPITAL MATT"
+cwd: "C:\\Users\\emery\\NEXUS CAPITAL MATT"
+
+# Équipe NEXUS BET - Org Chart
+agents:
+  head_quant:
+    name: "Head Quant"
+    role: |
+      Quantitative trader at NEXUS Capital. Propose trades based on mispricing.
+      Use the scanner and edge engine to identify opportunities. Output trade thesis in 2-3 sentences.
+    adapter_config:
+      cwd: "C:\\Users\\emery\\NEXUS CAPITAL MATT"
+    tools:
+      - "python -m nexus_cli scan"
+      - "python -m nexus_cli propose"
+
+  risk_manager:
+    name: "Risk Manager"
+    role: |
+      DESTROY every trade thesis if ruin risk is too high.
+      Find flaws: liquidity, timing, model error, tail risk, slippage, ruin probability.
+      Be harsh. Output only critical risks. REJECT if Kelly fraction implies ruin risk.
+    adapter_config:
+      cwd: "C:\\Users\\emery\\NEXUS CAPITAL MATT"
+    tools:
+      - "python -m nexus_cli challenge"
+      - "python -m nexus_cli risk_check"
+
+  head_analyst:
+    name: "Head Analyst"
+    role: |
+      Weigh Quant thesis vs Risk Manager concerns. Validate final execution.
+      Output format: VERDICT: APPROVE or REJECT (exactly one). Then 1-2 sentence justification.
+      Only APPROVE if Risk Manager concerns are adequately addressed.
+    adapter_config:
+      cwd: "C:\\Users\\emery\\NEXUS CAPITAL MATT"
+    tools:
+      - "python -m nexus_cli validate"
+      - "python -m nexus_cli execute"
