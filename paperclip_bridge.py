@@ -40,6 +40,7 @@ def on_signal(sig: EdgeSignal) -> None:
             "kelly_fraction": sig.kelly_fraction,
             "model": sig.model.value,
             "confidence": sig.confidence,
+            "signal_strength": getattr(sig, "signal_strength", "BUY"),
         }
         # Éviter les doublons
         if not any(e.get("market_id") == entry["market_id"] and e.get("side") == entry["side"] for e in existing):
@@ -47,6 +48,18 @@ def on_signal(sig: EdgeSignal) -> None:
             with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
                 json.dump({"signals": existing[-50:], "count": len(existing)}, f, indent=2)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
+            # Push notification for STRONG_BUY even when bot idle
+            if getattr(sig, "signal_strength", "BUY") == "STRONG_BUY":
+                try:
+                    import asyncio
+                    from monitoring.telegram_alerts import send_telegram_message
+                    msg = f"🔥 <b>STRONG_BUY</b> détecté!\n{entry.get('question','')[:60]}...\nEdge: {entry.get('edge_pct',0):.1f}%"
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(send_telegram_message(msg))
+                except RuntimeError:
+                    pass  # No running loop (sync context)
+                except Exception:
+                    pass
     except Exception as e:
         log.warning("paperclip_bridge on_signal error: %s", e)
 

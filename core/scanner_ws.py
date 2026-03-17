@@ -15,6 +15,7 @@ import aiohttp
 from config.settings import settings
 from data.polymarket_client import PolymarketClient
 from core.edge_engine import EdgeEngine, EdgeSignal
+from core.market_filter import passes_filter
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,8 @@ class WebSocketScanner:
             markets = await self.polymarket.get_markets(limit=50)
             self._token_to_market.clear()
             for market in markets:
+                if not passes_filter(market):
+                    continue
                 tokens = market.get("clobTokenIds") or market.get("tokens") or []
                 if not isinstance(tokens, list) or len(tokens) < 2:
                     continue

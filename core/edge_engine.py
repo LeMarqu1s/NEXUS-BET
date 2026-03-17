@@ -30,6 +30,7 @@ class EdgeSignal:
     model: MarketModel
     confidence: float
     metadata: dict[str, Any]
+    signal_strength: str = "BUY"  # STRONG_BUY or BUY
 
 
 class EdgeEngine:
@@ -170,4 +171,5 @@ class EdgeEngine:
                 "model": model.value,
                 "question": (market.get("question") or "")[:120],
             },
+            signal_strength=signal_strength,
         )

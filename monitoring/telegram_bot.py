@@ -52,14 +52,37 @@ def _back_keyboard() -> InlineKeyboardMarkup:
 
 
 def _settings_keyboard() -> InlineKeyboardMarkup:
-    """[📊 Edit Thresholds] [💰 Edit Capital] [🔁 Toggle Simulation]"""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 Edit Thresholds", callback_data="settings_thresholds"),
-            InlineKeyboardButton("💰 Edit Capital", callback_data="settings_capital"),
+            InlineKeyboardButton("📊 Thresholds", callback_data="settings_thresholds"),
+            InlineKeyboardButton("💰 Capital", callback_data="settings_capital"),
         ],
-        [InlineKeyboardButton("🔁 Toggle Simulation", callback_data="settings_toggle_sim")],
+        [
+            InlineKeyboardButton("🔁 Simulation", callback_data="settings_toggle_sim"),
+            InlineKeyboardButton("🤖 Auto-Trade", callback_data="settings_autotrade"),
+        ],
+        [InlineKeyboardButton("⚙️ Avancé", callback_data="settings_advanced")],
         [InlineKeyboardButton("◀ Retour", callback_data="menu_back")],
+    ])
+
+
+def _settings_autotrade_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Toggle ON/OFF", callback_data="settings_autotrade_toggle")],
+        [InlineKeyboardButton("Max positions", callback_data="settings_max_positions")],
+        [InlineKeyboardButton("Drawdown limit %", callback_data="settings_drawdown")],
+        [InlineKeyboardButton("Confirm BUY (yes/no)", callback_data="settings_confirm_buy")],
+        [InlineKeyboardButton("◀ Retour", callback_data="btn_settings")],
+    ])
+
+
+def _settings_advanced_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Categories blacklist", callback_data="settings_categories")],
+        [InlineKeyboardButton("Min/Max days resolution", callback_data="settings_days_resolution")],
+        [InlineKeyboardButton("Keywords blacklist", callback_data="settings_keywords")],
+        [InlineKeyboardButton("Reinvest %", callback_data="settings_reinvest")],
+        [InlineKeyboardButton("◀ Retour", callback_data="btn_settings")],
     ])
 
 
@@ -180,20 +203,26 @@ async def _get_btc_text() -> str:
 
 
 def _get_settings_text() -> str:
-    """Current config: capital, simulation mode, thresholds."""
+    """Current config: capital, simulation, auto-trade, thresholds."""
     try:
         from config.settings import settings
 
         cap = getattr(settings, "POLYMARKET_CAPITAL_USD", 1000)
         sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+        at = os.getenv("AUTO_TRADE_ENABLED", "false").lower() in ("true", "1", "yes")
         kelly = getattr(settings, "KELLY_FRACTION_CAP", 0.25) * 100
         min_edge = getattr(settings, "MIN_EDGE_PCT", 0.02) * 100
+        max_pos = os.getenv("AUTO_TRADE_MAX_POSITIONS", "3")
+        drawdown = os.getenv("AUTO_TRADE_DAILY_DRAWDOWN_LIMIT", "20")
+        confirm = os.getenv("AUTO_TRADE_CONFIRM_BUY", "true").lower() in ("true", "1", "yes")
         return (
             "<b>⚙️ SETTINGS</b>\n\n"
             f"Capital: <b>{cap:,.0f} USD</b>\n"
             f"Simulation: <b>{'ON' if sim else 'OFF'}</b>\n"
-            f"Kelly max: {kelly:.1f}%\n"
-            f"Edge min: {min_edge:.1f}%\n"
+            f"Auto-Trade: <b>{'ON' if at else 'OFF'}</b>\n"
+            f"Max positions: {max_pos} | Drawdown: {drawdown}%\n"
+            f"Confirm BUY: <b>{'Oui' if confirm else 'Non'}</b>\n"
+            f"Kelly: {kelly:.1f}% | Edge min: {min_edge:.1f}%\n"
         )
     except Exception as e:
         return f"<b>⚙️ SETTINGS</b>\n\nErreur: {e}"
@@ -253,12 +282,70 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         except (ValueError, TypeError):
             ok = False
         context.user_data.pop("awaiting", None)
-        status = "✅ Capital mis à jour" if ok else "❌ Valeur invalide. Envoie un nombre (ex. 100)"
-        await update.message.reply_text(
-            f"{status}\n\n{_get_settings_text()}",
-            parse_mode="HTML",
-            reply_markup=_settings_keyboard(),
-        )
+        status = "✅ Capital mis à jour" if ok else "❌ Valeur invalide"
+        await update.message.reply_text(f"{status}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_keyboard())
+        return
+
+    if awaiting == "max_positions":
+        try:
+            val = int(text)
+            ok = set_env_value("AUTO_TRADE_MAX_POSITIONS", max(1, min(val, 20))) if 1 <= val <= 20 else False
+        except (ValueError, TypeError):
+            ok = False
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
+        return
+
+    if awaiting == "drawdown":
+        try:
+            val = float(text.replace(",", "."))
+            ok = set_env_value("AUTO_TRADE_DAILY_DRAWDOWN_LIMIT", max(1, min(val, 100))) if 1 <= val <= 100 else False
+        except (ValueError, TypeError):
+            ok = False
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
+        return
+
+    if awaiting == "categories":
+        parts = [x.strip().lower() for x in text.split(",") if x.strip()]
+        valid = {"sport", "politique", "crypto", "finance", "autre"}
+        filtered = [p for p in parts if p in valid]
+        ok = set_env_value("AUTO_TRADE_CATEGORIES_BLACKLIST", ",".join(filtered))
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        return
+
+    if awaiting == "days_resolution":
+        parts = text.split()
+        if len(parts) >= 2:
+            try:
+                min_d, max_d = int(parts[0]), int(parts[1])
+                ok1 = set_env_value("AUTO_TRADE_MIN_DAYS_RESOLUTION", max(0, min_d))
+                ok2 = set_env_value("AUTO_TRADE_MAX_DAYS_RESOLUTION", max(min_d, max_d))
+                ok = ok1 and ok2
+            except (ValueError, TypeError):
+                ok = False
+        else:
+            ok = False
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        return
+
+    if awaiting == "reinvest":
+        try:
+            val = float(text.replace(",", "."))
+            ok = set_env_value("AUTO_TRADE_REINVEST_PCT", max(0, min(100, int(val)))) if 0 <= val <= 100 else False
+        except (ValueError, TypeError):
+            ok = False
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        return
+
+    if awaiting == "keywords":
+        parts = [x.strip().lower() for x in text.split(",") if x.strip()]
+        ok = set_env_value("AUTO_TRADE_KEYWORDS_BLACKLIST", ",".join(parts))
+        context.user_data.pop("awaiting", None)
+        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
 
@@ -333,8 +420,85 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         new_val = not sim
         ok = set_env_value("SIMULATION_MODE", str(new_val).lower())
         text = _get_settings_text()
-        status = "✅ Simulation " + ("ON" if new_val else "OFF") if ok else "❌ Erreur écriture .env"
+        status = "✅ Simulation " + ("ON" if new_val else "OFF") if ok else "❌ Erreur .env"
         await edit(f"{status}\n\n{text}", _settings_keyboard())
+        return
+
+    if data == "settings_autotrade":
+        text = _get_settings_text() + "\n<i>Auto-Trade: STRONG_BUY→exécute | BUY→confirmation 30min</i>"
+        await edit(text, _settings_autotrade_keyboard())
+        return
+
+    if data == "settings_autotrade_toggle":
+        from monitoring.env_config import set_env_value
+        at = os.getenv("AUTO_TRADE_ENABLED", "false").lower() in ("true", "1", "yes")
+        ok = set_env_value("AUTO_TRADE_ENABLED", str(not at).lower())
+        status = "✅ Auto-Trade " + ("ON" if not at else "OFF") if ok else "❌ Erreur"
+        await edit(f"{status}\n\n{_get_settings_text()}", _settings_autotrade_keyboard())
+        return
+
+    if data == "settings_max_positions":
+        context.user_data["awaiting"] = "max_positions"
+        await edit("Envoie le nombre max de positions (ex. <code>3</code>)", _settings_autotrade_keyboard())
+        return
+
+    if data == "settings_drawdown":
+        context.user_data["awaiting"] = "drawdown"
+        await edit("Envoie la limite drawdown % (ex. <code>20</code>)", _settings_autotrade_keyboard())
+        return
+
+    if data == "settings_confirm_buy":
+        from monitoring.env_config import set_env_value
+        cur = os.getenv("AUTO_TRADE_CONFIRM_BUY", "true").lower() in ("true", "1", "yes")
+        ok = set_env_value("AUTO_TRADE_CONFIRM_BUY", str(not cur).lower())
+        status = "✅ Confirm BUY: " + ("Non" if cur else "Oui") if ok else "❌ Erreur"
+        await edit(f"{status}\n\n{_get_settings_text()}", _settings_autotrade_keyboard())
+        return
+
+    if data == "settings_advanced":
+        cats = os.getenv("AUTO_TRADE_CATEGORIES_BLACKLIST", "")
+        min_d = os.getenv("AUTO_TRADE_MIN_DAYS_RESOLUTION", "1")
+        max_d = os.getenv("AUTO_TRADE_MAX_DAYS_RESOLUTION", "365")
+        kw = os.getenv("AUTO_TRADE_KEYWORDS_BLACKLIST", "")
+        reinv = os.getenv("AUTO_TRADE_REINVEST_PCT", "0")
+        text = f"<b>Avancé</b>\n\nCategories: {cats or '(vide)'}\nMin/Max days: {min_d}-{max_d}\nKeywords: {kw or '(vide)'}\nReinvest: {reinv}%"
+        await edit(text, _settings_advanced_keyboard())
+        return
+
+    if data == "settings_categories":
+        context.user_data["awaiting"] = "categories"
+        await edit("Envoie les catégories à exclure, séparées par des virgules:\n<code>sport,politique,crypto,finance,autre</code>", _settings_advanced_keyboard())
+        return
+
+    if data == "settings_days_resolution":
+        context.user_data["awaiting"] = "days_resolution"
+        await edit("Envoie min et max jours (ex. <code>1 30</code>)", _settings_advanced_keyboard())
+        return
+
+    if data == "settings_reinvest":
+        context.user_data["awaiting"] = "reinvest"
+        await edit("Envoie le % de gains à réinvestir (0-100, ex. <code>50</code>)", _settings_advanced_keyboard())
+        return
+
+    # Auto-trade confirm/ignore
+    if data.startswith("autotrade_confirm_"):
+        sid = data.replace("autotrade_confirm_", "")
+        from monitoring.auto_trade import get_pending_confirm, remove_pending_confirm, execute_signal
+        sig = get_pending_confirm(sid)
+        if not sig:
+            await edit("⏱ Confirmation expirée (>30min)")
+            return
+        await edit("⏳ Exécution...", None)
+        order_id = await execute_signal(sig)
+        remove_pending_confirm(sid)
+        await edit(f"✅ Ordre exécuté | ID: {order_id}" if order_id else "❌ Échec", _main_keyboard())
+        return
+
+    if data.startswith("autotrade_ignore_"):
+        sid = data.replace("autotrade_ignore_", "")
+        from monitoring.auto_trade import remove_pending_confirm
+        remove_pending_confirm(sid)
+        await edit("❌ Signal ignoré", _main_keyboard())
         return
 
     # Wealth suggestion: approve / wait

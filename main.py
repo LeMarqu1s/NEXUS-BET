@@ -146,6 +146,62 @@ async def _swarm_loop() -> None:
             log.warning("swarm_loop error: %s", e)
 
 
+async def _auto_trade_loop() -> None:
+    """
+    Auto-trade: STRONG_BUY → execute immediately.
+    BUY → Telegram confirmation, 30min timeout → auto-execute.
+    """
+    try:
+        from monitoring.auto_trade import (
+            is_auto_trade_enabled,
+            process_signal,
+            get_and_clear_expired_pending,
+            execute_signal,
+        )
+        from monitoring.telegram_alerts import send_telegram_message
+        from paperclip_bridge import get_pending_signals, clear_signal
+    except ImportError as e:
+        log.debug("auto_trade_loop: %s", e)
+        return
+
+    async def _send(msg: str, reply_markup=None):
+        await send_telegram_message(msg, reply_markup=reply_markup)
+
+    processed: set[tuple[str, str]] = set()
+
+    while True:
+        try:
+            await asyncio.sleep(10)
+
+            if is_auto_trade_enabled():
+                for sig in get_pending_signals():
+                    key = (str(sig.get("market_id", "")), str(sig.get("side", "")))
+                    if key in processed:
+                        continue
+                    processed.add(key)
+                    try:
+                        await process_signal(sig, _send)
+                        clear_signal(str(sig.get("market_id", "")), str(sig.get("side", "")))
+                    except Exception as e:
+                        log.warning("auto_trade process_signal: %s", e)
+
+                for expired in get_and_clear_expired_pending():
+                    sig = expired.get("signal")
+                    if sig:
+                        from monitoring.auto_trade import is_daily_drawdown_breached, get_open_positions_count, get_max_positions
+                        if is_daily_drawdown_breached() or get_open_positions_count() >= get_max_positions():
+                            await _send(f"⏱ BUY timeout ignoré (drawdown ou max positions)")
+                        else:
+                            order_id = await execute_signal(sig)
+                            if order_id:
+                                await _send(f"⏱ <b>BUY auto-exécuté</b> (timeout 30min)\n{sig.get('question','')[:50]}...\nOrder: {order_id}")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.warning("auto_trade_loop error: %s", e)
+
+
 # ANTI_SYBIL_ANCHOR
 async def _anti_sybil_loop() -> None:
     """Boucle Anti-Sybil : détecte Mirror Trading sur baleines, alerte si suspect."""
@@ -220,11 +276,12 @@ async def main() -> None:
     scanner_task = asyncio.create_task(run_scanner_ws())
     poller_task = asyncio.create_task(run_telegram_poller())
     swarm_task = asyncio.create_task(_swarm_loop())
+    autotrade_task = asyncio.create_task(_auto_trade_loop())
     yield_task = asyncio.create_task(_defi_yield_loop())
     antisybil_task = asyncio.create_task(_anti_sybil_loop())
 
-    tasks = [scanner_task, poller_task, swarm_task, yield_task, antisybil_task]
-    log.info("Master Loop running: Scanner | Telegram | Swarm | DeFi Yield | Anti-Sybil")
+    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task]
+    log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil")
 
     try:
         await asyncio.gather(*tasks)
