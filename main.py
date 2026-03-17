@@ -12,7 +12,7 @@ from pathlib import Path
 # Ajouter le projet au path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.scanner import run_scanner
+from core.scanner_ws import run_scanner_ws
 from monitoring.telegram_alerts import alert_startup, alert_error
 from monitoring.telegram_bot import run_telegram_poller
 
@@ -217,7 +217,7 @@ async def main() -> None:
     assert _main_task is not None
 
     # Tâches du Master Loop
-    scanner_task = asyncio.create_task(run_scanner())
+    scanner_task = asyncio.create_task(run_scanner_ws())
     poller_task = asyncio.create_task(run_telegram_poller())
     swarm_task = asyncio.create_task(_swarm_loop())
     yield_task = asyncio.create_task(_defi_yield_loop())

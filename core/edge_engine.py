@@ -36,18 +36,18 @@ class EdgeEngine:
     """
     Mispricing detection engine.
     Uses NCAA, UCL, BTC models + Kelly criterion for sizing.
+    Reads settings at compute_edge time so config refresh (e.g. via Telegram) applies immediately.
     """
 
     def __init__(self) -> None:
-        self.kelly_fraction_cap = settings.KELLY_FRACTION_CAP
-        self.min_edge_pct = settings.MIN_EDGE_PCT
-        self.min_confidence = settings.MIN_CONFIDENCE
+        pass  # Settings read at compute_edge time for live config refresh
 
     def _kelly(
         self,
         p: float,
         q: float,
         b: float = 1.0,
+        kelly_cap: float | None = None,
     ) -> float:
         """
         Kelly criterion: f = (bp - q) / b
@@ -55,8 +55,9 @@ class EdgeEngine:
         """
         if p <= 0 or b <= 0:
             return 0.0
+        cap = kelly_cap if kelly_cap is not None else settings.KELLY_FRACTION_CAP
         f = (b * p - (1 - p)) / b
-        f = max(0.0, min(f, self.kelly_fraction_cap))
+        f = max(0.0, min(f, cap))
         return round(f, 4)
 
     def _model_fair_price_ncaa(
@@ -124,7 +125,10 @@ class EdgeEngine:
         """
         Compute mispricing edge and Kelly fraction.
         Returns EdgeSignal if edge > min_edge_pct, else None.
+        Reads settings at call time for live config refresh.
         """
+        min_edge_pct = settings.MIN_EDGE_PCT
+        min_confidence = settings.MIN_CONFIDENCE
         model = self._detect_model(market)
         if model == MarketModel.NCAA:
             fair, conf = self._model_fair_price_ncaa(market, order_book)
@@ -144,8 +148,8 @@ class EdgeEngine:
             edge_pct = (fair_no - pm_no) / pm_no if pm_no > 0 else 0
 
         edge_pct_decimal = edge_pct  # edge_pct is decimal e.g. 0.05 = 5%
-        min_edge = self.min_edge_pct / 100.0  # 2.0 -> 0.02
-        if edge_pct_decimal < min_edge or conf < self.min_confidence:
+        min_edge = min_edge_pct / 100.0  # 2.0 -> 0.02
+        if edge_pct_decimal < min_edge or conf < min_confidence:
             return None
 
         p = fair if side.upper() == "YES" else (1.0 - fair)

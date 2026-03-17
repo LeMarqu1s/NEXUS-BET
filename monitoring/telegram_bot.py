@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,18 @@ def _main_keyboard() -> InlineKeyboardMarkup:
 
 def _back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("◀ Retour", callback_data="menu_back")]])
+
+
+def _settings_keyboard() -> InlineKeyboardMarkup:
+    """[📊 Edit Thresholds] [💰 Edit Capital] [🔁 Toggle Simulation]"""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Edit Thresholds", callback_data="settings_thresholds"),
+            InlineKeyboardButton("💰 Edit Capital", callback_data="settings_capital"),
+        ],
+        [InlineKeyboardButton("🔁 Toggle Simulation", callback_data="settings_toggle_sim")],
+        [InlineKeyboardButton("◀ Retour", callback_data="menu_back")],
+    ])
 
 
 async def _get_scan_text() -> str:
@@ -174,6 +186,60 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=_main_keyboard())
 
 
+async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle text input when awaiting settings value (thresholds or capital)."""
+    awaiting = context.user_data.get("awaiting")
+    if not awaiting:
+        return
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+
+    from monitoring.env_config import set_env_value, set_env_values
+
+    if awaiting == "thresholds":
+        parts = text.split()
+        if len(parts) >= 4:
+            try:
+                min_edge, min_ev, volume, liquidity = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+                ok = set_env_values({
+                    "MIN_EDGE_THRESHOLD": min_edge,
+                    "MIN_EV_THRESHOLD": min_ev,
+                    "MIN_MARKET_VOLUME": volume,
+                    "MIN_LIQUIDITY": liquidity,
+                })
+            except (ValueError, TypeError):
+                ok = False
+        else:
+            ok = False
+        context.user_data.pop("awaiting", None)
+        status = "✅ Seuils mis à jour" if ok else "❌ Format invalide. Envoie: min_edge min_ev volume liquidity"
+        await update.message.reply_text(
+            f"{status}\n\n{_get_settings_text()}",
+            parse_mode="HTML",
+            reply_markup=_settings_keyboard(),
+        )
+        return
+
+    if awaiting == "capital":
+        try:
+            val = float(text.replace(",", "."))
+            if val > 0:
+                ok = set_env_value("TOTAL_CAPITAL", int(val) if val == int(val) else val)
+            else:
+                ok = False
+        except (ValueError, TypeError):
+            ok = False
+        context.user_data.pop("awaiting", None)
+        status = "✅ Capital mis à jour" if ok else "❌ Valeur invalide. Envoie un nombre (ex. 100)"
+        await update.message.reply_text(
+            f"{status}\n\n{_get_settings_text()}",
+            parse_mode="HTML",
+            reply_markup=_settings_keyboard(),
+        )
+        return
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button clicks – UPDATE same message."""
     q = update.callback_query
@@ -215,7 +281,38 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_settings":
         text = _get_settings_text()
-        await edit(text, _back_keyboard())
+        await edit(text, _settings_keyboard())
+        return
+
+    # Settings submenu
+    if data == "settings_thresholds":
+        context.user_data["awaiting"] = "thresholds"
+        await edit(
+            "<b>📊 Edit Thresholds</b>\n\n"
+            "Envoie 4 valeurs séparées par des espaces :\n"
+            "<code>min_edge min_ev volume liquidity</code>\n\n"
+            "Ex. <code>5.0 20 10000 1000</code>",
+            _back_keyboard(),
+        )
+        return
+
+    if data == "settings_capital":
+        context.user_data["awaiting"] = "capital"
+        await edit(
+            "<b>💰 Edit Capital</b>\n\n"
+            "Envoie le nouveau capital en USD (ex. <code>100</code>)",
+            _back_keyboard(),
+        )
+        return
+
+    if data == "settings_toggle_sim":
+        from monitoring.env_config import set_env_value
+        sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+        new_val = not sim
+        ok = set_env_value("SIMULATION_MODE", str(new_val).lower())
+        text = _get_settings_text()
+        status = "✅ Simulation " + ("ON" if new_val else "OFF") if ok else "❌ Erreur écriture .env"
+        await edit(f"{status}\n\n{text}", _settings_keyboard())
         return
 
     # Wealth suggestion: approve / wait
@@ -287,6 +384,7 @@ async def run_telegram_poller() -> None:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
 
     log.info("Telegram poller démarré (python-telegram-bot)")
     await app.initialize()
