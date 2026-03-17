@@ -1,0 +1,44 @@
+{
+  "agents": [
+    {
+      "name": "DataAnalyst",
+      "title": "Data Analyst",
+      "role": "researcher",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "model": "claude-sonnet-4-20250514"
+      },
+      "goal": "Scan Unusual Whales MCP smart money flows, identify high-conviction signals"
+    },
+    {
+      "name": "Quant",
+      "title": "Quant",
+      "role": "cfo",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "model": "claude-sonnet-4-20250514"
+      },
+      "goal": "Calculate edge, EV, Kelly sizing from orderbook and market data"
+    },
+    {
+      "name": "RiskManager",
+      "title": "Risk Manager",
+      "role": "cfo",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "model": "claude-sonnet-4-20250514"
+      },
+      "goal": "Destroy thesis adversarially - liquidity, timing, tail risk, slippage"
+    },
+    {
+      "name": "Sniper",
+      "title": "Sniper",
+      "role": "executor",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "model": "claude-sonnet-4-20250514"
+      },
+      "goal": "Execute trades on Polymarket when approved by Quant + RiskManager"
+    }
+  ]
+}

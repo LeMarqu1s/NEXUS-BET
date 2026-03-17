@@ -72,6 +72,28 @@ def main():
                 self.end_headers()
                 self.wfile.write(json.dumps(data, indent=2).encode())
                 return
+            if self.path == "/api/wallet":
+                relayer = os.getenv("RELAYER_API_KEY_ADDRESS")
+                data = {"value": 0, "user": relayer or ""}
+                if relayer:
+                    try:
+                        import urllib.request
+                        with urllib.request.urlopen(
+                            f"https://data-api.polymarket.com/value?user={relayer}",
+                            timeout=10,
+                        ) as r:
+                            arr = json.loads(r.read().decode())
+                            if isinstance(arr, list) and arr:
+                                data = arr[0]
+                            elif isinstance(arr, dict):
+                                data = arr
+                    except Exception:
+                        pass
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(data, indent=2).encode())
+                return
             self.send_response(404)
             self.end_headers()
 

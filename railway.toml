@@ -1,0 +1,8 @@
+[deploy]
+startCommand = "python main.py"
+
+[variables]
+MIN_EDGE_THRESHOLD = "5.0"
+MIN_EV_THRESHOLD = "20.0"
+MIN_MARKET_VOLUME = "10000"
+MIN_LIQUIDITY = "1000"

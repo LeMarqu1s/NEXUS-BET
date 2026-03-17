@@ -3,8 +3,18 @@
 import { ModuleCard } from "@/components/module-card";
 import { Button } from "@/components/ui/button";
 import { WalletConnectButton } from "@/components/wallet-connect-button";
+import { useEffect, useState } from "react";
 
 export default function WalletPage() {
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch("/api/wallet")
+      .then((r) => r.json())
+      .then((d) => setUsdcBalance(Number(d?.value ?? 0)))
+      .catch(() => setUsdcBalance(null));
+  }, []);
+
   return (
     <div className="space-y-6">
       <div>
@@ -15,6 +25,17 @@ export default function WalletPage() {
           Web3Modal ou Custodial • DeFi Yield Hedging (Aave USDC)
         </p>
       </div>
+
+      {usdcBalance !== null && (
+        <ModuleCard title="Polymarket USDC">
+          <div className="text-2xl font-mono text-emerald-400">
+            {usdcBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC
+          </div>
+          <p className="text-zinc-500 text-sm mt-1">
+            Solde réel depuis data-api.polymarket.com
+          </p>
+        </ModuleCard>
+      )}
 
       <ModuleCard title="Connect Wallet">
         <div className="space-y-6">

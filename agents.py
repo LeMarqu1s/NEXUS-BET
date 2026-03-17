@@ -1,14 +1,7 @@
 """
-NEXUS BET - Adversarial AI Team
-Quant proposes trades, Risk Manager challenges thesis, Head Analyst validates.
-
-ORCHESTRATION PAPERCLIP:
-Les agents Paperclip (Head Quant, Risk Manager, Head Analyst) appellent ce module
-via nexus_cli.py :
-  - python -m nexus_cli propose   → quant_propose_trade()
-  - python -m nexus_cli challenge → risk_manager_challenge()
-  - python -m nexus_cli validate  → head_analyst_validate()
-  - python -m nexus_cli debate    → full_debate()
+NEXUS CAPITAL - Adversarial AI Team
+Paperclip agents: DataAnalyst (UW smart money), Quant (edge/EV), RiskManager (destroys thesis), Sniper (executes).
+Falls back to Claude direct when PAPERCLIP_URL not set.
 """
 
 import asyncio
@@ -68,25 +61,25 @@ class AdversarialAITeam:
             return str(content)
 
     async def quant_propose_trade(self, market_id: str, outcome: str, edge_bps: float, kelly: float, rationale: str) -> str:
-        """Quant proposes a trade with thesis."""
+        """Quant proposes a trade with thesis (Paperclip Quant or Claude)."""
         system = """You are a quantitative trader at NEXUS Capital. Propose trades based on mispricing.
 Be concise. Output ONLY the trade thesis in 2-3 sentences."""
         user = f"Market {market_id}, outcome {outcome}, edge {edge_bps}bps, Kelly {kelly:.2%}. Rationale: {rationale}. Write trade thesis:"
-        return await self._call_claude(system, user)
+        return await self._call_agent("Quant", system, user)
 
     async def risk_manager_challenge(self, thesis: str, market_context: str) -> str:
-        """Risk Manager destroys the thesis - adversarial role."""
+        """Risk Manager destroys the thesis (Paperclip RiskManager or Claude)."""
         system = """You are a Risk Manager. Your job is to DESTROY every trade thesis.
 Find flaws: liquidity, timing, model error, tail risk, slippage. Be harsh. Output only concerns."""
         user = f"Thesis: {thesis}\nContext: {market_context}\nList critical risks:"
-        return await self._call_claude(system, user)
+        return await self._call_agent("RiskManager", system, user)
 
     async def head_analyst_validate(self, thesis: str, risk_concerns: str) -> tuple[bool, str]:
-        """Head Analyst weighs both sides and gives final verdict."""
+        """Head Analyst / Sniper weighs both sides and gives final verdict."""
         system = """You are Head Analyst. Weigh Quant thesis vs Risk concerns. 
 Output format: VERDICT: APPROVE or REJECT (exactly one). Then 1-2 sentence justification."""
         user = f"Thesis: {thesis}\nRisk concerns: {risk_concerns}\nYour verdict:"
-        out = await self._call_claude(system, user)
+        out = await self._call_agent("Sniper", system, user)
         approved = "VERDICT: APPROVE" in out.upper() or "APPROVE" in out.upper().split()[0:3]
         return approved, out
 

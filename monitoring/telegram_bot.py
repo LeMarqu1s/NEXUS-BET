@@ -89,14 +89,36 @@ async def _get_scan_text() -> str:
 
 
 async def _get_portfolio_text() -> str:
-    """Open positions from SQLite."""
+    """Real USDC balance from Polymarket + open positions from SQLite."""
+    lines = ["<b>💰 PORTFOLIO</b>\n"]
     try:
-        from monitoring.trade_logger import trade_logger
+        # Fetch real USDC balance from Polymarket data API
+        relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS")
+        if relayer_addr:
+            import httpx
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.get(
+                        f"https://data-api.polymarket.com/value?user={relayer_addr}"
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        if isinstance(data, list) and data:
+                            val = data[0].get("value", 0)
+                            lines.append(f"💵 USDC: <b>{float(val):,.2f}</b>\n")
+                        elif isinstance(data, dict):
+                            val = data.get("value", 0)
+                            lines.append(f"💵 USDC: <b>{float(val):,.2f}</b>\n")
+            except Exception as e:
+                log.debug("Polymarket value API: %s", e)
 
+        from monitoring.trade_logger import trade_logger
         positions = trade_logger.get_positions()
         if not positions:
-            return "<b>💰 PORTFOLIO</b>\n\nAucune position ouverte."
-        lines = ["<b>💰 PORTFOLIO</b>\n"]
+            if len(lines) <= 1:
+                return "<b>💰 PORTFOLIO</b>\n\nAucune position ouverte."
+            lines.append("Aucune position ouverte.")
+            return "\n".join(lines)
         for p in positions:
             mid = (p.get("market_id") or "")[:25]
             lines.append(f"• {mid}... | {p.get('outcome')} | {p.get('size', 0):.2f} @ {p.get('avg_price', 0):.2%}")
