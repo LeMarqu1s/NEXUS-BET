@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NEXUS CAPITAL | Terminal</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --accent: #f0b429;
+      --green: #3fb950;
+      --red: #f85149;
+      --blue: #58a6ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    .header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo { font-weight: 700; font-size: 1.2rem; color: var(--accent); }
+    .nav { display: flex; gap: 8px; }
+    .nav a {
+      padding: 8px 16px;
+      color: var(--muted);
+      text-decoration: none;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    .nav a:hover { color: var(--text); }
+    .nav a.active { color: var(--accent); border-color: var(--accent); }
+    .main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .page { display: none; }
+    .page.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .card h3 { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+    .card .val { font-size: 1.5rem; font-weight: 600; color: var(--accent); }
+    .card .val.green { color: var(--green); }
+    .card .val.red { color: var(--red); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; }
+    tr:hover { background: rgba(255,255,255,0.02); }
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .loading { color: var(--muted); padding: 24px; }
+    .ticker { font-size: 0.7rem; color: var(--muted); margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <span class="logo">NEXUS CAPITAL</span>
+    <nav class="nav">
+      <a href="#" class="active" data-page="overview">Overview</a>
+      <a href="#" data-page="signals">Signals</a>
+      <a href="#" data-page="portfolio">Portfolio</a>
+      <a href="#" data-page="debates">AI Debates</a>
+      <a href="#" data-page="performance">Performance</a>
+    </nav>
+  </header>
+  <main class="main">
+    <div id="overview" class="page active">
+      <div class="grid">
+        <div class="card"><h3>USDC Balance</h3><div class="val" id="ov-balance">—</div></div>
+        <div class="card"><h3>Open Positions</h3><div class="val" id="ov-positions">—</div></div>
+        <div class="card"><h3>Total PnL</h3><div class="val" id="ov-pnl">—</div></div>
+        <div class="card"><h3>Active Signals</h3><div class="val" id="ov-signals">—</div></div>
+      </div>
+      <div class="card"><h3>Recent Activity</h3><div id="ov-activity" class="loading">Loading...</div></div>
+    </div>
+    <div id="signals" class="page">
+      <div class="card"><h3>Pending Signals</h3><div id="sig-list" class="loading">Loading...</div></div>
+    </div>
+    <div id="portfolio" class="page">
+      <div class="card"><h3>Positions</h3><div id="port-list" class="loading">Loading...</div></div>
+    </div>
+    <div id="debates" class="page">
+      <div class="card"><h3>AI Debates</h3><div id="deb-list" class="loading">Loading...</div></div>
+    </div>
+    <div id="performance" class="page">
+      <div class="card"><h3>Trade History</h3><div id="perf-list" class="loading">Loading...</div></div>
+    </div>
+  </main>
+  <script>
+    const API = '';
+    async function fetchApi(path) {
+      const r = await fetch(API + path);
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }
+    function nav() {
+      document.querySelectorAll('.nav a').forEach(a => {
+        a.classList.toggle('active', a.dataset.page === page);
+      });
+      document.querySelectorAll('.page').forEach(p => {
+        p.classList.toggle('active', p.id === page);
+      });
+      if (page === 'overview') loadOverview();
+      if (page === 'signals') loadSignals();
+      if (page === 'portfolio') loadPortfolio();
+      if (page === 'debates') loadDebates();
+      if (page === 'performance') loadPerformance();
+    }
+    let page = 'overview';
+    document.querySelectorAll('.nav a').forEach(a => {
+      a.onclick = (e) => { e.preventDefault(); page = a.dataset.page; nav(); };
+    });
+    async function loadOverview() {
+      try {
+        const [wallet, positions, trades, signals] = await Promise.all([
+          fetchApi('/api/wallet'),
+          fetchApi('/api/positions'),
+          fetchApi('/api/trades'),
+          fetchApi('/api/signals')
+        ]);
+        document.getElementById('ov-balance').textContent = '$' + (wallet.value ?? 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+        document.getElementById('ov-positions').textContent = (positions?.length ?? 0);
+        const pnl = trades?.reduce((s,t) => s + (parseFloat(t.pnl_usd)||0), 0) || 0;
+        const pnlEl = document.getElementById('ov-pnl');
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+        pnlEl.className = 'val ' + (pnl >= 0 ? 'green' : 'red');
+        document.getElementById('ov-signals').textContent = (signals?.signals?.length ?? 0);
+        const recent = [...(trades||[])].slice(0, 5).map(t =>
+          `${t.market_id?.slice(0,20)}... | ${t.side} | $${parseFloat(t.amount_usd||0).toFixed(2)} | ${t.status}`
+        ).join('\n') || 'No recent trades';
+        document.getElementById('ov-activity').innerHTML = '<pre style="font-size:0.8rem;white-space:pre-wrap">' + recent + '</pre>';
+      } catch (e) {
+        document.getElementById('ov-activity').textContent = 'Error: ' + e.message;
+      }
+    }
+    async function loadSignals() {
+      try {
+        const d = await fetchApi('/api/signals');
+        const sigs = d?.signals ?? [];
+        document.getElementById('sig-list').innerHTML = sigs.length ? `
+          <table><thead><tr><th>Market</th><th>Side</th><th>Edge</th><th>Kelly</th></tr></thead><tbody>
+          ${sigs.slice(0,20).map(s => `<tr><td>${(s.market_id||'').slice(0,30)}...</td><td>${s.side||'-'}</td><td>${((s.edge_pct||0)*100).toFixed(1)}%</td><td>${((s.kelly_fraction||0)*100).toFixed(1)}%</td></tr>`).join('')}
+          </tbody></table>
+        ` : '<div class="loading">No pending signals</div>';
+      } catch (e) {
+        document.getElementById('sig-list').textContent = 'Error: ' + e.message;
+      }
+    }
+    async function loadPortfolio() {
+      try {
+        const positions = await fetchApi('/api/positions');
+        document.getElementById('port-list').innerHTML = positions?.length ? `
+          <table><thead><tr><th>Market</th><th>Side</th><th>Shares</th><th>Avg Price</th><th>Value</th></tr></thead><tbody>
+          ${positions.map(p => `<tr><td>${(p.market_id||'').slice(0,30)}...</td><td>${p.side}</td><td>${parseFloat(p.shares||0).toFixed(2)}</td><td>${(parseFloat(p.avg_entry_price||0)*100).toFixed(1)}%</td><td>$${parseFloat(p.current_value_usd||p.cost_basis_usd||0).toFixed(2)}</td></tr>`).join('')}
+          </tbody></table>
+        ` : '<div class="loading">No open positions</div>';
+      } catch (e) {
+        document.getElementById('port-list').textContent = 'Error: ' + e.message;
+      }
+    }
+    async function loadDebates() {
+      try {
+        const d = await fetchApi('/api/debates');
+        const deb = d?.debates ?? [];
+        document.getElementById('deb-list').innerHTML = deb.length ? `
+          <table><thead><tr><th>Agent</th><th>Vote</th><th>Message</th></tr></thead><tbody>
+          ${deb.slice(-15).reverse().map(x => `<tr><td>${x.agent||'-'}</td><td>${x.vote||'-'}</td><td>${(x.message||x.content||'').slice(0,80)}...</td></tr>`).join('')}
+          </tbody></table>
+        ` : '<div class="loading">No debates yet</div>';
+      } catch (e) {
+        document.getElementById('deb-list').textContent = 'Error: ' + e.message;
+      }
+    }
+    async function loadPerformance() {
+      try {
+        const trades = await fetchApi('/api/trades');
+        document.getElementById('perf-list').innerHTML = trades?.length ? `
+          <table><thead><tr><th>Date</th><th>Market</th><th>Side</th><th>Amount</th><th>PnL</th><th>Status</th></tr></thead><tbody>
+          ${trades.slice(0,30).map(t => `<tr><td>${(t.created_at||'').slice(0,16)}</td><td>${(t.market_id||'').slice(0,20)}...</td><td>${t.side}</td><td>$${parseFloat(t.amount_usd||0).toFixed(2)}</td><td class="${(parseFloat(t.pnl_usd)||0)>=0?'positive':'negative'}">$${(parseFloat(t.pnl_usd)||0).toFixed(2)}</td><td>${t.status}</td></tr>`).join('')}
+          </tbody></table>
+        ` : '<div class="loading">No trades yet</div>';
+      } catch (e) {
+        document.getElementById('perf-list').textContent = 'Error: ' + e.message;
+      }
+    }
+    nav();
+    setInterval(() => { if (page === 'overview') loadOverview(); }, 15000);
+  </script>
+</body>
+</html>

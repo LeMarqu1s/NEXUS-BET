@@ -1,0 +1,11 @@
+nexus-terminal/
+.git/
+*.pyc
+__pycache__/
+.env
+.env.*
+*.log
+ai_debates_log.json
+paperclip_pending_signals.json
+defi_yield_state.json
+dashboard_state.json
