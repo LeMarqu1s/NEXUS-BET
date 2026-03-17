@@ -63,6 +63,10 @@ class ScannerSettings:
     scan_interval_seconds: float = 10.0
     max_concurrent_orders: int = 5
     markets_cache_ttl_seconds: int = 60
+    min_edge_threshold: float = 5.0  # % edge minimum (lowered = more signals)
+    min_ev_threshold: float = 20.0
+    min_market_volume: float = 10000.0
+    min_liquidity: float = 1000.0
 
 
 def _get_env(key: str, default: str = "") -> str:
@@ -128,6 +132,10 @@ def load_settings() -> dict:
         scan_interval_seconds=_get_env_float("SCANNER_INTERVAL_SECONDS", 10.0),
         max_concurrent_orders=_get_env_int("SCANNER_MAX_CONCURRENT_ORDERS", 5),
         markets_cache_ttl_seconds=_get_env_int("SCANNER_MARKETS_CACHE_TTL", 60),
+        min_edge_threshold=_get_env_float("MIN_EDGE_THRESHOLD", 5.0),
+        min_ev_threshold=_get_env_float("MIN_EV_THRESHOLD", 20.0),
+        min_market_volume=_get_env_float("MIN_MARKET_VOLUME", 10000.0),
+        min_liquidity=_get_env_float("MIN_LIQUIDITY", 1000.0),
     )
     return {
         "polymarket": polymarket,
@@ -192,7 +200,26 @@ class _SettingsProxy:
 
     @property
     def MIN_EDGE_PCT(self) -> float:
-        return self._s["risk"].min_edge_pct / 100.0  # 2.0 -> 0.02
+        thresh = os.getenv("MIN_EDGE_THRESHOLD")
+        if thresh:
+            return float(thresh) / 100.0
+        return self._s["risk"].min_edge_pct / 100.0
+
+    @property
+    def MIN_EDGE_THRESHOLD(self) -> float:
+        return _get_env_float("MIN_EDGE_THRESHOLD", 5.0)
+
+    @property
+    def MIN_EV_THRESHOLD(self) -> float:
+        return _get_env_float("MIN_EV_THRESHOLD", 20.0)
+
+    @property
+    def MIN_MARKET_VOLUME(self) -> float:
+        return _get_env_float("MIN_MARKET_VOLUME", 10000.0)
+
+    @property
+    def MIN_LIQUIDITY(self) -> float:
+        return _get_env_float("MIN_LIQUIDITY", 1000.0)
 
     @property
     def MIN_CONFIDENCE(self) -> float:
