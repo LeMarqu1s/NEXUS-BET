@@ -22,35 +22,62 @@ logging.basicConfig(
 )
 log = logging.getLogger("nexus")
 
+_main_task: asyncio.Task | None = None
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _signal_handler(sig: int, frame: object) -> None:
+    """Handle SIGINT/SIGTERM - cancel main task for graceful shutdown."""
+    log.info("Shutdown signal received, stopping gracefully...")
+    if _main_task and _loop and not _main_task.done():
+        _loop.call_soon_threadsafe(_main_task.cancel)
+
 
 async def main() -> None:
     """Boucle principale NEXUS BET."""
-    def shutdown_handler(*args):
-        log.info("Shutdown signal received, stopping...")
-        raise asyncio.CancelledError()
+    global _main_task, _loop
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            signal.signal(sig, shutdown_handler)
+            signal.signal(sig, _signal_handler)
         except (ValueError, OSError):
             pass
 
     log.info("NEXUS BET starting...")
-    ok = await alert_startup()
-    if ok:
-        log.info("Telegram startup message sent")
-    else:
-        log.warning("Telegram startup message failed (check TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)")
-
     try:
-        await asyncio.gather(
-            run_scanner(),
-            run_telegram_poller(),
-        )
+        ok = await alert_startup()
+        if ok:
+            log.info("Telegram startup message sent")
+        else:
+            log.warning("Telegram startup message failed (check TELEGRAM_TOKEN, TELEGRAM_CHAT_ID in env)")
+    except Exception as e:
+        log.warning("Telegram startup error: %s", e)
+
+    _loop = asyncio.get_running_loop()
+    _main_task = asyncio.current_task()
+    assert _main_task is not None
+
+    scanner_task = asyncio.create_task(run_scanner())
+    poller_task = asyncio.create_task(run_telegram_poller())
+    try:
+        await asyncio.gather(scanner_task, poller_task)
     except asyncio.CancelledError:
-        log.info("NEXUS BET stopped.")
+        log.info("Shutdown, cancelling tasks...")
+        scanner_task.cancel()
+        poller_task.cancel()
+        try:
+            await asyncio.gather(scanner_task, poller_task, return_exceptions=True)
+        except asyncio.CancelledError:
+            pass
+        log.info("NEXUS BET stopped gracefully.")
     except Exception as e:
         log.exception("NEXUS BET fatal error: %s", e)
+        scanner_task.cancel()
+        poller_task.cancel()
+        try:
+            await asyncio.gather(scanner_task, poller_task, return_exceptions=True)
+        except Exception:
+            pass
         try:
             await alert_error(str(e), "main loop")
         except Exception:
@@ -59,4 +86,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Interrupted.")
+    except asyncio.CancelledError:
+        log.info("Stopped.")
