@@ -2,11 +2,9 @@
 NEXUS BET - Logging des trades en SQLite
 Enregistrement local des positions, ordres et PnL.
 """
-import asyncio
 import sqlite3
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Any
+from typing import Any, Optional
 
 
 DB_PATH = Path(__file__).resolve().parent.parent / "logs" / "nexus_trades.db"
@@ -39,11 +37,12 @@ def _init_db() -> None:
             );
             CREATE TABLE IF NOT EXISTS positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                market_id TEXT,
-                outcome TEXT,
+                market_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
                 size REAL,
                 avg_price REAL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(market_id, outcome)
             );
             CREATE INDEX IF NOT EXISTS idx_trades_market ON trades(market_id);
             CREATE INDEX IF NOT EXISTS idx_trades_created ON trades(created_at);
@@ -96,18 +95,11 @@ class TradeLogger:
             conn.execute(
                 """INSERT INTO positions (market_id, outcome, size, avg_price, updated_at)
                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                   ON CONFLICT(market_id) DO UPDATE SET
+                   ON CONFLICT(market_id, outcome) DO UPDATE SET
                      size = excluded.size,
                      avg_price = excluded.avg_price,
                      updated_at = CURRENT_TIMESTAMP""",
                 (market_id, outcome, size, avg_price),
-            )
-            conn.commit()
-        except sqlite3.OperationalError:
-            conn.execute(
-                """UPDATE positions SET size=?, avg_price=?, updated_at=CURRENT_TIMESTAMP
-                   WHERE market_id=? AND outcome=?""",
-                (size, avg_price, market_id, outcome),
             )
             conn.commit()
         finally:

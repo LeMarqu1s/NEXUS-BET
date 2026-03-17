@@ -11,7 +11,6 @@ from pathlib import Path
 # Ajouter le projet au path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config.settings import load_settings, SETTINGS
 from core.scanner import run_scanner
 from monitoring.telegram_alerts import alert_startup, alert_error
 
@@ -25,8 +24,6 @@ log = logging.getLogger("nexus")
 
 async def main() -> None:
     """Boucle principale NEXUS BET."""
-    load_settings()
-
     def shutdown_handler(*args):
         log.info("Shutdown signal received, stopping...")
         raise asyncio.CancelledError()
