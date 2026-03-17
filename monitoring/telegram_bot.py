@@ -372,33 +372,68 @@ async def close_telegram_session(token: str) -> bool:
 
 
 async def run_telegram_poller() -> None:
-    """Long-polling loop using python-telegram-bot."""
+    """Long-polling loop with error handling and exponential backoff retry."""
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         log.info("Telegram token non configuré, poller désactivé")
         return
 
-    await close_telegram_session(token)
-    await asyncio.sleep(1)
+    # Reduce poller error spam: telegram lib logs at WARNING on network errors
+    for _log in ("telegram", "telegram.ext"):
+        logging.getLogger(_log).setLevel(logging.ERROR)
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
+    base_delay = 5.0
+    max_delay = 300.0
+    delay = base_delay
 
-    log.info("Telegram poller démarré (python-telegram-bot)")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-
-    # Run until cancelled
     try:
         while True:
-            await asyncio.sleep(60)
+            app = None
+            poll_task = None
+            try:
+                await close_telegram_session(token)
+                await asyncio.sleep(1)
+
+                app = Application.builder().token(token).build()
+                app.add_handler(CommandHandler("start", cmd_start))
+                app.add_handler(CallbackQueryHandler(callback_handler))
+                app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
+
+                await app.initialize()
+                await app.start()
+                poll_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
+
+                log.info("Telegram poller démarré (python-telegram-bot)")
+                delay = base_delay  # reset on success
+
+                # Run until cancelled or poll task fails
+                while poll_task and not poll_task.done():
+                    await asyncio.sleep(10)
+                # If poll task exited with exception, re-raise to trigger retry
+                if poll_task and poll_task.done():
+                    exc = poll_task.exception()
+                    if exc is not None:
+                        raise exc
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("Telegram poller error (retry in %.0fs): %s", delay, e)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)
+            finally:
+                if poll_task and not poll_task.done():
+                    poll_task.cancel()
+                    try:
+                        await asyncio.wait_for(poll_task, timeout=5.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+                if app:
+                    try:
+                        await app.updater.stop()
+                        await app.stop()
+                        await app.shutdown()
+                    except Exception:
+                        pass
     except asyncio.CancelledError:
-        pass
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
         log.info("Telegram poller arrêté")
+        raise
