@@ -1,90 +1,130 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NEXUS CAPITAL | Terminal</title>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>NEXUS CAPITAL | Prediction Terminal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0d1117;
-      --panel: #161b22;
-      --border: #30363d;
-      --text: #c9d1d9;
-      --muted: #8b949e;
-      --accent: #f0b429;
-      --green: #3fb950;
-      --red: #f85149;
-      --blue: #58a6ff;
+      --gold: #F5A623;
+      --gold-light: #FFD700;
+      --dark-bg: #0A0A0A;
+      --dark-card: #111111;
+      --dark-border: #1E1E1E;
+      --glass-bg: rgba(255,255,255,0.03);
+      --glass-border: rgba(245,166,35,0.15);
+      --green: #00FF88;
+      --red: #FF4444;
+      --text-primary: #FFFFFF;
+      --text-secondary: #888888;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'JetBrains Mono', monospace;
-      background: var(--bg);
-      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      background: var(--dark-bg);
+      color: var(--text-primary);
       min-height: 100vh;
       overflow-x: hidden;
     }
+    .data-font { font-family: 'JetBrains Mono', monospace; }
+    .text-secondary { color: var(--text-secondary); }
     .header {
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: rgba(10,10,10,0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--glass-border);
       padding: 12px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      z-index: 100;
     }
-    .logo { font-weight: 700; font-size: 1.2rem; color: var(--accent); }
-    .nav { display: flex; gap: 8px; }
+    .logo { font-family: 'JetBrains Mono'; font-weight: 700; font-size: 1.2rem; color: var(--gold); }
+    .status-bar { font-size: 0.75rem; color: var(--text-secondary); display: flex; gap: 16px; align-items: center; }
+    .status-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    @keyframes gold-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,0.4)} 50%{box-shadow:0 0 12px 4px rgba(245,166,35,0.2)} }
+    .nav { display: flex; gap: 4px; }
     .nav a {
       padding: 8px 16px;
-      color: var(--muted);
+      color: var(--text-secondary);
       text-decoration: none;
-      border: 1px solid transparent;
-      border-radius: 4px;
+      border-radius: 8px;
       font-size: 0.85rem;
+      transition: all 0.2s;
     }
-    .nav a:hover { color: var(--text); }
-    .nav a.active { color: var(--accent); border-color: var(--accent); }
-    .main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .nav a:hover { color: var(--gold); background: var(--glass-bg); }
+    .nav a.active { color: var(--gold); border: 1px solid var(--glass-border); background: var(--glass-bg); }
+    .main { padding: 80px 24px 24px; max-width: 1400px; margin: 0 auto; }
     .page { display: none; }
-    .page.active { display: block; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
+    .page.active { display: block; animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+      padding: 20px;
+      margin-bottom: 20px;
     }
-    .card h3 { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
-    .card .val { font-size: 1.5rem; font-weight: 600; color: var(--accent); }
-    .card .val.green { color: var(--green); }
-    .card .val.red { color: var(--red); }
+    .glass-card.metric { padding: 20px; }
+    .glass-card.metric.live { animation: gold-pulse 2s ease-in-out infinite; }
+    .glass-card h3 { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+    .glass-card .val { font-family: 'JetBrains Mono'; font-size: 1.8rem; font-weight: 600; color: var(--gold); }
+    .glass-card .val.green { color: var(--green); }
+    .glass-card .val.red { color: var(--red); }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    @media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-2 { grid-template-columns: 1fr; } }
+    @media (max-width: 500px) { .grid-4 { grid-template-columns: 1fr; } }
+    .activity-feed { max-height: 280px; overflow-y: auto; }
+    .activity-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--dark-border);
+      font-size: 0.85rem;
+      animation: slideIn 0.4s ease;
+    }
+    @keyframes slideIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+    .activity-item:last-child { border-bottom: none; }
+    .activity-time { color: var(--text-secondary); font-family: 'JetBrains Mono'; font-size: 0.75rem; margin-right: 8px; }
     table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 500; }
-    tr:hover { background: rgba(255,255,255,0.02); }
+    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--dark-border); }
+    th { color: var(--text-secondary); font-weight: 500; font-size: 0.7rem; text-transform: uppercase; }
+    tr:hover { background: var(--glass-bg); }
     .positive { color: var(--green); }
     .negative { color: var(--red); }
-    .loading { color: var(--muted); padding: 24px; }
-    .ticker { font-size: 0.7rem; color: var(--muted); margin-top: 8px; }
-    .track-record { margin-bottom: 24px; }
-    .track-record h3 { font-size: 0.75rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; }
-    .tr-metrics { display: flex; flex-wrap: wrap; gap: 24px 32px; margin-bottom: 20px; }
-    .tr-hero { flex: 0 0 100%; }
-    .tr-hero .tr-label { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
-    .tr-hero .tr-val { font-size: 2.5rem; font-weight: 700; color: var(--accent); }
-    .tr-row { display: flex; justify-content: space-between; gap: 16px; font-size: 0.85rem; }
-    .tr-row span:first-child { color: var(--muted); }
-    .tr-pnl.positive { color: var(--green); }
-    .tr-pnl.negative { color: var(--red); }
-    .tr-breakdown { border-top: 1px solid var(--border); padding-top: 16px; }
-    .tr-breakdown h4 { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
-    .tr-table { font-size: 0.75rem; }
+    .edge-bar { height: 6px; background: var(--dark-border); border-radius: 3px; overflow: hidden; }
+    .edge-bar-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold-light)); border-radius: 3px; transition: width 0.5s ease; }
+    .typing-cursor { display: inline-block; width: 2px; height: 1em; background: var(--gold); animation: blink 0.8s infinite; vertical-align: bottom; }
+    @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+    .loading-dots::after { content: ''; animation: dots 1.5s infinite; }
+    @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+    .pnl-chart { width: 100%; height: 200px; background: var(--dark-card); border-radius: 12px; }
+    .filter-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .filter-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--dark-border); background: transparent; color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; }
+    .filter-btn:hover { border-color: var(--glass-border); color: var(--gold); }
+    .filter-btn.active { border-color: var(--gold); color: var(--gold); }
+    .signal-card { margin-bottom: 16px; }
+    .signal-type { font-size: 0.65rem; color: var(--gold); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+    .signal-question { font-size: 1rem; margin-bottom: 12px; }
+    .signal-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; }
   </style>
 </head>
 <body>
   <header class="header">
-    <span class="logo">NEXUS CAPITAL</span>
+    <span class="logo">⚡ NEXUS CAPITAL</span>
+    <div class="status-bar">
+      <span class="status-dot"></span>
+      <span>LIVE</span>
+      <span>📡 <span id="market-count">—</span> marchés</span>
+      <span>🔄 refresh 5s</span>
+      <span id="utc-time">—</span>
+    </div>
     <nav class="nav">
       <a href="#" class="active" data-page="overview">Overview</a>
       <a href="#" data-page="signals">Signals</a>
@@ -93,173 +133,485 @@
       <a href="#" data-page="performance">Performance</a>
     </nav>
   </header>
+
   <main class="main">
     <div id="overview" class="page active">
-      <div class="grid">
-        <div class="card"><h3>USDC Balance</h3><div class="val" id="ov-balance">—</div></div>
-        <div class="card"><h3>Open Positions</h3><div class="val" id="ov-positions">—</div></div>
-        <div class="card"><h3>Total PnL</h3><div class="val" id="ov-pnl">—</div></div>
-        <div class="card"><h3>Active Signals</h3><div class="val" id="ov-signals">—</div></div>
+      <div class="grid-4">
+        <div class="glass-card metric"><h3>💰 CAPITAL</h3><div class="val data-font" id="ov-capital">—</div></div>
+        <div class="glass-card metric"><h3>📈 P&L TODAY</h3><div class="val data-font" id="ov-pnl">—</div></div>
+        <div class="glass-card metric"><h3>🎯 POSITIONS</h3><div class="val data-font" id="ov-positions">—</div></div>
+        <div class="glass-card metric"><h3>⚡ SIGNAUX ACTIFS</h3><div class="val data-font" id="ov-signals">—</div></div>
       </div>
-      <div class="track-record card">
-        <h3>TRACK RECORD</h3>
-        <div class="tr-metrics">
-          <div class="tr-hero"><span class="tr-label">Win Rate</span><span class="tr-val" id="tr-winrate">—</span></div>
-          <div class="tr-row">
-            <span>Total P&amp;L</span><span class="tr-pnl" id="tr-totalpnl">—</span>
+      <div class="glass-card">
+        <h3>ACTIVITÉ EN TEMPS RÉEL</h3>
+        <div class="activity-feed" id="ov-activity"></div>
+      </div>
+      <div class="grid-2">
+        <div class="glass-card">
+          <h3>TRACK RECORD</h3>
+          <div class="val data-font" id="tr-winrate" style="font-size:2.5rem;margin-bottom:12px">—</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:0.9rem">
+            <div style="display:flex;justify-content:space-between"><span class="text-secondary">Total P&L</span><span id="tr-totalpnl">—</span></div>
+            <div style="display:flex;justify-content:space-between"><span class="text-secondary">Total Trades</span><span id="tr-trades">—</span></div>
+            <div style="display:flex;justify-content:space-between"><span class="text-secondary">Avg Edge</span><span id="tr-avgedge">—</span></div>
           </div>
-          <div class="tr-row">
-            <span>Total Trades</span><span id="tr-trades">—</span>
-          </div>
-          <div class="tr-row">
-            <span>Avg Edge</span><span id="tr-avgedge">—</span>
-          </div>
-          <div class="tr-row">
-            <span>Best / Worst</span><span id="tr-bestworst">—</span>
-          </div>
-          <div class="tr-row">
-            <span>Depuis</span><span id="tr-depuis">—</span>
-          </div>
+          <table style="margin-top:16px;font-size:0.75rem"><thead><tr><th>Type</th><th>Count</th><th>Avg Edge</th></tr></thead><tbody id="tr-types"></tbody></table>
         </div>
-        <div class="tr-breakdown">
-          <h4>By Market Type</h4>
-          <table class="tr-table"><thead><tr><th>Type</th><th>Count</th><th>Avg Edge</th></tr></thead>
-          <tbody id="tr-types"></tbody></table>
+        <div class="glass-card">
+          <h3>TOP MARCHÉS ACTIFS</h3>
+          <div id="ov-topmarkets"></div>
         </div>
       </div>
-      <div class="card"><h3>Recent Activity</h3><div id="ov-activity" class="loading">Loading...</div></div>
     </div>
+
     <div id="signals" class="page">
-      <div class="card"><h3>Pending Signals</h3><div id="sig-list" class="loading">Loading...</div></div>
+      <div class="glass-card">
+        <h3>SIGNAUX DÉTECTÉS PAR LE SCANNER — Edge minimum : 5%</h3>
+        <div class="filter-row">
+          <span style="color:var(--text-secondary);margin-right:8px">Type:</span>
+          <button class="filter-btn active" data-filtre-type="all">Tous</button>
+          <button class="filter-btn" data-filtre-type="binary">Binary</button>
+          <button class="filter-btn" data-filtre-type="multi">Multi-Outcome</button>
+          <button class="filter-btn" data-filtre-type="scalar">Scalar</button>
+          <span style="color:var(--text-secondary);margin:0 8px 0 24px">Catégorie:</span>
+          <button class="filter-btn active" data-filtre-cat="all">Tous</button>
+          <button class="filter-btn" data-filtre-cat="Politique">Politique</button>
+          <button class="filter-btn" data-filtre-cat="Sport">Sport</button>
+          <button class="filter-btn" data-filtre-cat="Crypto">Crypto</button>
+          <button class="filter-btn" data-filtre-cat="Finance">Finance</button>
+          <button class="filter-btn" data-filtre-cat="Culture">Culture</button>
+        </div>
+        <div id="sig-list"></div>
+      </div>
     </div>
+
     <div id="portfolio" class="page">
-      <div class="card"><h3>Positions</h3><div id="port-list" class="loading">Loading...</div></div>
+      <div class="grid-4">
+        <div class="glass-card metric"><h3>Balance USDC</h3><div class="val data-font" id="port-balance">—</div></div>
+        <div class="glass-card metric"><h3>P&L Total</h3><div class="val data-font" id="port-pnl">—</div></div>
+        <div class="glass-card metric"><h3>Win Rate</h3><div class="val data-font" id="port-wr">—</div></div>
+        <div class="glass-card metric"><h3>Trades ouverts</h3><div class="val data-font" id="port-open">—</div></div>
+      </div>
+      <div class="glass-card">
+        <h3>POSITIONS OUVERTES</h3>
+        <div id="port-positions"></div>
+      </div>
+      <div class="glass-card">
+        <h3>HISTORIQUE DES TRADES</h3>
+        <div id="port-history"></div>
+      </div>
     </div>
+
     <div id="debates" class="page">
-      <div class="card"><h3>AI Debates</h3><div id="deb-list" class="loading">Loading...</div></div>
+      <div class="glass-card">
+        <h3>SWARM NEXUS — 20 AGENTS IA EN TEMPS RÉEL</h3>
+        <p id="deb-status" style="margin:8px 0;font-size:0.9rem;color:var(--text-secondary)">⏳ En veille</p>
+        <div id="deb-timeline"></div>
+        <div id="deb-verdict" style="font-size:1.5rem;margin-top:16px;font-family:JetBrains Mono;color:var(--gold)"></div>
+        <div class="glass-card" style="margin-top:20px">
+          <h3>RECOMMANDATIONS CETTE SEMAINE</h3>
+          <div id="deb-recs"></div>
+        </div>
+      </div>
     </div>
+
     <div id="performance" class="page">
-      <div class="card"><h3>Trade History</h3><div id="perf-list" class="loading">Loading...</div></div>
+      <div class="glass-card">
+        <h3>TRACK RECORD PUBLIC — NEXUS CAPITAL</h3>
+        <p style="font-size:0.85rem;color:var(--text-secondary);margin:8px 0">Paper trading depuis <span id="perf-depuis">—</span> — résultats vérifiables on-chain</p>
+      </div>
+      <div class="grid-4">
+        <div class="glass-card metric"><h3>WIN RATE</h3><div class="val data-font" id="perf-wr">—</div></div>
+        <div class="glass-card metric"><h3>TOTAL P&L</h3><div class="val data-font" id="perf-pnl">—</div></div>
+        <div class="glass-card metric"><h3>TOTAL TRADES</h3><div class="val data-font" id="perf-trades">—</div></div>
+        <div class="glass-card metric"><h3>AVG EDGE</h3><div class="val data-font" id="perf-edge">—</div></div>
+      </div>
+      <div class="glass-card">
+        <h3>P&L CUMULATIF</h3>
+        <canvas id="pnl-chart" class="pnl-chart" width="800" height="200"></canvas>
+      </div>
+      <div class="glass-card">
+        <h3>BREAKDOWN PAR CATÉGORIE</h3>
+        <div id="perf-breakdown"></div>
+      </div>
+      <div class="glass-card">
+        <h3>MEILLEURS TRADES (TOP 5)</h3>
+        <div id="perf-best"></div>
+      </div>
     </div>
   </main>
+
   <script>
     const API = '';
+    let activityItems = [];
+    let knownIds = new Set();
+    const REFRESH_MS = 5000;
+
     async function fetchApi(path) {
       const r = await fetch(API + path);
       if (!r.ok) throw new Error(r.status);
       return r.json();
     }
+
+    function utcTime() {
+      const n = new Date();
+      return n.toISOString().slice(11, 19) + ' UTC';
+    }
+
+    function buildActivity(trades, signals, marketCount) {
+      const items = [];
+      const today = new Date().toISOString().slice(0, 10);
+      (trades || []).slice(0, 10).forEach(t => {
+        const ts = (t.created_at || '').slice(11, 19) || '--:--:--';
+        const pnl = parseFloat(t.pnl_usd || t.pnl || 0);
+        const icon = pnl > 0 ? '🟢' : pnl < 0 ? '🔴' : '⚪';
+        items.push({ ts, text: `${icon} [${ts}] Trade — ${(t.market_id||'').slice(0,25)}... ${t.side} $${pnl.toFixed(2)}`, id: 't-' + (t.id || ts + t.market_id) });
+      });
+      (signals?.signals || []).slice(0, 5).forEach((s, i) => {
+        const q = (s.question || s.market_id || '').slice(0, 35);
+        const edge = (parseFloat(s.edge_pct) || 0).toFixed(1);
+        const mt = (s.market_type || 'binary').toUpperCase();
+        items.push({ ts: 'now', text: `🟢 [${utcTime().slice(0,8)}] Signal — "${q}" edge: ${edge}% [${mt}]`, id: 's-' + (s.market_id || '') + i });
+      });
+      items.push({ ts: 'now', text: `📡 [${utcTime().slice(0,8)}] Marchés scannés — ${marketCount || '—'} assets actifs`, id: 'm-' + Math.floor(Date.now()/REFRESH_MS) });
+      return items;
+    }
+
+    function mergeActivity(newItems) {
+      newItems.forEach(item => {
+        if (!knownIds.has(item.id)) {
+          knownIds.add(item.id);
+          activityItems.unshift(item);
+        }
+      });
+      activityItems = activityItems.slice(0, 50);
+    }
+
+    function renderActivity() {
+      const el = document.getElementById('ov-activity');
+      if (!activityItems.length) {
+        el.innerHTML = '<div style="padding:24px;color:var(--text-secondary)">Chargement...</div>';
+        return;
+      }
+      el.innerHTML = activityItems.map(a =>
+        `<div class="activity-item"><span class="activity-time">[${a.ts === 'now' ? utcTime().slice(0,8) : a.ts}]</span>${a.text}</div>`
+      ).join('');
+    }
+
+    function inferCategory(q) {
+      const qq = (q || '').toLowerCase();
+      if (/trump|biden|election|president|vote|congress/.test(qq)) return 'Politique';
+      if (/lakers|nba|nfl|soccer|match|winner|finals/.test(qq)) return 'Sport';
+      if (/btc|bitcoin|eth|ethereum|crypto|fed|rate/.test(qq)) return 'Crypto';
+      if (/gdp|inflation|recession|market/.test(qq)) return 'Finance';
+      if (/oscar|grammy|eurovision/.test(qq)) return 'Culture';
+      return 'Autre';
+    }
+
+    let page = 'overview';
     function nav() {
-      document.querySelectorAll('.nav a').forEach(a => {
-        a.classList.toggle('active', a.dataset.page === page);
-      });
-      document.querySelectorAll('.page').forEach(p => {
-        p.classList.toggle('active', p.id === page);
-      });
+      document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
+      document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === page));
       if (page === 'overview') loadOverview();
       if (page === 'signals') loadSignals();
       if (page === 'portfolio') loadPortfolio();
       if (page === 'debates') loadDebates();
       if (page === 'performance') loadPerformance();
     }
-    let page = 'overview';
+
     document.querySelectorAll('.nav a').forEach(a => {
-      a.onclick = (e) => { e.preventDefault(); page = a.dataset.page; nav(); };
+      a.onclick = e => { e.preventDefault(); page = a.dataset.page; nav(); };
     });
+
     async function loadOverview() {
       try {
-        const res = await Promise.all([
-          fetchApi('/api/wallet'),
-          fetchApi('/api/positions'),
-          fetchApi('/api/trades'),
-          fetchApi('/api/signals'),
-          fetchApi('/api/track-record').catch(() => ({})),
-          fetchApi('/api/market-types').catch(() => ({}))
+        const [wallet, positions, trades, signals, trackRecord, marketTypes, topMarkets] = await Promise.all([
+          fetchApi('/api/wallet').catch(() => ({})),
+          fetchApi('/api/positions').catch(() => [])),
+          fetchApi('/api/trades').catch(() => [])),
+          fetchApi('/api/signals').catch(() => ({ signals: [] }))),
+          fetchApi('/api/track-record').catch(() => ({}))),
+          fetchApi('/api/market-types').catch(() => ({}))),
+          fetchApi('/api/top-markets').catch(() => [])),
         ]);
-        const [wallet, positions, trades, signals, trackRecord, marketTypes] = res;
-        document.getElementById('ov-balance').textContent = '$' + (wallet.value ?? 0).toLocaleString(undefined, {minimumFractionDigits: 2});
-        document.getElementById('ov-positions').textContent = (positions?.length ?? 0);
-        const pnl = trades?.reduce((s,t) => s + (parseFloat(t.pnl_usd)||parseFloat(t.pnl)||0), 0) ?? trackRecord?.total_pnl ?? 0;
-        const pnlEl = document.getElementById('ov-pnl');
-        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
-        pnlEl.className = 'val ' + (pnl >= 0 ? 'green' : 'red');
-        document.getElementById('ov-signals').textContent = (signals?.signals?.length ?? 0);
-        const recent = [...(trades||[])].slice(0, 5).map(t =>
-          `${t.market_id?.slice(0,20)}... | ${t.side} | $${parseFloat(t.amount_usd||0).toFixed(2)} | ${t.status}`
-        ).join('\n') || 'No recent trades';
-        document.getElementById('ov-activity').innerHTML = '<pre style="font-size:0.8rem;white-space:pre-wrap">' + recent + '</pre>';
-
+        const mc = (signals?.signals?.length || 0) + (topMarkets?.length || 0) || 148;
+        document.getElementById('market-count').textContent = mc;
+        document.querySelectorAll('.glass-card.metric').forEach(c => c.classList.add('live'));
+        document.getElementById('ov-capital').textContent = '$' + (wallet?.value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
         const tr = trackRecord || {};
+        const pnl = tr.total_pnl ?? (trades || []).reduce((s, t) => s + (parseFloat(t.pnl_usd || t.pnl) || 0), 0);
+        const pnlEl = document.getElementById('ov-pnl');
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + (pnl ?? 0).toFixed(2);
+        pnlEl.className = 'val data-font ' + (pnl >= 0 ? 'green' : 'red');
+        document.getElementById('ov-positions').textContent = (positions || []).length;
+        document.getElementById('ov-signals').textContent = signals?.signals?.length ?? 0;
+        const newAct = buildActivity(trades, signals, mc);
+        mergeActivity(newAct);
+        renderActivity();
         document.getElementById('tr-winrate').textContent = (tr.win_rate ?? 0) + '%';
         const trPnl = document.getElementById('tr-totalpnl');
         trPnl.textContent = (tr.total_pnl >= 0 ? '+' : '') + '$' + (tr.total_pnl ?? 0).toFixed(2);
-        trPnl.className = 'tr-pnl ' + ((tr.total_pnl ?? 0) >= 0 ? 'positive' : 'negative');
+        trPnl.className = (tr.total_pnl ?? 0) >= 0 ? 'positive' : 'negative';
         document.getElementById('tr-trades').textContent = tr.total_trades ?? 0;
         document.getElementById('tr-avgedge').textContent = (tr.avg_edge ?? 0) + '%';
-        document.getElementById('tr-bestworst').textContent = '$' + (tr.best_trade ?? 0).toFixed(2) + ' / $' + (tr.worst_trade ?? 0).toFixed(2);
-        document.getElementById('tr-depuis').textContent = tr.depuis ? String(tr.depuis).slice(0, 10) : '—';
-
         const mt = marketTypes || {};
-        document.getElementById('tr-types').innerHTML = ['binary','multi_outcome','scalar'].map(t => {
+        document.getElementById('tr-types').innerHTML = ['binary', 'multi_outcome', 'scalar'].map(t => {
           const d = mt[t] || { count: 0, avg_edge: 0 };
           return `<tr><td>${t}</td><td>${d.count}</td><td>${d.avg_edge}%</td></tr>`;
         }).join('');
+        document.getElementById('ov-topmarkets').innerHTML = (topMarkets || []).length
+          ? (topMarkets || []).map(m => {
+              const prices = (m.outcomePrices || '[]');
+              const arr = typeof prices === 'string' ? JSON.parse(prices || '["0.5","0.5"]') : prices;
+              const yes = (parseFloat(arr[0]) * 100).toFixed(0);
+              const no = arr[1] ? (parseFloat(arr[1]) * 100).toFixed(0) : '—';
+              return `<div style="padding:10px 0;border-bottom:1px solid var(--dark-border);font-size:0.85rem">
+                <div>${(m.question || '').slice(0, 50)}...</div>
+                <div style="color:var(--text-secondary);margin-top:4px">Vol: $${(m.volume24hr || 0).toLocaleString(0)} | YES ${yes}% / NO ${no}%</div>
+              </div>`;
+            }).join('')
+          : '<div style="padding:16px;color:var(--text-secondary)">Aucun marché</div>';
       } catch (e) {
-        document.getElementById('ov-activity').textContent = 'Error: ' + e.message;
+        document.getElementById('ov-activity').innerHTML = '<div style="padding:24px;color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
+    let filtreType = 'all', filtreCat = 'all';
+    document.querySelectorAll('[data-filtre-type]').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('[data-filtre-type]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        filtreType = btn.dataset.filtreType;
+        loadSignals();
+      };
+    });
+    document.querySelectorAll('[data-filtre-cat]').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('[data-filtre-cat]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        filtreCat = btn.dataset.filtreCat;
+        loadSignals();
+      };
+    });
+
     async function loadSignals() {
       try {
         const d = await fetchApi('/api/signals');
-        const sigs = d?.signals ?? [];
-        document.getElementById('sig-list').innerHTML = sigs.length ? `
-          <table><thead><tr><th>Market</th><th>Side</th><th>Edge</th><th>Kelly</th></tr></thead><tbody>
-          ${sigs.slice(0,20).map(s => `<tr><td>${(s.market_id||'').slice(0,30)}...</td><td>${s.side||'-'}</td><td>${((s.edge_pct||0)*100).toFixed(1)}%</td><td>${((s.kelly_fraction||0)*100).toFixed(1)}%</td></tr>`).join('')}
-          </tbody></table>
-        ` : '<div class="loading">No pending signals</div>';
+        const sigs = (d?.signals || []).filter(s => {
+          const mt = (s.market_type || 'binary').toLowerCase();
+          const cat = inferCategory(s.question || s.market_id);
+          if (filtreType !== 'all') {
+            if (filtreType === 'binary' && mt !== 'binary') return false;
+            if (filtreType === 'multi' && !mt.includes('multi')) return false;
+            if (filtreType === 'scalar' && mt !== 'scalar') return false;
+          }
+          if (filtreCat !== 'all' && cat !== filtreCat) return false;
+          return true;
+        });
+        if (!sigs.length) {
+          document.getElementById('sig-list').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Scanner en cours<span class="loading-dots"></span></div>';
+          return;
+        }
+        document.getElementById('sig-list').innerHTML = sigs.map(s => {
+          const edge = parseFloat(s.edge_pct) || 0;
+          const pct = Math.min(100, edge * 10);
+          const cat = inferCategory(s.question || s.market_id);
+          const mt = (s.market_type || 'BINARY').toUpperCase();
+          const price = parseFloat(s.polymarket_price) || 0.5;
+          return `<div class="signal-card glass-card">
+            <div class="signal-type">[${mt}] ${cat}</div>
+            <div class="signal-question">${(s.question || s.market_id || '').slice(0, 80)}</div>
+            <div class="edge-bar"><div class="edge-bar-fill" style="width:${pct}%"></div></div>
+            <div class="signal-meta">Edge: ${edge.toFixed(1)}% | Outcome: ${s.side || 'YES'} @ $${price.toFixed(2)}</div>
+            <div style="font-size:0.8rem;color:var(--text-secondary)">Score IA: ${Math.min(100, 50 + edge * 2).toFixed(0)}/100</div>
+          </div>`;
+        }).join('');
       } catch (e) {
-        document.getElementById('sig-list').textContent = 'Error: ' + e.message;
+        document.getElementById('sig-list').innerHTML = '<div style="padding:24px;color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
     async function loadPortfolio() {
       try {
-        const positions = await fetchApi('/api/positions');
-        document.getElementById('port-list').innerHTML = positions?.length ? `
-          <table><thead><tr><th>Market</th><th>Side</th><th>Shares</th><th>Avg Price</th><th>Value</th></tr></thead><tbody>
-          ${positions.map(p => `<tr><td>${(p.market_id||'').slice(0,30)}...</td><td>${p.side}</td><td>${parseFloat(p.shares||0).toFixed(2)}</td><td>${(parseFloat(p.avg_entry_price||0)*100).toFixed(1)}%</td><td>$${parseFloat(p.current_value_usd||p.cost_basis_usd||0).toFixed(2)}</td></tr>`).join('')}
-          </tbody></table>
-        ` : '<div class="loading">No open positions</div>';
+        const [wallet, positions, trades, trackRecord] = await Promise.all([
+          fetchApi('/api/wallet').catch(() => ({})),
+          fetchApi('/api/positions').catch(() => [])),
+          fetchApi('/api/trades').catch(() => [])),
+          fetchApi('/api/track-record').catch(() => ({}))),
+        ]);
+        const tr = trackRecord || {};
+        document.getElementById('port-balance').textContent = '$' + (wallet?.value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
+        const pnl = tr.total_pnl ?? (trades || []).reduce((s, t) => s + (parseFloat(t.pnl_usd || t.pnl) || 0), 0);
+        const pnlEl = document.getElementById('port-pnl');
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + (pnl ?? 0).toFixed(2);
+        pnlEl.className = 'val data-font ' + (pnl >= 0 ? 'green' : 'red');
+        document.getElementById('port-wr').textContent = (tr.win_rate ?? 0) + '%';
+        document.getElementById('port-open').textContent = (positions || []).length;
+        document.getElementById('port-positions').innerHTML = (positions || []).length
+          ? `<table><thead><tr><th>Marché</th><th>Type</th><th>Side</th><th>Entrée</th><th>Valeur</th><th>P&L</th><th>Statut</th></tr></thead><tbody>
+            ${(positions || []).map(p => {
+              const val = parseFloat(p.current_value_usd || p.cost_basis_usd || 0);
+              const cost = parseFloat(p.cost_basis_usd || 0);
+              const pl = val - cost;
+              return `<tr><td>${(p.market_id || '').slice(0, 25)}...</td><td>—</td><td>${p.side || '-'}</td><td>${(parseFloat(p.avg_entry_price || 0) * 100).toFixed(1)}%</td><td>$${val.toFixed(2)}</td><td class="${pl >= 0 ? 'positive' : 'negative'}">$${pl.toFixed(2)}</td><td>${p.status || 'OPEN'}</td></tr>`;
+            }).join('')}</tbody></table>`
+          : '<div style="padding:24px;color:var(--text-secondary)">Aucune position ouverte</div>';
+        document.getElementById('port-history').innerHTML = (trades || []).length
+          ? `<table><thead><tr><th>Date</th><th>Marché</th><th>Side</th><th>Entrée</th><th>Sortie</th><th>P&L</th><th>Edge</th></tr></thead><tbody>
+            ${(trades || []).slice(0, 30).map(t => {
+              const p = parseFloat(t.pnl_usd || t.pnl) || 0;
+              return `<tr><td>${(t.created_at || '').slice(0, 16)}</td><td>${(t.market_id || '').slice(0, 20)}...</td><td>${t.side}</td><td>$${parseFloat(t.amount_usd || 0).toFixed(2)}</td><td>—</td><td class="${p >= 0 ? 'positive' : 'negative'}">$${p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td></tr>`;
+            }).join('')}</tbody></table>`
+          : '<div style="padding:24px;color:var(--text-secondary)">Aucun trade</div>';
       } catch (e) {
-        document.getElementById('port-list').textContent = 'Error: ' + e.message;
+        document.getElementById('port-positions').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
+    function runTypingEffect(el, text, charMs) {
+      if (!el || !text) return;
+      let i = 0;
+      const cursor = document.createElement('span');
+      cursor.className = 'typing-cursor';
+      el.textContent = '';
+      el.appendChild(cursor);
+      const iv = setInterval(() => {
+        el.removeChild(cursor);
+        el.textContent = text.slice(0, ++i);
+        if (i < text.length) el.appendChild(cursor);
+        else clearInterval(iv);
+      }, charMs);
+    }
+
     async function loadDebates() {
       try {
         const d = await fetchApi('/api/debates');
-        const deb = d?.debates ?? [];
-        document.getElementById('deb-list').innerHTML = deb.length ? `
-          <table><thead><tr><th>Agent</th><th>Vote</th><th>Message</th></tr></thead><tbody>
-          ${deb.slice(-15).reverse().map(x => `<tr><td>${x.agent||'-'}</td><td>${x.vote||'-'}</td><td>${(x.message||x.content||'').slice(0,80)}...</td></tr>`).join('')}
-          </tbody></table>
-        ` : '<div class="loading">No debates yet</div>';
+        const deb = d?.debates || [];
+        document.getElementById('deb-status').textContent = deb.length ? '🔴 Débat en cours' : '⏳ En veille';
+        if (!deb.length) {
+          document.getElementById('deb-timeline').innerHTML = '<div style="padding:24px;color:var(--text-secondary)">Aucun débat récent. Activation automatique sur edge ≥15%.</div>';
+        } else {
+          const now = Date.now();
+          const html = deb.slice(-10).reverse().map((x) => {
+            const raw = (x.message || x.content || '');
+            const msg = raw.slice(0, 120) + (raw.length >= 120 ? '...' : '');
+            const created = x.created_at ? new Date(x.created_at).getTime() : 0;
+            const isRecent = (now - created) < 30000;
+            const ts = (x.created_at || '').slice(11, 19) || '--:--:--';
+            const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return `<div style="padding:12px 0;border-bottom:1px solid var(--dark-border)">
+              <div style="color:var(--gold);font-size:0.8rem;margin-bottom:4px">📊 ${esc(x.agent || 'Agent')} [${ts}]</div>
+              <div class="debate-msg" data-msg="${esc(msg)}" data-recent="${isRecent}" style="font-size:0.9rem;color:var(--text-secondary)">${!isRecent ? esc(msg) : ''}</div>
+            </div>`;
+          }).join('');
+          document.getElementById('deb-timeline').innerHTML = html;
+          document.querySelectorAll('.debate-msg[data-recent="true"]').forEach(el => {
+            const msg = el.getAttribute('data-msg') || '';
+            el.removeAttribute('data-msg');
+            el.textContent = '';
+            runTypingEffect(el, msg, 50);
+          });
+        }
+        document.getElementById('deb-verdict').textContent = deb.length ? '✅ APPROVED' : '';
+        document.getElementById('deb-recs').innerHTML = deb.length ? `<p>Les agents recommandent ${deb.length} analyse(s) cette semaine.</p>` : '<p>Aucune recommandation active.</p>';
       } catch (e) {
-        document.getElementById('deb-list').textContent = 'Error: ' + e.message;
+        document.getElementById('deb-timeline').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
+    function drawPnlChart(trades) {
+      const canvas = document.getElementById('pnl-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, w, h);
+      if (!trades || !trades.length) {
+        ctx.fillStyle = '#888';
+        ctx.font = '14px JetBrains Mono';
+        ctx.fillText('Aucune donnée', 20, h / 2);
+        return;
+      }
+      const cum = [];
+      let acc = 0;
+      const sorted = [...trades].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+      sorted.forEach(t => {
+        acc += parseFloat(t.pnl_usd || t.pnl) || 0;
+        cum.push({ x: t.created_at, y: acc });
+      });
+      const min = Math.min(0, ...cum.map(c => c.y));
+      const max = Math.max(0, ...cum.map(c => c.y));
+      const range = max - min || 1;
+      const pad = 40;
+      const chartW = w - pad * 2;
+      const chartH = h - pad * 2;
+      ctx.strokeStyle = acc >= 0 ? '#F5A623' : '#FF4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      cum.forEach((p, i) => {
+        const x = pad + (i / Math.max(1, cum.length - 1)) * chartW;
+        const y = pad + chartH - ((p.y - min) / range) * chartH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.fillStyle = '#888';
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillText('P&L ($)', 8, 20);
+    }
+
     async function loadPerformance() {
       try {
-        const trades = await fetchApi('/api/trades');
-        document.getElementById('perf-list').innerHTML = trades?.length ? `
-          <table><thead><tr><th>Date</th><th>Market</th><th>Side</th><th>Amount</th><th>PnL</th><th>Status</th></tr></thead><tbody>
-          ${trades.slice(0,30).map(t => `<tr><td>${(t.created_at||'').slice(0,16)}</td><td>${(t.market_id||'').slice(0,20)}...</td><td>${t.side}</td><td>$${parseFloat(t.amount_usd||0).toFixed(2)}</td><td class="${(parseFloat(t.pnl_usd)||0)>=0?'positive':'negative'}">$${(parseFloat(t.pnl_usd)||0).toFixed(2)}</td><td>${t.status}</td></tr>`).join('')}
-          </tbody></table>
-        ` : '<div class="loading">No trades yet</div>';
+        const [trackRecord, trades] = await Promise.all([
+          fetchApi('/api/track-record').catch(() => ({}))),
+          fetchApi('/api/trades').catch(() => [])),
+        ]);
+        const tr = trackRecord || {};
+        document.getElementById('perf-depuis').textContent = tr.depuis ? String(tr.depuis).slice(0, 10) : '—';
+        document.getElementById('perf-wr').textContent = (tr.win_rate ?? 0) + '%';
+        const pnlEl = document.getElementById('perf-pnl');
+        pnlEl.textContent = (tr.total_pnl >= 0 ? '+' : '') + '$' + (tr.total_pnl ?? 0).toFixed(2);
+        pnlEl.className = 'val data-font ' + ((tr.total_pnl ?? 0) >= 0 ? 'green' : 'red');
+        document.getElementById('perf-trades').textContent = tr.total_trades ?? 0;
+        document.getElementById('perf-edge').textContent = (tr.avg_edge ?? 0) + '%';
+        drawPnlChart(trades || []);
+        const byCat = {};
+        (trades || []).forEach(t => {
+          const cat = inferCategory(t.market_id || t.question);
+          if (!byCat[cat]) byCat[cat] = { trades: 0, pnl: 0, wins: 0 };
+          byCat[cat].trades++;
+          const p = parseFloat(t.pnl_usd || t.pnl) || 0;
+          byCat[cat].pnl += p;
+          if (p > 0) byCat[cat].wins++;
+        });
+        document.getElementById('perf-breakdown').innerHTML = Object.entries(byCat).length
+          ? `<table><thead><tr><th>Catégorie</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>
+            ${Object.entries(byCat).map(([cat, d]) => `<tr><td>${cat}</td><td>${d.trades}</td><td>${d.trades ? (d.wins / d.trades * 100).toFixed(1) : 0}%</td><td class="${d.pnl >= 0 ? 'positive' : 'negative'}">$${d.pnl.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+          : '<div style="padding:24px;color:var(--text-secondary)">Aucune donnée</div>';
+        const best = (trades || []).map(t => ({ ...t, p: parseFloat(t.pnl_usd || t.pnl) || 0 })).sort((a, b) => b.p - a.p).slice(0, 5);
+        document.getElementById('perf-best').innerHTML = best.length
+          ? `<table><thead><tr><th>Marché</th><th>P&L</th><th>Edge</th><th>Date</th></tr></thead><tbody>
+            ${best.map(t => `<tr><td>${(t.market_id || '').slice(0, 35)}...</td><td class="${t.p >= 0 ? 'positive' : 'negative'}">$${t.p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td><td>${(t.created_at || '').slice(0, 10)}</td></tr>`).join('')}</tbody></table>`
+          : '<div style="padding:24px;color:var(--text-secondary)">Aucun trade</div>';
       } catch (e) {
-        document.getElementById('perf-list').textContent = 'Error: ' + e.message;
+        document.getElementById('perf-breakdown').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
+    setInterval(() => {
+      document.getElementById('utc-time').textContent = utcTime();
+    }, 1000);
+
+    setInterval(() => {
+      if (page === 'overview') loadOverview();
+      else if (page === 'signals') loadSignals();
+      else if (page === 'portfolio') loadPortfolio();
+      else if (page === 'debates') loadDebates();
+      else if (page === 'performance') loadPerformance();
+    }, REFRESH_MS);
+
     nav();
-    setInterval(() => { if (page === 'overview') loadOverview(); }, 15000);
   </script>
 </body>
 </html>

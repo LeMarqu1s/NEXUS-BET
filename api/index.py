@@ -104,6 +104,28 @@ def _get_track_record():
     }
 
 
+def _get_top_markets():
+    """Top 5 marchés par volume 24h depuis Gamma API."""
+    try:
+        with urlopen(
+            "https://gamma-api.polymarket.com/markets?limit=5&order=volume24hr&ascending=false&closed=false",
+            timeout=10,
+        ) as r:
+            data = json.loads(r.read().decode())
+        markets = data if isinstance(data, list) else data.get("data", []) or []
+        return [
+            {
+                "question": (m.get("question") or "")[:60],
+                "volume24hr": float(m.get("volume24hr") or m.get("volume", 0)),
+                "outcomePrices": m.get("outcomePrices") or ["0.5", "0.5"],
+                "conditionId": m.get("conditionId") or m.get("id"),
+            }
+            for m in markets[:5]
+        ]
+    except Exception:
+        return []
+
+
 def _get_market_types():
     """Stats des signaux par type depuis paperclip_pending_signals.json."""
     p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
@@ -167,7 +189,7 @@ class handler(BaseHTTPRequestHandler):
             return
         if path == "/api/debates":
             rows = _supabase_fetch("debates", 30)
-            debates = [{"agent": r.get("role"), "vote": r.get("vote"), "message": r.get("content"), "content": r.get("content")} for r in rows]
+            debates = [{"agent": r.get("role"), "vote": r.get("vote"), "message": r.get("content"), "content": r.get("content"), "created_at": r.get("created_at")} for r in rows]
             self._json_response({"debates": debates})
             return
         if path == "/api/track-record":
@@ -175,6 +197,9 @@ class handler(BaseHTTPRequestHandler):
             return
         if path == "/api/market-types":
             self._json_response(_get_market_types())
+            return
+        if path == "/api/top-markets":
+            self._json_response(_get_top_markets())
             return
         self.send_response(404)
         self.end_headers()
