@@ -84,12 +84,14 @@ def _market_category(market: dict[str, Any]) -> str:
     return "autre"
 
 
-def passes_filter(market: dict[str, Any]) -> bool:
-    """True if market passes all filters."""
+def passes_filter(market: dict[str, Any], reason_out: list[str] | None = None) -> bool:
+    """True if market passes all filters. If reason_out is provided, appends rejection reason."""
     blacklist = get_categories_blacklist()
     if blacklist:
         cat = _market_category(market)
         if cat in blacklist:
+            if reason_out is not None:
+                reason_out.append(f"category '{cat}' blacklisted")
             return False
 
     min_days = get_min_days_resolution()
@@ -97,20 +99,31 @@ def passes_filter(market: dict[str, Any]) -> bool:
     days = _days_to_resolution(market)
     if days is not None:
         if days < min_days or days > max_days:
+            if reason_out is not None:
+                reason_out.append(f"days={days} outside [{min_days},{max_days}]")
             return False
 
     keywords = get_keywords_blacklist()
     if keywords:
         q = (market.get("question") or "").lower()
-        if any(kw in q for kw in keywords):
+        hit = [kw for kw in keywords if kw in q]
+        if hit:
+            if reason_out is not None:
+                reason_out.append(f"keyword blacklisted: {hit}")
             return False
 
     volume = float(market.get("volumeNum", market.get("volume", 0)) or 0)
-    if volume < get_min_market_volume():
+    min_vol = get_min_market_volume()
+    if volume < min_vol:
+        if reason_out is not None:
+            reason_out.append(f"volume={volume:.0f} < {min_vol:.0f}")
         return False
 
     liquidity = float(market.get("liquidityNum", market.get("liquidity", 0)) or 0)
-    if liquidity < get_min_liquidity():
+    min_liq = get_min_liquidity()
+    if liquidity < min_liq:
+        if reason_out is not None:
+            reason_out.append(f"liquidity={liquidity:.0f} < {min_liq:.0f}")
         return False
 
     return True

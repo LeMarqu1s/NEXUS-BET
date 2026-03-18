@@ -57,14 +57,29 @@ class WebSocketScanner:
 
     async def _refresh_markets(self) -> None:
         """Fetch markets and build token_id -> (market, side) map."""
+        from core.market_filter import get_min_market_volume, get_min_liquidity
         try:
             markets = await self.polymarket.get_markets(limit=50)
+            logger.info(
+                "Scanner: %d raw markets from Gamma API | thresholds: MIN_VOLUME=%.0f, MIN_LIQUIDITY=%.0f",
+                len(markets), get_min_market_volume(), get_min_liquidity(),
+            )
             self._token_to_market.clear()
+            filtered_count = 0
+            no_tokens_count = 0
             for market in markets:
-                if not passes_filter(market):
+                q = (market.get("question") or "")[:60]
+                reason: list[str] = []
+                if not passes_filter(market, reason_out=reason):
+                    if filtered_count < 5:
+                        logger.info("  REJECTED: %s → %s", q, reason[0] if reason else "unknown")
+                    filtered_count += 1
                     continue
                 tokens = market.get("clobTokenIds") or market.get("tokens") or []
                 if not isinstance(tokens, list) or len(tokens) < 2:
+                    if no_tokens_count < 3:
+                        logger.info("  NO_TOKENS: %s → clobTokenIds=%s", q, tokens)
+                    no_tokens_count += 1
                     continue
                 yes_tok = tokens[0] if isinstance(tokens[0], dict) else {"token_id": tokens[0]}
                 no_tok = tokens[1] if isinstance(tokens[1], dict) else {"token_id": tokens[1]}
@@ -75,7 +90,10 @@ class WebSocketScanner:
                 if no_id:
                     self._token_to_market[str(no_id)] = (market, "NO")
             self._last_markets_refresh = time.monotonic()
-            logger.debug("WebSocket scanner: %d tokens from %d markets", len(self._token_to_market), len(markets))
+            logger.info(
+                "Scanner: %d tokens retained | %d filtered out | %d no tokens",
+                len(self._token_to_market), filtered_count, no_tokens_count,
+            )
         except Exception as e:
             logger.warning("WebSocket scanner: failed to refresh markets: %s", e)
 
