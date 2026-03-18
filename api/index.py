@@ -1,15 +1,70 @@
 """
 NEXUS CAPITAL - Vercel Serverless Dashboard API
 Serves Bloomberg-style dashboard + API endpoints with Supabase data.
+Auth: token dans ?token= requis pour les endpoints API (sauf /health et dashboard HTML).
 """
 import json
 import os
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.parse import parse_qs
+from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 DATA_ROOT = os.getenv("NEXUS_DATA_ROOT", str(Path(__file__).resolve().parent.parent))
+
+
+def _get_query_token(path: str) -> str | None:
+    """Extrait ?token=XXX de l'URL."""
+    if "?" not in path:
+        return None
+    qs = path.split("?", 1)[1]
+    params = parse_qs(qs)
+    tokens = params.get("token", [])
+    return tokens[0].strip() if tokens else None
+
+
+def _validate_token(token: str) -> bool:
+    """Vérifie token dans Supabase users : is_active et (expires_at null ou > now)."""
+    if not token or len(token) < 6:
+        return False
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    try:
+        req = Request(
+            f"{url}/rest/v1/users?access_token=eq.{token}&select=is_active,expires_at",
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+            },
+            method="GET",
+        )
+        with urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode())
+        if not data or not isinstance(data, list):
+            return False
+        row = data[0]
+        if not row.get("is_active", False):
+            return False
+        exp = row.get("expires_at")
+        if exp:
+            from datetime import datetime, timezone
+            try:
+                if isinstance(exp, str):
+                    exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                else:
+                    exp_dt = exp
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > exp_dt:
+                    return False
+            except Exception:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _load_json(path: str, default):
@@ -47,7 +102,7 @@ def _get_wallet_value():
 def _supabase_fetch(table: str, limit: int = 50, extra: str = ""):
     """Fetch from Supabase. Returns list or empty list on error."""
     url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
         return []
     try:
@@ -154,9 +209,21 @@ def _get_dashboard_html():
 
 
 class handler(BaseHTTPRequestHandler):
+    def _unauthorized(self):
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps({"error": "unauthorized", "message": "Accès requis"}).encode()
+        )
+
     def do_GET(self):
         path = self.path.split("?")[0]
-        # Serve dashboard UI at / and /dashboard
+        full_path = self.path
+        token = _get_query_token(full_path)
+
+        # Public : dashboard HTML et /health
         if path in ("/", "/dashboard", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -167,6 +234,12 @@ class handler(BaseHTTPRequestHandler):
         if path == "/health":
             self._json_response({"status": "ok", "dashboard": "NEXUS CAPITAL"})
             return
+
+        # Endpoints API protégés par token
+        if not token or not _validate_token(token):
+            self._unauthorized()
+            return
+
         if path == "/api/signals":
             p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
             data = _load_json(str(p), {"signals": []})

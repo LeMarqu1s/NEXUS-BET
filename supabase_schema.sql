@@ -107,3 +107,21 @@ CREATE TABLE IF NOT EXISTS bot_runs (
 );
 
 CREATE INDEX idx_bot_runs_started_at ON bot_runs(started_at DESC);
+
+-- ============================================
+-- USERS (Auth token pour dashboard privé)
+-- ============================================
+CREATE TABLE IF NOT EXISTS users (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    telegram_chat_id TEXT UNIQUE NOT NULL,
+    access_token TEXT UNIQUE NOT NULL,
+    is_active BOOLEAN DEFAULT false,
+    plan TEXT DEFAULT 'free',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    expires_at TIMESTAMPTZ,
+    referral_code TEXT,
+    referred_by TEXT
+);
+
+CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
+CREATE INDEX idx_users_access_token ON users(access_token);

@@ -117,7 +117,19 @@
   </style>
 </head>
 <body>
-  <header class="header">
+  <div id="paywall-overlay" style="display:none;position:fixed;inset:0;background:var(--dark-bg);z-index:999;flex-direction:column;align-items:center;justify-content:center;padding:24px;flex:1;">
+    <div class="glass-card" style="max-width:400px;text-align:center;padding:48px 32px;">
+      <div style="font-size:2.5rem;margin-bottom:16px;">⚡</div>
+      <h1 style="font-family:JetBrains Mono;color:var(--gold);font-size:1.5rem;margin-bottom:8px;">NEXUS CAPITAL</h1>
+      <p style="color:var(--text-secondary);font-size:1rem;margin-bottom:24px;">Accès restreint aux abonnés</p>
+      <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:24px;">Obtenez votre lien privé via le bot Telegram.</p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <a href="/?token=public" style="padding:12px 24px;border:1px solid var(--glass-border);border-radius:8px;color:var(--gold);text-decoration:none;font-size:0.9rem;">Voir le track record public</a>
+        <a href="https://t.me/nexus_capital_bot" target="_blank" rel="noopener" style="padding:12px 24px;background:var(--gold);border-radius:8px;color:var(--dark-bg);text-decoration:none;font-size:0.9rem;font-weight:600;">S'abonner</a>
+      </div>
+    </div>
+  </div>
+  <header class="header" id="main-header">
     <span class="logo">⚡ NEXUS CAPITAL</span>
     <div class="status-bar">
       <span class="status-dot"></span>
@@ -248,8 +260,39 @@
     let knownIds = new Set();
     const REFRESH_MS = 5000;
 
+    function getToken() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('token') || '';
+    }
+
+    let AUTH_TOKEN = getToken();
+
+    function showPaywall() {
+      const pw = document.getElementById('paywall-overlay');
+      const h = document.getElementById('main-header');
+      const m = document.querySelector('.main');
+      if (pw) { pw.style.display = 'flex'; }
+      if (h) { h.style.display = 'none'; }
+      if (m) { m.style.display = 'none'; }
+    }
+
+    function hidePaywall() {
+      const pw = document.getElementById('paywall-overlay');
+      const h = document.getElementById('main-header');
+      const m = document.querySelector('.main');
+      if (pw) { pw.style.display = 'none'; }
+      if (h) { h.style.display = ''; }
+      if (m) { m.style.display = ''; }
+    }
+
     async function fetchApi(path) {
-      const r = await fetch(API + path);
+      const sep = path.includes('?') ? '&' : '?';
+      const url = API + path + (AUTH_TOKEN ? sep + 'token=' + encodeURIComponent(AUTH_TOKEN) : '');
+      const r = await fetch(url);
+      if (r.status === 401) {
+        showPaywall();
+        throw new Error('unauthorized');
+      }
       if (!r.ok) throw new Error(r.status);
       return r.json();
     }
@@ -609,6 +652,7 @@
     }, 1000);
 
     setInterval(() => {
+      if (!AUTH_TOKEN) return;
       if (page === 'overview') loadOverview();
       else if (page === 'signals') loadSignals();
       else if (page === 'portfolio') loadPortfolio();
@@ -616,7 +660,11 @@
       else if (page === 'performance') loadPerformance();
     }, REFRESH_MS);
 
-    nav();
+    if (!AUTH_TOKEN) {
+      showPaywall();
+    } else {
+      nav();
+    }
   </script>
 </body>
 </html>

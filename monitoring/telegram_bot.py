@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -597,6 +598,108 @@ async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
+def _is_admin(chat_id: int) -> bool:
+    """Vérifie si le chat_id est un admin (accès permanent)."""
+    admin_ids = (
+        os.getenv("ADMIN_TELEGRAM_CHAT_IDS", "")
+        or os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")
+        or os.getenv("TELEGRAM_CHAT_ID", "")
+    )
+    if not admin_ids:
+        return False
+    for aid in str(admin_ids).replace(",", " ").split():
+        try:
+            if int(aid.strip()) == chat_id:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+async def _upsert_user_token(telegram_chat_id: str) -> tuple[str, bool]:
+    """
+    Génère un token et upsert dans Supabase users.
+    Returns (access_token, is_active).
+    """
+    token = uuid.uuid4().hex[:8].lower()
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        log.warning("Supabase non configuré pour /access")
+        return token, False
+
+    is_admin = _is_admin(int(telegram_chat_id))
+    payload = {
+        "telegram_chat_id": str(telegram_chat_id),
+        "access_token": token,
+        "is_active": is_admin,
+        "expires_at": None if is_admin else None,
+        "plan": "admin" if is_admin else "free",
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }
+        try:
+            r = await client.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{telegram_chat_id}", "select": "id"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if r.status_code == 200 and r.json():
+                row = r.json()[0]
+                rid = row.get("id")
+                await client.patch(
+                    f"{url}/rest/v1/users",
+                    params={"id": f"eq.{rid}"},
+                    headers=headers,
+                    json={
+                        "access_token": token,
+                        "is_active": is_admin,
+                        "expires_at": None,
+                        "plan": "admin" if is_admin else "free",
+                    },
+                )
+            else:
+                await client.post(f"{url}/rest/v1/users", headers=headers, json=payload)
+        except Exception as e:
+            log.exception("Supabase upsert user: %s", e)
+            return token, False
+    return token, is_admin
+
+
+async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Génère un token dashboard et envoie le lien privé."""
+    chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+    token, is_active = await _upsert_user_token(chat_id)
+    dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app")
+    link = f"{dashboard_url.rstrip('/')}?token={token}"
+
+    if not is_active:
+        await update.message.reply_text(
+            f"🔐 <b>ACCÈS DASHBOARD</b>\n{LINE}\n"
+            f"Votre lien :\n<code>{link}</code>\n\n"
+            f"⚠️ <b>Accès restreint</b>\n"
+            f"Votre compte n'est pas encore actif.\n"
+            f"S'abonnez pour débloquer le dashboard complet.\n{LINE}",
+            parse_mode="HTML",
+            reply_markup=_back_keyboard(),
+        )
+        return
+
+    await update.message.reply_text(
+        f"🔐 <b>Votre dashboard privé</b>\n{LINE}\n"
+        f"{link}\n\n"
+        f"<i>Ce lien est personnel — ne le partagez pas.</i>\n{LINE}",
+        parse_mode="HTML",
+        reply_markup=_back_keyboard(),
+    )
+
+
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """PASTE & MONITOR : intercepte une adresse 0x collée par l'utilisateur."""
     text = (update.message.text or "").strip()
@@ -1093,6 +1196,7 @@ async def run_telegram_poller() -> None:
                 app.add_handler(CommandHandler("referral", cmd_referral))
                 app.add_handler(CommandHandler("settings", cmd_settings))
                 app.add_handler(CommandHandler("exit", cmd_exit))
+                app.add_handler(CommandHandler("access", cmd_access))
                 app.add_handler(CallbackQueryHandler(callback_handler))
                 app.add_handler(
                     MessageHandler(
@@ -1106,6 +1210,7 @@ async def run_telegram_poller() -> None:
                 await app.start()
                 await app.bot.set_my_commands([
                     BotCommand("start", "⚡ Menu principal"),
+                    BotCommand("access", "🔐 Lien dashboard privé"),
                     BotCommand("portfolio", "💼 Solde et positions ouvertes"),
                     BotCommand("scan", "🔍 Derniers signaux détectés"),
                     BotCommand("agents", "🤖 Débats IA en cours"),
