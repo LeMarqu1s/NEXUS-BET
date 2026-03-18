@@ -42,7 +42,11 @@ def _get(key: str, default: Any) -> Any:
 
 
 def is_auto_trade_enabled() -> bool:
-    return _get("AUTO_TRADE_ENABLED", False)
+    try:
+        from monitoring.telegram_wealth_manager import get_auto_trade
+        return get_auto_trade()
+    except Exception:
+        return _get("AUTO_TRADE_ENABLED", False)
 
 
 def get_max_positions() -> int:

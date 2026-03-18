@@ -272,6 +272,10 @@ async def main() -> None:
     _main_task = asyncio.current_task()
     assert _main_task is not None
 
+    # TP/SL monitor (shared OrderManager instance)
+    from execution.order_manager import OrderManager
+    _order_manager = OrderManager()
+
     # Tâches du Master Loop
     scanner_task = asyncio.create_task(run_scanner_ws())
     poller_task = asyncio.create_task(run_telegram_poller())
@@ -279,9 +283,10 @@ async def main() -> None:
     autotrade_task = asyncio.create_task(_auto_trade_loop())
     yield_task = asyncio.create_task(_defi_yield_loop())
     antisybil_task = asyncio.create_task(_anti_sybil_loop())
+    tpsl_task = asyncio.create_task(_order_manager.start_monitor_loop())
 
-    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task]
-    log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil")
+    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task, tpsl_task]
+    log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil | TP/SL")
 
     try:
         await asyncio.gather(*tasks)

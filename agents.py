@@ -60,6 +60,11 @@ class AdversarialAITeam:
                 return content[0].get("text", "")
             return str(content)
 
+    async def _call_agent(self, role: str, system: str, user: str) -> str:
+        """Route to Paperclip agent if available, otherwise fall back to Claude."""
+        # TODO: add Paperclip routing per role when PAPERCLIP_URL is set
+        return await self._call_claude(system, user)
+
     async def quant_propose_trade(self, market_id: str, outcome: str, edge_bps: float, kelly: float, rationale: str) -> str:
         """Quant proposes a trade with thesis (Paperclip Quant or Claude)."""
         system = """You are a quantitative trader at NEXUS Capital. Propose trades based on mispricing.

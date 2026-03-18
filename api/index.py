@@ -44,7 +44,7 @@ def _get_wallet_value():
 def _supabase_fetch(table: str, limit: int = 50, extra: str = ""):
     """Fetch from Supabase. Returns list or empty list on error."""
     url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
         return []
     try:

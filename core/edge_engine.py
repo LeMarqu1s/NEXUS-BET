@@ -157,6 +157,8 @@ class EdgeEngine:
         b = (1.0 - polymarket_price) / polymarket_price if polymarket_price > 0 else 1.0
         kelly = self._kelly(p, 1 - p, b)
 
+        signal_strength = "STRONG_BUY" if edge_pct >= 0.15 and conf >= 0.9 else "BUY"
+
         return EdgeSignal(
             market_id=str(market.get("conditionId", market.get("condition_id", market.get("id", "")))),
             token_id=token_id,

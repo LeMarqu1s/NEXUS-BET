@@ -1,25 +1,5 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api(.*)",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/",
-      "dest": "/api/index.py"
-    }
-  ],
-  "env": {
-    "MIN_EDGE_THRESHOLD": "5.0",
-    "MIN_EV_THRESHOLD": "20.0",
-    "MIN_MARKET_VOLUME": "10000",
-    "MIN_LIQUIDITY": "1000"
-  }
+  "rootDirectory": null,
+  "builds": [{"src": "api/index.py", "use": "@vercel/python"}],
+  "routes": [{"src": "/(.*)", "dest": "api/index.py"}]
 }
