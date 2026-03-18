@@ -37,12 +37,22 @@ class PolymarketClient:
             self._client.set_api_creds(self._api_creds)
         return self._client
 
-    async def get_markets(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Fetch active markets from Polymarket Gamma API."""
+    async def get_markets(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Fetch active, non-closed markets from Polymarket Gamma API sorted by 24h volume."""
         gamma_url = settings.POLYMARKET_GAMMA_URL
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                r = await client.get(f"{gamma_url}/markets", params={"limit": limit, "active": "true"})
+                r = await client.get(
+                    f"{gamma_url}/markets",
+                    params={
+                        "limit": limit,
+                        "active": "true",
+                        "closed": "false",
+                        "archived": "false",
+                        "order": "volume24hr",
+                        "ascending": "false",
+                    },
+                )
                 r.raise_for_status()
                 data = r.json()
                 return data if isinstance(data, list) else data.get("data", []) or []

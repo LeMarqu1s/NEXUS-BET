@@ -59,11 +59,20 @@ class WebSocketScanner:
         """Fetch markets and build token_id -> (market, side) map."""
         from core.market_filter import get_min_market_volume, get_min_liquidity
         try:
-            markets = await self.polymarket.get_markets(limit=50)
+            markets = await self.polymarket.get_markets(limit=100)
             logger.info(
                 "Scanner: %d raw markets from Gamma API | thresholds: MIN_VOLUME=%.0f, MIN_LIQUIDITY=%.0f",
                 len(markets), get_min_market_volume(), get_min_liquidity(),
             )
+            if markets:
+                sample = markets[0]
+                logger.info(
+                    "Scanner: sample market keys=%s | volumeNum=%s liquidity=%s liquidityNum=%s volume24hr=%s clobTokenIds=%s",
+                    list(sample.keys())[:20],
+                    sample.get("volumeNum"), sample.get("liquidity"),
+                    sample.get("liquidityNum"), sample.get("volume24hr"),
+                    str(sample.get("clobTokenIds", []))[:80],
+                )
             self._token_to_market.clear()
             filtered_count = 0
             no_tokens_count = 0
