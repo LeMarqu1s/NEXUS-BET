@@ -23,6 +23,7 @@ def _load_json(path: str, default):
 
 
 def _get_wallet_value():
+    """Retourne {"value": X, "user": Y} pour le dashboard."""
     relayer = os.getenv("RELAYER_API_KEY_ADDRESS")
     if not relayer:
         return {"value": 0, "user": ""}
@@ -33,9 +34,11 @@ def _get_wallet_value():
         ) as r:
             arr = json.loads(r.read().decode())
             if isinstance(arr, list) and arr:
-                return arr[0]
+                row = arr[0]
+                return {"value": float(row.get("value", row.get("usdc", 0))), "user": row.get("user", relayer)}
             if isinstance(arr, dict):
-                return arr
+                v = arr.get("value", arr.get("usdc", 0))
+                return {"value": float(v), "user": arr.get("user", relayer)}
     except (URLError, json.JSONDecodeError, OSError):
         pass
     return {"value": 0, "user": relayer}
@@ -105,18 +108,16 @@ def _get_track_record():
 
 
 def _get_top_markets():
-    """Top 5 marchés par volume 24h depuis Gamma API."""
+    """Top 5 marchés par volume 24h depuis Gamma API Polymarket."""
     try:
-        with urlopen(
-            "https://gamma-api.polymarket.com/markets?limit=5&order=volume24hr&ascending=false&closed=false",
-            timeout=10,
-        ) as r:
+        url = "https://gamma-api.polymarket.com/markets?limit=5&active=true&closed=false&archived=false&order=volume24hr&ascending=false"
+        with urlopen(url, timeout=10) as r:
             data = json.loads(r.read().decode())
         markets = data if isinstance(data, list) else data.get("data", []) or []
         return [
             {
                 "question": (m.get("question") or "")[:60],
-                "volume24hr": float(m.get("volume24hr") or m.get("volume", 0)),
+                "volume24hr": float(m.get("volume24hr") or m.get("volume") or m.get("volume_24hr", 0)),
                 "outcomePrices": m.get("outcomePrices") or ["0.5", "0.5"],
                 "conditionId": m.get("conditionId") or m.get("id"),
             }

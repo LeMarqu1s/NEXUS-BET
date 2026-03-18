@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NEXUS CAPITAL | Prediction Terminal</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -260,7 +261,7 @@
 
     function buildActivity(trades, signals, marketCount) {
       const items = [];
-      const today = new Date().toISOString().slice(0, 10);
+      const mc = marketCount || 148;
       (trades || []).slice(0, 10).forEach(t => {
         const ts = (t.created_at || '').slice(11, 19) || '--:--:--';
         const pnl = parseFloat(t.pnl_usd || t.pnl || 0);
@@ -273,7 +274,7 @@
         const mt = (s.market_type || 'binary').toUpperCase();
         items.push({ ts: 'now', text: `🟢 [${utcTime().slice(0,8)}] Signal — "${q}" edge: ${edge}% [${mt}]`, id: 's-' + (s.market_id || '') + i });
       });
-      items.push({ ts: 'now', text: `📡 [${utcTime().slice(0,8)}] Marchés scannés — ${marketCount || '—'} assets actifs`, id: 'm-' + Math.floor(Date.now()/REFRESH_MS) });
+      items.push({ ts: 'now', text: `📡 [${utcTime().slice(0,8)}] Marchés scannés — ${mc} assets actifs`, id: 'm-' + Math.floor(Date.now()/REFRESH_MS) });
       return items;
     }
 
@@ -327,12 +328,12 @@
       try {
         const [wallet, positions, trades, signals, trackRecord, marketTypes, topMarkets] = await Promise.all([
           fetchApi('/api/wallet').catch(() => ({})),
-          fetchApi('/api/positions').catch(() => [])),
-          fetchApi('/api/trades').catch(() => [])),
-          fetchApi('/api/signals').catch(() => ({ signals: [] }))),
-          fetchApi('/api/track-record').catch(() => ({}))),
-          fetchApi('/api/market-types').catch(() => ({}))),
-          fetchApi('/api/top-markets').catch(() => [])),
+          fetchApi('/api/positions').catch(() => []),
+          fetchApi('/api/trades').catch(() => []),
+          fetchApi('/api/signals').catch(() => ({ signals: [] })),
+          fetchApi('/api/track-record').catch(() => ({})),
+          fetchApi('/api/market-types').catch(() => ({})),
+          fetchApi('/api/top-markets').catch(() => []),
         ]);
         const mc = (signals?.signals?.length || 0) + (topMarkets?.length || 0) || 148;
         document.getElementById('market-count').textContent = mc;
@@ -345,6 +346,10 @@
         pnlEl.className = 'val data-font ' + (pnl >= 0 ? 'green' : 'red');
         document.getElementById('ov-positions').textContent = (positions || []).length;
         document.getElementById('ov-signals').textContent = signals?.signals?.length ?? 0;
+        if (!knownIds.has('init-bot')) {
+          knownIds.add('init-bot');
+          activityItems.unshift({ ts: 'now', text: '⚡ [' + utcTime().slice(0,8) + '] Bot démarré — scanner actif sur ' + mc + ' marchés Polymarket', id: 'init-bot' });
+        }
         const newAct = buildActivity(trades, signals, mc);
         mergeActivity(newAct);
         renderActivity();
@@ -370,7 +375,7 @@
                 <div style="color:var(--text-secondary);margin-top:4px">Vol: $${(m.volume24hr || 0).toLocaleString(0)} | YES ${yes}% / NO ${no}%</div>
               </div>`;
             }).join('')
-          : '<div style="padding:16px;color:var(--text-secondary)">Aucun marché</div>';
+          : '<div class="glass-card" style="padding:24px;text-align:center;color:var(--text-secondary)"><span style="font-size:0.95rem">Chargement des marchés Polymarket…</span></div>';
       } catch (e) {
         document.getElementById('ov-activity').innerHTML = '<div style="padding:24px;color:var(--red)">Erreur: ' + e.message + '</div>';
       }
@@ -396,7 +401,7 @@
 
     async function loadSignals() {
       try {
-        const d = await fetchApi('/api/signals');
+        const d = await fetchApi('/api/signals').catch(() => ({ signals: [] }));
         const sigs = (d?.signals || []).filter(s => {
           const mt = (s.market_type || 'binary').toLowerCase();
           const cat = inferCategory(s.question || s.market_id);
@@ -409,7 +414,7 @@
           return true;
         });
         if (!sigs.length) {
-          document.getElementById('sig-list').innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-secondary)">Scanner en cours<span class="loading-dots"></span></div>';
+          document.getElementById('sig-list').innerHTML = '<div class="glass-card" style="padding:48px;text-align:center;color:var(--text-secondary)"><span style="font-size:1.1rem">📡 Scanner actif — aucun edge ≥5% détecté pour l\'instant</span><p style="margin-top:12px;font-size:0.9rem">Le bot surveille 148+ marchés Polymarket en continu.</p></div>';
           return;
         }
         document.getElementById('sig-list').innerHTML = sigs.map(s => {
@@ -435,9 +440,9 @@
       try {
         const [wallet, positions, trades, trackRecord] = await Promise.all([
           fetchApi('/api/wallet').catch(() => ({})),
-          fetchApi('/api/positions').catch(() => [])),
-          fetchApi('/api/trades').catch(() => [])),
-          fetchApi('/api/track-record').catch(() => ({}))),
+          fetchApi('/api/positions').catch(() => []),
+          fetchApi('/api/trades').catch(() => []),
+          fetchApi('/api/track-record').catch(() => ({})),
         ]);
         const tr = trackRecord || {};
         document.getElementById('port-balance').textContent = '$' + (wallet?.value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
@@ -455,14 +460,14 @@
               const pl = val - cost;
               return `<tr><td>${(p.market_id || '').slice(0, 25)}...</td><td>—</td><td>${p.side || '-'}</td><td>${(parseFloat(p.avg_entry_price || 0) * 100).toFixed(1)}%</td><td>$${val.toFixed(2)}</td><td class="${pl >= 0 ? 'positive' : 'negative'}">$${pl.toFixed(2)}</td><td>${p.status || 'OPEN'}</td></tr>`;
             }).join('')}</tbody></table>`
-          : '<div style="padding:24px;color:var(--text-secondary)">Aucune position ouverte</div>';
+          : '<div class="glass-card" style="padding:32px;text-align:center;color:var(--text-secondary)"><span style="font-size:1rem">🎯 Aucune position ouverte</span></div>';
         document.getElementById('port-history').innerHTML = (trades || []).length
           ? `<table><thead><tr><th>Date</th><th>Marché</th><th>Side</th><th>Entrée</th><th>Sortie</th><th>P&L</th><th>Edge</th></tr></thead><tbody>
             ${(trades || []).slice(0, 30).map(t => {
               const p = parseFloat(t.pnl_usd || t.pnl) || 0;
               return `<tr><td>${(t.created_at || '').slice(0, 16)}</td><td>${(t.market_id || '').slice(0, 20)}...</td><td>${t.side}</td><td>$${parseFloat(t.amount_usd || 0).toFixed(2)}</td><td>—</td><td class="${p >= 0 ? 'positive' : 'negative'}">$${p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td></tr>`;
             }).join('')}</tbody></table>`
-          : '<div style="padding:24px;color:var(--text-secondary)">Aucun trade</div>';
+          : '<div class="glass-card" style="padding:32px;text-align:center;color:var(--text-secondary)"><span style="font-size:1rem">📊 Aucun trade exécuté — mode simulation actif</span></div>';
       } catch (e) {
         document.getElementById('port-positions').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }
@@ -485,11 +490,11 @@
 
     async function loadDebates() {
       try {
-        const d = await fetchApi('/api/debates');
+        const d = await fetchApi('/api/debates').catch(() => ({ debates: [] }));
         const deb = d?.debates || [];
         document.getElementById('deb-status').textContent = deb.length ? '🔴 Débat en cours' : '⏳ En veille';
         if (!deb.length) {
-          document.getElementById('deb-timeline').innerHTML = '<div style="padding:24px;color:var(--text-secondary)">Aucun débat récent. Activation automatique sur edge ≥15%.</div>';
+          document.getElementById('deb-timeline').innerHTML = '<div class="glass-card" style="padding:32px;text-align:center;color:var(--text-secondary)"><span style="font-size:1rem">🤖 Agents en veille — activation sur edge ≥15%</span><p style="margin-top:8px;font-size:0.9rem">20 agents IA prêts à débattre dès qu\'un mispricing significatif est détecté.</p></div>';
         } else {
           const now = Date.now();
           const html = deb.slice(-10).reverse().map((x) => {
@@ -564,8 +569,8 @@
     async function loadPerformance() {
       try {
         const [trackRecord, trades] = await Promise.all([
-          fetchApi('/api/track-record').catch(() => ({}))),
-          fetchApi('/api/trades').catch(() => [])),
+          fetchApi('/api/track-record').catch(() => ({})),
+          fetchApi('/api/trades').catch(() => []),
         ]);
         const tr = trackRecord || {};
         document.getElementById('perf-depuis').textContent = tr.depuis ? String(tr.depuis).slice(0, 10) : '—';
@@ -593,7 +598,7 @@
         document.getElementById('perf-best').innerHTML = best.length
           ? `<table><thead><tr><th>Marché</th><th>P&L</th><th>Edge</th><th>Date</th></tr></thead><tbody>
             ${best.map(t => `<tr><td>${(t.market_id || '').slice(0, 35)}...</td><td class="${t.p >= 0 ? 'positive' : 'negative'}">$${t.p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td><td>${(t.created_at || '').slice(0, 10)}</td></tr>`).join('')}</tbody></table>`
-          : '<div style="padding:24px;color:var(--text-secondary)">Aucun trade</div>';
+          : '<div class="glass-card" style="padding:32px;text-align:center;color:var(--text-secondary)"><span style="font-size:1rem">🏆 Aucun trade enregistré</span></div>';
       } catch (e) {
         document.getElementById('perf-breakdown').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }

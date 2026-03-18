@@ -19,7 +19,7 @@ POLYGON_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 log = logging.getLogger(__name__)
@@ -558,6 +558,45 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
 
 
+async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await _get_portfolio_text()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_portfolio_keyboard())
+
+
+async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await _get_scan_text()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_scan_keyboard())
+
+
+async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await _get_agents_text()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
+
+
+async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await _get_whales_text()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
+
+
+async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        f"🤝 <b>REFERRAL</b>\n{LINE}\n<i>Programme de parrainage à venir.</i>\n{LINE}",
+        parse_mode="HTML",
+        reply_markup=_back_keyboard(),
+    )
+
+
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = _get_settings_text()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_settings_keyboard())
+
+
+async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
+    text, kb, _ = await _get_positions_detail(context)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """PASTE & MONITOR : intercepte une adresse 0x collée par l'utilisateur."""
     text = (update.message.text or "").strip()
@@ -1047,6 +1086,13 @@ async def run_telegram_poller() -> None:
 
                 app = Application.builder().token(token).build()
                 app.add_handler(CommandHandler("start", cmd_start))
+                app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+                app.add_handler(CommandHandler("scan", cmd_scan))
+                app.add_handler(CommandHandler("agents", cmd_agents))
+                app.add_handler(CommandHandler("whales", cmd_whales))
+                app.add_handler(CommandHandler("referral", cmd_referral))
+                app.add_handler(CommandHandler("settings", cmd_settings))
+                app.add_handler(CommandHandler("exit", cmd_exit))
                 app.add_handler(CallbackQueryHandler(callback_handler))
                 app.add_handler(
                     MessageHandler(
@@ -1058,6 +1104,16 @@ async def run_telegram_poller() -> None:
 
                 await app.initialize()
                 await app.start()
+                await app.bot.set_my_commands([
+                    BotCommand("start", "⚡ Menu principal"),
+                    BotCommand("portfolio", "💼 Solde et positions ouvertes"),
+                    BotCommand("scan", "🔍 Derniers signaux détectés"),
+                    BotCommand("agents", "🤖 Débats IA en cours"),
+                    BotCommand("whales", "🐳 Tracker les baleines"),
+                    BotCommand("referral", "🤝 Mon lien d'affiliation"),
+                    BotCommand("settings", "⚙️ Configurer le bot"),
+                    BotCommand("exit", "🔴 Sortir d'une position"),
+                ])
                 poll_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
 
                 log.info("Telegram poller démarré (python-telegram-bot)")
