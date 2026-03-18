@@ -79,6 +79,12 @@ class PolymarketClient:
     def _extract_token_id(self, market: dict[str, Any], outcome: str) -> Optional[str]:
         """Extract token_id from market dict for YES/NO outcome."""
         tokens = market.get("clobTokenIds") or market.get("tokens") or []
+        if isinstance(tokens, str):
+            import json as _json
+            try:
+                tokens = _json.loads(tokens)
+            except (ValueError, TypeError):
+                tokens = []
         if not isinstance(tokens, list) or len(tokens) < 2:
             return None
         yes_tok = tokens[0] if isinstance(tokens[0], dict) else {"token_id": tokens[0], "outcome": "Yes"}

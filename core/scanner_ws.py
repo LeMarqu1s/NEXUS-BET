@@ -85,6 +85,11 @@ class WebSocketScanner:
                     filtered_count += 1
                     continue
                 tokens = market.get("clobTokenIds") or market.get("tokens") or []
+                if isinstance(tokens, str):
+                    try:
+                        tokens = json.loads(tokens)
+                    except (json.JSONDecodeError, TypeError):
+                        tokens = []
                 if not isinstance(tokens, list) or len(tokens) < 2:
                     if no_tokens_count < 3:
                         logger.info("  NO_TOKENS: %s → clobTokenIds=%s", q, tokens)

@@ -31,7 +31,7 @@ def get_min_days_resolution() -> int:
 
 
 def get_max_days_resolution() -> int:
-    return _get_env_int("AUTO_TRADE_MAX_DAYS_RESOLUTION", 365)
+    return _get_env_int("AUTO_TRADE_MAX_DAYS_RESOLUTION", 730)
 
 
 def get_min_market_volume() -> float:
