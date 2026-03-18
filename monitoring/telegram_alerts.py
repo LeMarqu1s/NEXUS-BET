@@ -7,7 +7,7 @@ from typing import Optional
 
 import httpx
 
-from config.settings import SETTINGS
+from config.settings import SETTINGS, settings
 
 log = logging.getLogger(__name__)
 
@@ -122,10 +122,36 @@ async def alert_error(error: str, context: str = "") -> None:
 
 
 async def alert_startup() -> bool:
-    """Alerte au démarrage du bot. Retourne True si envoyé."""
+    """Message au démarrage — NEXUS CAPITAL ONLINE."""
+    import os
+    n_assets = 0
+    capital = getattr(settings, "POLYMARKET_CAPITAL_USD", 0) or 0
+    gamma_url = "https://gamma-api.polymarket.com"
+    try:
+        pm = SETTINGS.get("polymarket")
+        if pm:
+            gamma_url = getattr(pm, "gamma_url", gamma_url)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{gamma_url}/markets",
+                params={"limit": 100, "active": "true", "closed": "false", "archived": "false"},
+            )
+            if r.status_code == 200:
+                data = r.json()
+                markets = data if isinstance(data, list) else data.get("data", []) or []
+                n_assets = len(markets)
+    except Exception:
+        pass
+    sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+    mode = "SIMULATION" if sim else "LIVE"
     msg = (
-        "<b>NEXUS CAPITAL</b> Wealth Manager started.\n"
-        "Commands: /start /wealth /settings /alpha /scan /debrief /portfolio"
+        "⚡ <b>NEXUS CAPITAL</b> — ONLINE\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📡 Scanner     {n_assets} assets actifs\n"
+        f"🔄 Mode        {mode}\n"
+        f"💰 Capital     ${capital:,.2f} USDC\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "/start pour accéder au terminal"
     )
     return await send_telegram_message(msg)
 

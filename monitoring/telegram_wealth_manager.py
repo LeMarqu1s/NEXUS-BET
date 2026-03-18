@@ -132,3 +132,37 @@ def get_anti_sybil_alert() -> tuple[bool, str]:
     """Retourne (alert_active, details)."""
     state = _load_state()
     return state.get("anti_sybil_alert", False), state.get("anti_sybil_details", "")
+
+
+def get_whale_wallets() -> list[str]:
+    """Liste des adresses à surveiller (paste & monitor)."""
+    return list(_load_state().get("whale_wallets", []) or [])
+
+
+def add_whale_wallet(address: str) -> bool:
+    """Ajoute une adresse à whale_wallets. Retourne True si OK."""
+    addr = (address or "").strip()
+    if not addr or len(addr) != 42 or not addr.startswith("0x"):
+        return False
+    state = _load_state()
+    wallets = list(state.get("whale_wallets", []) or [])
+    if addr.lower() in [w.lower() for w in wallets]:
+        return True
+    wallets.append(addr)
+    state["whale_wallets"] = wallets
+    _save_state(state)
+    log.info("Wealth: whale wallet added %s", addr[:16])
+    return True
+
+
+def get_copy_trade_enabled() -> bool:
+    """Copy Wallet : activé ou non."""
+    return _load_state().get("copy_trade_enabled", False)
+
+
+def set_copy_trade_enabled(enabled: bool) -> None:
+    """Toggle Copy Wallet."""
+    state = _load_state()
+    state["copy_trade_enabled"] = enabled
+    _save_state(state)
+    log.info("Wealth: copy_trade_enabled=%s", enabled)

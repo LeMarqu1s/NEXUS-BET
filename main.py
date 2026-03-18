@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -203,6 +204,109 @@ async def _auto_trade_loop() -> None:
 
 
 # ANTI_SYBIL_ANCHOR
+async def _copy_trader_loop() -> None:
+    """
+    Copy Wallet : surveille les whale_wallets, copie les trades récents (< 5min)
+    sur marchés où on n'a pas de position.
+    """
+    try:
+        from monitoring.telegram_wealth_manager import get_whale_wallets, get_copy_trade_enabled
+        from monitoring.auto_trade import process_signal, is_auto_trade_enabled
+        from monitoring.trade_logger import trade_logger
+        from monitoring.telegram_alerts import send_telegram_message
+        import httpx
+    except ImportError as e:
+        log.debug("copy_trader_loop: %s", e)
+        return
+
+    async def _send(msg: str, reply_markup=None):
+        await send_telegram_message(msg, reply_markup=reply_markup)
+
+    processed: set[tuple[str, str, int]] = set()
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+
+            if not get_copy_trade_enabled():
+                continue
+
+            wallets = get_whale_wallets()
+            if not wallets:
+                continue
+
+            positions = {(p.get("market_id"), p.get("outcome")) for p in trade_logger.get_positions()}
+            now_ts = int(time.time())
+
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for addr in wallets:
+                    try:
+                        r = await client.get(
+                            "https://data-api.polymarket.com/trades",
+                            params={"funder": addr, "size": 5},
+                        )
+                        if r.status_code != 200:
+                            continue
+                        trades = r.json()
+                        if not isinstance(trades, list):
+                            continue
+
+                        for t in trades:
+                            ts = int(t.get("timestamp") or 0)
+                            if now_ts - ts > 300:
+                                continue
+                            mid = str(t.get("conditionId") or t.get("condition_id") or "")
+                            outcome = str(t.get("outcome") or "Yes")
+                            side = str(t.get("side") or "BUY")
+                            if side.upper() != "BUY":
+                                continue
+                            if (mid, outcome) in positions:
+                                continue
+                            key = (addr[:16], mid, ts)
+                            if key in processed:
+                                continue
+                            processed.add(key)
+
+                            size = float(t.get("size") or 0)
+                            price = float(t.get("price") or 0.5)
+                            amount = size * price
+                            title = (t.get("title") or mid)[:50]
+
+                            sig = {
+                                "market_id": mid,
+                                "side": outcome,
+                                "outcome": outcome,
+                                "polymarket_price": price,
+                                "question": title,
+                                "edge_pct": 0,
+                                "kelly_fraction": 0.02,
+                                "confidence": 0.5,
+                                "source": "copy_trader",
+                            }
+
+                            log.info(
+                                "COPY: wallet %s → %s %s $%.0f",
+                                addr[:8],
+                                mid[:16] if mid else "?",
+                                outcome,
+                                amount,
+                            )
+
+                            if is_auto_trade_enabled():
+                                await process_signal(sig, _send)
+
+                    except Exception as e:
+                        log.debug("copy_trader wallet %s: %s", addr[:8], e)
+
+            if len(processed) > 200:
+                processed = set(list(processed)[-100:])
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.warning("copy_trader_loop error: %s", e)
+
+
 async def _anti_sybil_loop() -> None:
     """Boucle Anti-Sybil : détecte Mirror Trading sur baleines, alerte si suspect."""
     try:
@@ -284,9 +388,10 @@ async def main() -> None:
     yield_task = asyncio.create_task(_defi_yield_loop())
     antisybil_task = asyncio.create_task(_anti_sybil_loop())
     tpsl_task = asyncio.create_task(_order_manager.start_monitor_loop())
+    copy_task = asyncio.create_task(_copy_trader_loop())
 
-    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task, tpsl_task]
-    log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil | TP/SL")
+    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task, tpsl_task, copy_task]
+    log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil | TP/SL | Copy")
 
     try:
         await asyncio.gather(*tasks)
