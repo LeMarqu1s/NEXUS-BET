@@ -546,25 +546,41 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def close_telegram_session(token: str) -> bool:
-    """Delete webhook to avoid 409 conflict."""
+    """Delete webhook and flush pending updates to avoid 409 conflict."""
     import httpx
-    url = f"https://api.telegram.org/bot{token}/deleteWebhook"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url, params={"drop_pending_updates": True})
-        return r.status_code == 200 and r.json().get("ok", False)
+            await client.get(
+                f"https://api.telegram.org/bot{token}/deleteWebhook",
+                params={"drop_pending_updates": True},
+            )
+            await client.post(
+                f"https://api.telegram.org/bot{token}/getUpdates",
+                json={"offset": -1, "timeout": 0},
+            )
+        return True
     except Exception:
         return False
 
 
+def _is_conflict_error(exc: BaseException) -> bool:
+    """Check if exception (or its chain) is a Telegram 409 Conflict."""
+    try:
+        from telegram.error import Conflict
+        if isinstance(exc, Conflict):
+            return True
+    except ImportError:
+        pass
+    return "409" in str(exc) or "Conflict" in str(exc)
+
+
 async def run_telegram_poller() -> None:
-    """Long-polling loop with error handling and exponential backoff retry."""
+    """Long-polling loop with 409 Conflict auto-recovery and exponential backoff."""
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         log.info("Telegram token non configuré, poller désactivé")
         return
 
-    # Reduce poller error spam: telegram lib logs at WARNING on network errors
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
@@ -578,7 +594,7 @@ async def run_telegram_poller() -> None:
             poll_task = None
             try:
                 await close_telegram_session(token)
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
 
                 app = Application.builder().token(token).build()
                 app.add_handler(CommandHandler("start", cmd_start))
@@ -590,12 +606,11 @@ async def run_telegram_poller() -> None:
                 poll_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
 
                 log.info("Telegram poller démarré (python-telegram-bot)")
-                delay = base_delay  # reset on success
+                delay = base_delay
 
-                # Run until cancelled or poll task fails
                 while poll_task and not poll_task.done():
                     await asyncio.sleep(10)
-                # If poll task exited with exception, re-raise to trigger retry
+
                 if poll_task and poll_task.done():
                     exc = poll_task.exception()
                     if exc is not None:
@@ -603,9 +618,15 @@ async def run_telegram_poller() -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.debug("Telegram poller error (retry in %.0fs): %s", delay, e)
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, max_delay)
+                if _is_conflict_error(e):
+                    log.info("Telegram 409 Conflict — purging queue and retrying in 5s")
+                    await close_telegram_session(token)
+                    await asyncio.sleep(5)
+                    delay = base_delay
+                else:
+                    log.debug("Telegram poller error (retry in %.0fs): %s", delay, e)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, max_delay)
             finally:
                 if poll_task and not poll_task.done():
                     poll_task.cancel()

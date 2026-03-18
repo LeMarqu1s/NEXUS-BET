@@ -27,11 +27,21 @@ def get_categories_blacklist() -> list[str]:
 
 
 def get_min_days_resolution() -> int:
-    return _get_env_int("AUTO_TRADE_MIN_DAYS_RESOLUTION", 1)
+    return _get_env_int("AUTO_TRADE_MIN_DAYS_RESOLUTION", 0)
 
 
 def get_max_days_resolution() -> int:
     return _get_env_int("AUTO_TRADE_MAX_DAYS_RESOLUTION", 365)
+
+
+def get_min_market_volume() -> float:
+    v = os.getenv("MIN_MARKET_VOLUME")
+    return float(v) if v else 1000.0
+
+
+def get_min_liquidity() -> float:
+    v = os.getenv("MIN_LIQUIDITY")
+    return float(v) if v else 100.0
 
 
 def get_keywords_blacklist() -> list[str]:
@@ -94,5 +104,13 @@ def passes_filter(market: dict[str, Any]) -> bool:
         q = (market.get("question") or "").lower()
         if any(kw in q for kw in keywords):
             return False
+
+    volume = float(market.get("volumeNum", market.get("volume", 0)) or 0)
+    if volume < get_min_market_volume():
+        return False
+
+    liquidity = float(market.get("liquidityNum", market.get("liquidity", 0)) or 0)
+    if liquidity < get_min_liquidity():
+        return False
 
     return True
