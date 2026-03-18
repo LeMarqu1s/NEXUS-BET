@@ -67,6 +67,19 @@
     .negative { color: var(--red); }
     .loading { color: var(--muted); padding: 24px; }
     .ticker { font-size: 0.7rem; color: var(--muted); margin-top: 8px; }
+    .track-record { margin-bottom: 24px; }
+    .track-record h3 { font-size: 0.75rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; }
+    .tr-metrics { display: flex; flex-wrap: wrap; gap: 24px 32px; margin-bottom: 20px; }
+    .tr-hero { flex: 0 0 100%; }
+    .tr-hero .tr-label { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
+    .tr-hero .tr-val { font-size: 2.5rem; font-weight: 700; color: var(--accent); }
+    .tr-row { display: flex; justify-content: space-between; gap: 16px; font-size: 0.85rem; }
+    .tr-row span:first-child { color: var(--muted); }
+    .tr-pnl.positive { color: var(--green); }
+    .tr-pnl.negative { color: var(--red); }
+    .tr-breakdown { border-top: 1px solid var(--border); padding-top: 16px; }
+    .tr-breakdown h4 { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+    .tr-table { font-size: 0.75rem; }
   </style>
 </head>
 <body>
@@ -87,6 +100,32 @@
         <div class="card"><h3>Open Positions</h3><div class="val" id="ov-positions">—</div></div>
         <div class="card"><h3>Total PnL</h3><div class="val" id="ov-pnl">—</div></div>
         <div class="card"><h3>Active Signals</h3><div class="val" id="ov-signals">—</div></div>
+      </div>
+      <div class="track-record card">
+        <h3>TRACK RECORD</h3>
+        <div class="tr-metrics">
+          <div class="tr-hero"><span class="tr-label">Win Rate</span><span class="tr-val" id="tr-winrate">—</span></div>
+          <div class="tr-row">
+            <span>Total P&amp;L</span><span class="tr-pnl" id="tr-totalpnl">—</span>
+          </div>
+          <div class="tr-row">
+            <span>Total Trades</span><span id="tr-trades">—</span>
+          </div>
+          <div class="tr-row">
+            <span>Avg Edge</span><span id="tr-avgedge">—</span>
+          </div>
+          <div class="tr-row">
+            <span>Best / Worst</span><span id="tr-bestworst">—</span>
+          </div>
+          <div class="tr-row">
+            <span>Depuis</span><span id="tr-depuis">—</span>
+          </div>
+        </div>
+        <div class="tr-breakdown">
+          <h4>By Market Type</h4>
+          <table class="tr-table"><thead><tr><th>Type</th><th>Count</th><th>Avg Edge</th></tr></thead>
+          <tbody id="tr-types"></tbody></table>
+        </div>
       </div>
       <div class="card"><h3>Recent Activity</h3><div id="ov-activity" class="loading">Loading...</div></div>
     </div>
@@ -129,15 +168,18 @@
     });
     async function loadOverview() {
       try {
-        const [wallet, positions, trades, signals] = await Promise.all([
+        const res = await Promise.all([
           fetchApi('/api/wallet'),
           fetchApi('/api/positions'),
           fetchApi('/api/trades'),
-          fetchApi('/api/signals')
+          fetchApi('/api/signals'),
+          fetchApi('/api/track-record').catch(() => ({})),
+          fetchApi('/api/market-types').catch(() => ({}))
         ]);
+        const [wallet, positions, trades, signals, trackRecord, marketTypes] = res;
         document.getElementById('ov-balance').textContent = '$' + (wallet.value ?? 0).toLocaleString(undefined, {minimumFractionDigits: 2});
         document.getElementById('ov-positions').textContent = (positions?.length ?? 0);
-        const pnl = trades?.reduce((s,t) => s + (parseFloat(t.pnl_usd)||0), 0) || 0;
+        const pnl = trades?.reduce((s,t) => s + (parseFloat(t.pnl_usd)||parseFloat(t.pnl)||0), 0) ?? trackRecord?.total_pnl ?? 0;
         const pnlEl = document.getElementById('ov-pnl');
         pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
         pnlEl.className = 'val ' + (pnl >= 0 ? 'green' : 'red');
@@ -146,6 +188,22 @@
           `${t.market_id?.slice(0,20)}... | ${t.side} | $${parseFloat(t.amount_usd||0).toFixed(2)} | ${t.status}`
         ).join('\n') || 'No recent trades';
         document.getElementById('ov-activity').innerHTML = '<pre style="font-size:0.8rem;white-space:pre-wrap">' + recent + '</pre>';
+
+        const tr = trackRecord || {};
+        document.getElementById('tr-winrate').textContent = (tr.win_rate ?? 0) + '%';
+        const trPnl = document.getElementById('tr-totalpnl');
+        trPnl.textContent = (tr.total_pnl >= 0 ? '+' : '') + '$' + (tr.total_pnl ?? 0).toFixed(2);
+        trPnl.className = 'tr-pnl ' + ((tr.total_pnl ?? 0) >= 0 ? 'positive' : 'negative');
+        document.getElementById('tr-trades').textContent = tr.total_trades ?? 0;
+        document.getElementById('tr-avgedge').textContent = (tr.avg_edge ?? 0) + '%';
+        document.getElementById('tr-bestworst').textContent = '$' + (tr.best_trade ?? 0).toFixed(2) + ' / $' + (tr.worst_trade ?? 0).toFixed(2);
+        document.getElementById('tr-depuis').textContent = tr.depuis ? String(tr.depuis).slice(0, 10) : '—';
+
+        const mt = marketTypes || {};
+        document.getElementById('tr-types').innerHTML = ['binary','multi_outcome','scalar'].map(t => {
+          const d = mt[t] || { count: 0, avg_edge: 0 };
+          return `<tr><td>${t}</td><td>${d.count}</td><td>${d.avg_edge}%</td></tr>`;
+        }).join('');
       } catch (e) {
         document.getElementById('ov-activity').textContent = 'Error: ' + e.message;
       }

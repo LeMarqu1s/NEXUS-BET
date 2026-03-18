@@ -64,6 +64,65 @@ def _supabase_fetch(table: str, limit: int = 50, extra: str = ""):
         return []
 
 
+def _get_track_record():
+    """Compute track record stats from Supabase trades table."""
+    trades = _supabase_fetch("trades", limit=10000)
+    if not trades:
+        return {
+            "total_trades": 0,
+            "winning_trades": 0,
+            "win_rate": 0,
+            "total_pnl": 0,
+            "avg_edge": 0,
+            "best_trade": 0,
+            "worst_trade": 0,
+            "depuis": None,
+        }
+    pnls = []
+    edges = []
+    dates = []
+    for t in trades:
+        p = float(t.get("pnl") or t.get("pnl_usd") or 0)
+        pnls.append(p)
+        e = t.get("edge_pct")
+        if e is not None:
+            edges.append(float(e))
+        created = t.get("created_at")
+        if created:
+            dates.append(created)
+    winning = sum(1 for p in pnls if p > 0)
+    total = len(trades)
+    return {
+        "total_trades": total,
+        "winning_trades": winning,
+        "win_rate": round(winning / total * 100, 1) if total else 0,
+        "total_pnl": round(sum(pnls), 2),
+        "avg_edge": round(sum(edges) / len(edges), 2) if edges else 0,
+        "best_trade": round(max(pnls), 2) if pnls else 0,
+        "worst_trade": round(min(pnls), 2) if pnls else 0,
+        "depuis": min(dates) if dates else None,
+    }
+
+
+def _get_market_types():
+    """Stats des signaux par type depuis paperclip_pending_signals.json."""
+    p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
+    data = _load_json(str(p), {"signals": []})
+    signals = data.get("signals", []) if isinstance(data, dict) else data or []
+    by_type = {"binary": [], "multi_outcome": [], "scalar": []}
+    for s in signals:
+        mt = str(s.get("market_type", "binary")).lower().replace("-", "_")
+        if mt not in by_type:
+            by_type[mt] = []
+        edge = float(s.get("edge_pct", 0))
+        by_type[mt].append(edge)
+    return {
+        "binary": {"count": len(by_type["binary"]), "avg_edge": round(sum(by_type["binary"]) / len(by_type["binary"]), 2) if by_type["binary"] else 0},
+        "multi_outcome": {"count": len(by_type["multi_outcome"]), "avg_edge": round(sum(by_type["multi_outcome"]) / len(by_type["multi_outcome"]), 2) if by_type["multi_outcome"] else 0},
+        "scalar": {"count": len(by_type["scalar"]), "avg_edge": round(sum(by_type["scalar"]) / len(by_type["scalar"]), 2) if by_type["scalar"] else 0},
+    }
+
+
 def _get_dashboard_html():
     p = Path(__file__).resolve().parent / "dashboard.html"
     if p.exists():
@@ -110,6 +169,12 @@ class handler(BaseHTTPRequestHandler):
             rows = _supabase_fetch("debates", 30)
             debates = [{"agent": r.get("role"), "vote": r.get("vote"), "message": r.get("content"), "content": r.get("content")} for r in rows]
             self._json_response({"debates": debates})
+            return
+        if path == "/api/track-record":
+            self._json_response(_get_track_record())
+            return
+        if path == "/api/market-types":
+            self._json_response(_get_market_types())
             return
         self.send_response(404)
         self.end_headers()
