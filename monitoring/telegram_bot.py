@@ -520,6 +520,78 @@ async def _get_whales_text() -> str:
         return f"{header}❌ {e}\n{LINE}"
 
 
+async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Fiche Market Object pour /market <slug_ou_question>. Retourne (texte, clavier)."""
+    if not query or not query.strip():
+        return (
+            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
+            f"Usage: /market &lt;slug ou question&gt;\n"
+            f"Ex: /market trump-election\n"
+            f"Ex: /market fed-decision-october\n{LINE}",
+            _back_keyboard(),
+        )
+    query = query.strip()
+    api_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"{api_url}/api/market/{query}")
+            if r.status_code != 200:
+                r2 = await client.get(f"{api_url}/api/market/search", params={"q": query})
+                if r2.status_code != 200:
+                    return (
+                        f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
+                        f"❌ Marché non trouvé: {query[:40]}\n{LINE}",
+                        _back_keyboard(),
+                    )
+                m = r2.json()
+            else:
+                m = r.json()
+    except Exception as e:
+        log.exception("Market fetch: %s", e)
+        return (
+            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
+            f"❌ Erreur API: {e}\n{LINE}",
+            _back_keyboard(),
+        )
+    if not m or m.get("error"):
+        return (
+            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
+            f"❌ Marché non trouvé\n{LINE}",
+            _back_keyboard(),
+        )
+    yes_pct = int((m.get("yes_price") or 0.5) * 100)
+    no_pct = int((m.get("no_price") or 0.5) * 100)
+    vol = (m.get("volume_24h") or 0)
+    whale = m.get("whale_activity") or {}
+    smart = m.get("smart_money_signal", "neutral")
+    smart_emoji = "🟢" if smart == "bullish" else "🔴" if smart == "bearish" else "⚪"
+    edge = m.get("nexus_edge")
+    score = m.get("nexus_score")
+    edge_str = f"{edge:.1f}%" if edge is not None else "—"
+    score_str = f"{score:.0f}/100" if score is not None else "—"
+    poly_slug = m.get("slug") or ""
+    cid = m.get("market_id", "")
+    if poly_slug and not str(poly_slug).startswith("0x"):
+        poly_url = f"https://polymarket.com/event/{poly_slug}"
+    else:
+        poly_url = f"https://polymarket.com/market/{cid}" if cid else "https://polymarket.com"
+    text = (
+        f"🎯 <b>MARKET INTELLIGENCE</b>\n"
+        f"{LINE}\n"
+        f"{(m.get('question') or '')[:80]}\n"
+        f"YES: {yes_pct}% | NO: {no_pct}\n"
+        f"Volume 24h: ${vol:,.0f}\n"
+        f"Smart money: {smart_emoji} {smart.upper()} ({whale.get('large_trades_count', 0)} gros trades)\n"
+        f"Edge Nexus: {edge_str} | Score: {score_str}\n"
+        f"{LINE}"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Voir sur Polymarket", url=poly_url)],
+        [InlineKeyboardButton("🔙 Menu", callback_data="menu_back")],
+    ])
+    return text, kb
+
+
 def _get_settings_text() -> str:
     try:
         from config.settings import settings
@@ -590,6 +662,13 @@ async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = _get_settings_text()
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=_settings_keyboard())
+
+
+async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fiche Market Object : /market <slug_ou_question>."""
+    query = " ".join((context.args or [])).strip()
+    text, kb = await _get_market_text(query)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1191,6 +1270,7 @@ async def run_telegram_poller() -> None:
                 app.add_handler(CommandHandler("start", cmd_start))
                 app.add_handler(CommandHandler("portfolio", cmd_portfolio))
                 app.add_handler(CommandHandler("scan", cmd_scan))
+                app.add_handler(CommandHandler("market", cmd_market))
                 app.add_handler(CommandHandler("agents", cmd_agents))
                 app.add_handler(CommandHandler("whales", cmd_whales))
                 app.add_handler(CommandHandler("referral", cmd_referral))
@@ -1213,6 +1293,7 @@ async def run_telegram_poller() -> None:
                     BotCommand("access", "🔐 Lien dashboard privé"),
                     BotCommand("portfolio", "💼 Solde et positions ouvertes"),
                     BotCommand("scan", "🔍 Derniers signaux détectés"),
+                    BotCommand("market", "🎯 Fiche Market Object par slug/question"),
                     BotCommand("agents", "🤖 Débats IA en cours"),
                     BotCommand("whales", "🐳 Tracker les baleines"),
                     BotCommand("referral", "🤝 Mon lien d'affiliation"),

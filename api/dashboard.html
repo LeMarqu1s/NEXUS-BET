@@ -110,10 +110,25 @@
     .filter-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--dark-border); background: transparent; color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; }
     .filter-btn:hover { border-color: var(--glass-border); color: var(--gold); }
     .filter-btn.active { border-color: var(--gold); color: var(--gold); }
-    .signal-card { margin-bottom: 16px; }
+    .signal-card { margin-bottom: 16px; cursor: pointer; transition: all 0.2s; }
+    .signal-card:hover { border-color: var(--gold); box-shadow: 0 0 20px rgba(245,166,35,0.15); }
     .signal-type { font-size: 0.65rem; color: var(--gold); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
     .signal-question { font-size: 1rem; margin-bottom: 12px; }
     .signal-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; }
+    .market-panel-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 500; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+    .market-panel-overlay.open { opacity: 1; pointer-events: auto; }
+    .market-panel { position: fixed; top: 0; right: 0; width: 420px; max-width: 95vw; height: 100vh; background: var(--dark-bg); border-left: 1px solid var(--glass-border); z-index: 501; transform: translateX(100%); transition: transform 0.3s ease; overflow-y: auto; }
+    .market-panel.open { transform: translateX(0); }
+    .market-panel-inner { padding: 24px; font-size: 0.9rem; }
+    .market-panel h2 { font-size: 1rem; color: var(--gold); margin-bottom: 16px; font-family: JetBrains Mono; }
+    .market-panel-section { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--dark-border); }
+    .market-panel-section:last-child { border-bottom: none; }
+    .market-panel .mini-table { font-size: 0.75rem; width: 100%; }
+    .market-panel .mini-table td { padding: 4px 8px; }
+    .market-panel .trades-list { max-height: 180px; overflow-y: auto; }
+    .market-panel .trade-row { padding: 6px 0; border-bottom: 1px solid var(--dark-border); font-size: 0.8rem; display: flex; justify-content: space-between; }
+    .market-panel-close { position: absolute; top: 16px; right: 16px; background: transparent; border: 1px solid var(--dark-border); color: var(--text-secondary); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+    .market-panel-close:hover { border-color: var(--gold); color: var(--gold); }
   </style>
 </head>
 <body>
@@ -253,6 +268,14 @@
       </div>
     </div>
   </main>
+
+  <div id="market-panel-overlay" class="market-panel-overlay"></div>
+  <div id="market-panel" class="market-panel">
+    <button class="market-panel-close" id="market-panel-close">✕ Fermer</button>
+    <div class="market-panel-inner" id="market-panel-content">
+      <div style="padding:48px;text-align:center;color:var(--text-secondary)">Chargement...</div>
+    </div>
+  </div>
 
   <script>
     const API = '';
@@ -466,7 +489,10 @@
           const cat = inferCategory(s.question || s.market_id);
           const mt = (s.market_type || 'BINARY').toUpperCase();
           const price = parseFloat(s.polymarket_price) || 0.5;
-          return `<div class="signal-card glass-card">
+          const mid = s.market_id || s.conditionId || '';
+          const slug = (s.slug || '').replace(/^.*\//, '') || '';
+          const clickId = mid || slug || (s.question || '').slice(0, 50);
+          return `<div class="signal-card glass-card" data-market-id="${mid || clickId}">
             <div class="signal-type">[${mt}] ${cat}</div>
             <div class="signal-question">${(s.question || s.market_id || '').slice(0, 80)}</div>
             <div class="edge-bar"><div class="edge-bar-fill" style="width:${pct}%"></div></div>
@@ -474,10 +500,114 @@
             <div style="font-size:0.8rem;color:var(--text-secondary)">Score IA: ${Math.min(100, 50 + edge * 2).toFixed(0)}/100</div>
           </div>`;
         }).join('');
+        document.querySelectorAll('#sig-list .signal-card').forEach(card => {
+          const id = card.dataset.marketId;
+          if (id) card.onclick = () => openMarketPanel(id);
+        });
       } catch (e) {
         document.getElementById('sig-list').innerHTML = '<div style="padding:24px;color:var(--red)">Erreur: ' + e.message + '</div>';
       }
     }
+
+    async function openMarketPanel(marketIdOrSlug) {
+      if (!marketIdOrSlug) return;
+      const overlay = document.getElementById('market-panel-overlay');
+      const panel = document.getElementById('market-panel');
+      const content = document.getElementById('market-panel-content');
+      overlay.classList.add('open');
+      panel.classList.add('open');
+      content.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text-secondary)">Chargement Market Object...</div>';
+      try {
+        let m = await fetchApi('/api/market/' + encodeURIComponent(marketIdOrSlug)).catch(() => null);
+        if (!m || m.error) {
+          m = await fetchApi('/api/market/search?q=' + encodeURIComponent(marketIdOrSlug)).catch(() => null);
+          if (!m || m.error) throw new Error('Marché introuvable');
+        }
+        renderMarketPanel(content, m);
+      } catch (e) {
+        content.innerHTML = '<div style="padding:48px;text-align:center;color:var(--red)">Erreur: ' + e.message + '</div>';
+      }
+    }
+
+    function renderMarketPanel(container, m) {
+      const LINE = '━━━━━━━━━━━━━━━━━━━━━';
+      const yesPct = Math.round((m.yes_price || 0.5) * 100);
+      const noPct = Math.round((m.no_price || 0.5) * 100);
+      const ob = m.order_book || {};
+      const bids = (ob.bids || []).slice(0, 5);
+      const asks = (ob.asks || []).slice(0, 5);
+      const spread = ((ob.spread || 0) * 100).toFixed(1);
+      const whale = m.whale_activity || {};
+      const smartEmoji = m.smart_money_signal === 'bullish' ? '🟢' : m.smart_money_signal === 'bearish' ? '🔴' : '⚪';
+      const edge = m.nexus_edge != null ? m.nexus_edge.toFixed(1) : '—';
+      const score = m.nexus_score != null ? m.nexus_score.toFixed(0) : '—';
+      const confiance = (m.nexus_score >= 70) ? 'HIGH ✅' : (m.nexus_score >= 50) ? 'MEDIUM' : 'LOW';
+      const polyUrl = 'https://polymarket.com/event/' + (m.slug || m.market_id || '').replace(/^0x/, '');
+      let html = `
+        <h2>MARKET INTELLIGENCE — ${(m.question || '').slice(0, 50)}${(m.question || '').length > 50 ? '...' : ''}</h2>
+        <div class="market-panel-section">${LINE}<br>
+        📊 Prix actuel  YES: ${yesPct}% | NO: ${noPct}<br>
+        📈 Volume 24h   $${(m.volume_24h || 0).toLocaleString(0)}<br>
+        💧 Liquidité    $${(m.liquidity || 0).toLocaleString(0)}<br>
+        ⏳ Résolution   dans ${m.days_remaining ?? '?'} jours<br>${LINE}
+        </div>
+        <div class="market-panel-section"><strong>ORDER BOOK</strong><br>
+        Bids: <table class="mini-table"><tbody>${bids.map(b => `<tr><td>${(b.price*100).toFixed(1)}%</td><td>$${(b.size||0).toFixed(0)}</td></tr>`).join('') || '<tr><td>—</td></tr>'}</tbody></table>
+        Asks: <table class="mini-table"><tbody>${asks.map(a => `<tr><td>${(a.price*100).toFixed(1)}%</td><td>$${(a.size||0).toFixed(0)}</td></tr>`).join('') || '<tr><td>—</td></tr>'}</tbody></table>
+        Spread: ${spread}%
+        </div>
+        <div class="market-panel-section"><strong>ACTIVITÉ RÉCENTE (20 derniers trades)</strong><br>
+        <div class="trades-list">${(m.recent_trades || []).map(t => `<div class="trade-row">${(t.timestamp||'').slice(11,19)} | ${t.side} | $${(t.amount||0).toFixed(0)} | ${t.maker||'—'}</div>`).join('')}</div>
+        </div>
+        <div class="market-panel-section"><strong>SMART MONEY</strong><br>
+        Gros trades : ${whale.large_trades_count ?? 0} | Net flow : ${smartEmoji} ${whale.net_flow || '—'}<br>
+        Plus gros trade : $${(whale.largest_trade?.amount || 0).toLocaleString(0)} ${whale.largest_trade?.side || '—'} — ${whale.largest_trade?.wallet || '—'}
+        </div>
+        <div class="market-panel-section"><strong>PRICE CHART</strong> (24h)<br>
+        <canvas id="market-price-chart" width="360" height="200" style="background:var(--dark-card);border-radius:8px;width:100%;"></canvas>
+        </div>
+        <div class="market-panel-section"><strong>NEXUS ANALYSIS</strong><br>
+        Edge : ${edge}% | Score : ${score}/100<br>
+        Confiance : ${confiance}
+        </div>
+        <div style="margin-top:16px;">
+          <a href="${polyUrl}" target="_blank" rel="noopener" style="color:var(--gold);font-size:0.85rem;">🔗 Voir sur Polymarket</a>
+        </div>`;
+      container.innerHTML = html;
+      const canvas = document.getElementById('market-price-chart');
+      if (canvas && (m.price_history || []).length) {
+        const ctx = canvas.getContext('2d');
+        const hist = m.price_history;
+        const w = canvas.width, h = canvas.height;
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, w, h);
+        const vals = hist.map((p) => typeof p === 'number' ? p : (p.price ?? p.p ?? 0.5));
+        if (vals.length) {
+          const min = Math.min(...vals), max = Math.max(...vals);
+          const range = max - min || 1;
+          const pad = 20;
+          ctx.strokeStyle = '#F5A623';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          vals.forEach((v, i) => {
+            const x = pad + (i / Math.max(1, vals.length - 1)) * (w - pad * 2);
+            const y = pad + (h - pad * 2) - ((v - min) / range) * (h - pad * 2);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+      }
+    }
+
+    document.getElementById('market-panel-close').onclick = () => {
+      document.getElementById('market-panel-overlay').classList.remove('open');
+      document.getElementById('market-panel').classList.remove('open');
+    };
+    document.getElementById('market-panel-overlay').onclick = () => {
+      document.getElementById('market-panel-overlay').classList.remove('open');
+      document.getElementById('market-panel').classList.remove('open');
+    };
 
     async function loadPortfolio() {
       try {
