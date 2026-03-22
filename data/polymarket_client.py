@@ -41,7 +41,7 @@ class PolymarketClient:
         """Fetch active, non-closed markets from Polymarket Gamma API sorted by 24h volume."""
         gamma_url = settings.POLYMARKET_GAMMA_URL
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(
                     f"{gamma_url}/markets",
                     params={
@@ -63,7 +63,7 @@ class PolymarketClient:
         """Get token ID for a market outcome. Fetches market from Gamma API."""
         gamma_url = settings.POLYMARKET_GAMMA_URL
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(f"{gamma_url}/markets/{market_id}")
                 if r.status_code != 200:
                     markets = await self.get_markets(limit=100)

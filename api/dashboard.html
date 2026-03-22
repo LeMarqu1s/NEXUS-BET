@@ -509,6 +509,22 @@
       }
     }
 
+    async function fetchWithTimeout(path, ms) {
+      const sep = path.includes('?') ? '&' : '?';
+      const url = API + path + (AUTH_TOKEN ? sep + 'token=' + encodeURIComponent(AUTH_TOKEN) : '');
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), ms);
+      try {
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (r.status === 401) { showPaywall(); throw new Error('unauthorized'); }
+        return r.ok ? r.json() : null;
+      } catch (e) {
+        clearTimeout(t);
+        throw e;
+      }
+    }
+
     async function openMarketPanel(marketIdOrSlug) {
       if (!marketIdOrSlug) return;
       const overlay = document.getElementById('market-panel-overlay');
@@ -516,16 +532,17 @@
       const content = document.getElementById('market-panel-content');
       overlay.classList.add('open');
       panel.classList.add('open');
-      content.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text-secondary)">Chargement Market Object...</div>';
+      content.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text-secondary)">Chargement...</div>';
       try {
-        let m = await fetchApi('/api/market/' + encodeURIComponent(marketIdOrSlug)).catch(() => null);
+        let m = await fetchWithTimeout('/api/market/' + encodeURIComponent(marketIdOrSlug), 6000).catch(() => null);
         if (!m || m.error) {
-          m = await fetchApi('/api/market/search?q=' + encodeURIComponent(marketIdOrSlug)).catch(() => null);
+          m = await fetchWithTimeout('/api/market/search?q=' + encodeURIComponent(marketIdOrSlug), 6000).catch(() => null);
           if (!m || m.error) throw new Error('Marché introuvable');
         }
         renderMarketPanel(content, m);
       } catch (e) {
-        content.innerHTML = '<div style="padding:48px;text-align:center;color:var(--red)">Erreur: ' + e.message + '</div>';
+        const msg = e.name === 'AbortError' ? 'Délai dépassé (6s). Données en cours...' : e.message;
+        content.innerHTML = `<div style="padding:48px;text-align:center;color:var(--text-secondary)">${msg}<br><br><button class="market-panel-close" onclick="document.getElementById('market-panel-overlay').classList.remove('open');document.getElementById('market-panel').classList.remove('open')">Fermer</button></div>`;
       }
     }
 

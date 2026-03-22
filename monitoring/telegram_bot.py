@@ -1,6 +1,7 @@
 """
 NEXUS CAPITAL - Telegram Bot (python-telegram-bot)
 Pro terminal UX — Gold & Black, data first, zero blabla.
+Performance: response <1s, cache 60s, timeout 5s on all external calls.
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import logging
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +19,9 @@ from pathlib import Path
 import httpx
 
 POLYGON_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
+API_TIMEOUT = 5.0
+CACHE_TTL = 60
+_market_cache: dict[str, tuple[dict, float]] = {}
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -189,7 +194,7 @@ async def _get_balance() -> float:
         return _get_capital()
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             r = await client.get(f"https://data-api.polymarket.com/value?user={relayer_addr}")
             if r.status_code == 200:
                 data = r.json()
@@ -317,7 +322,7 @@ async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
         pm = SETTINGS.get("polymarket")
         if pm:
             gamma_url = getattr(pm, "gamma_url", gamma_url)
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             for url in (f"{gamma_url}/markets/{market_id}", f"{gamma_url}/markets?condition_id={market_id}"):
                 r = await client.get(url)
                 if r.status_code != 200:
@@ -488,7 +493,7 @@ async def _get_btc_text() -> str:
 async def _get_whales_text() -> str:
     header = f"🐳 <b>WHALE TRACKER</b>\n{LINE}\n"
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             r = await client.get("https://data-api.polymarket.com/trades", params={"size": 20})
             if r.status_code != 200:
                 return f"{header}❌ API indisponible\n{LINE}"
@@ -521,7 +526,7 @@ async def _get_whales_text() -> str:
 
 
 async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Fiche Market Object pour /market <slug_ou_question>. Retourne (texte, clavier)."""
+    """Fiche Market Object pour /market <slug_ou_question>. Cache 60s, timeout 5s."""
     if not query or not query.strip():
         return (
             f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
@@ -531,9 +536,15 @@ async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
             _back_keyboard(),
         )
     query = query.strip()
+    now = time.time()
+    cache_key = f"market:{query}"
+    if cache_key in _market_cache:
+        data, ts = _market_cache[cache_key]
+        if now - ts < CACHE_TTL:
+            return _format_market_text(data)
     api_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             r = await client.get(f"{api_url}/api/market/{query}")
             if r.status_code != 200:
                 r2 = await client.get(f"{api_url}/api/market/search", params={"q": query})
@@ -559,6 +570,14 @@ async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
             f"❌ Marché non trouvé\n{LINE}",
             _back_keyboard(),
         )
+    _market_cache[cache_key] = (m, now)
+    if len(_market_cache) > 50:
+        oldest = min(_market_cache, key=lambda k: _market_cache[k][1])
+        del _market_cache[oldest]
+    return _format_market_text(m)
+
+
+def _format_market_text(m: dict) -> tuple[str, InlineKeyboardMarkup]:
     yes_pct = int((m.get("yes_price") or 0.5) * 100)
     no_pct = int((m.get("no_price") or 0.5) * 100)
     vol = (m.get("volume_24h") or 0)
@@ -626,29 +645,53 @@ def _get_settings_text() -> str:
 # HANDLERS
 # ══════════════════════════════════════════════
 
+async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb, parse_mode="HTML"):
+    """Envoie ⏳ immédiatement, puis remplace par le contenu (<1s target). get_content peut retourner str ou (str, kb)."""
+    try:
+        ack = await update.message.reply_text("⏳", parse_mode=None)
+    except Exception:
+        ack = None
+    try:
+        result = await asyncio.wait_for(get_content(), timeout=5.0)
+        content = result[0] if isinstance(result, tuple) else result
+        reply_markup = result[1] if isinstance(result, tuple) and len(result) > 1 else default_kb
+    except asyncio.TimeoutError:
+        content = fallback
+        reply_markup = default_kb
+    except Exception as e:
+        log.exception("Handler error: %s", e)
+        content = f"{fallback}\n\n⚠️ {str(e)[:80]}"
+        reply_markup = default_kb
+    if ack:
+        try:
+            await ack.edit_text(content, parse_mode=parse_mode, reply_markup=reply_markup)
+        except Exception:
+            await update.message.reply_text(content, parse_mode=parse_mode, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(content, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reset user state + clear pending callbacks on /start."""
+    context.user_data.clear()
     text = await _get_start_text()
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
 
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = await _get_portfolio_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_portfolio_keyboard())
+    await _ack_then_reply(update, _get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", _portfolio_keyboard())
 
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = await _get_scan_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_scan_keyboard())
+    await _ack_then_reply(update, _get_scan_text, f"🔍 <b>SCANNER</b>\n{LINE}\nDonnées en cours...", _scan_keyboard())
 
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = await _get_agents_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
+    await _ack_then_reply(update, _get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
 
 
 async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = await _get_whales_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
+    await _ack_then_reply(update, _get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
 
 
 async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -665,16 +708,27 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fiche Market Object : /market <slug_ou_question>."""
+    """Fiche Market Object : /market <slug_ou_question> (cache 60s, timeout 5s)."""
     query = " ".join((context.args or [])).strip()
-    text, kb = await _get_market_text(query)
+    try:
+        text, kb = await asyncio.wait_for(_get_market_text(query), timeout=5.0)
+    except asyncio.TimeoutError:
+        text = f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\nDonnées en cours... Réessayez.\n{LINE}"
+        kb = _back_keyboard()
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
-    text, kb, _ = await _get_positions_detail(context)
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    async def _get():
+        t, k, _ = await _get_positions_detail(context)
+        return (t, k)
+    await _ack_then_reply(
+        update,
+        _get,
+        f"📋 <b>POSITIONS</b>\n{LINE}\nDonnées en cours...",
+        _positions_keyboard(),
+    )
 
 
 def _is_admin(chat_id: int) -> bool:
@@ -716,7 +770,7 @@ async def _upsert_user_token(telegram_chat_id: str) -> tuple[str, bool]:
         "plan": "admin" if is_admin else "free",
     }
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
         headers = {
             "apikey": key,
             "Authorization": f"Bearer {key}",
@@ -752,31 +806,41 @@ async def _upsert_user_token(telegram_chat_id: str) -> tuple[str, bool]:
 
 
 async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Génère un token dashboard et envoie le lien privé."""
-    chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
-    token, is_active = await _upsert_user_token(chat_id)
+    """Génère un token dashboard et envoie le lien privé (timeout 5s)."""
+    try:
+        ack = await update.message.reply_text("⏳", parse_mode=None)
+    except Exception:
+        ack = None
+    try:
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+        token, is_active = await asyncio.wait_for(_upsert_user_token(chat_id), timeout=5.0)
+    except asyncio.TimeoutError:
+        token, is_active = "", False
     dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app")
-    link = f"{dashboard_url.rstrip('/')}?token={token}"
+    link = f"{dashboard_url.rstrip('/')}?token={token}" if token else "—"
 
     if not is_active:
-        await update.message.reply_text(
+        text = (
             f"🔐 <b>ACCÈS DASHBOARD</b>\n{LINE}\n"
             f"Votre lien :\n<code>{link}</code>\n\n"
             f"⚠️ <b>Accès restreint</b>\n"
             f"Votre compte n'est pas encore actif.\n"
-            f"S'abonnez pour débloquer le dashboard complet.\n{LINE}",
-            parse_mode="HTML",
-            reply_markup=_back_keyboard(),
+            f"S'abonnez pour débloquer le dashboard complet.\n{LINE}"
         )
-        return
-
-    await update.message.reply_text(
-        f"🔐 <b>Votre dashboard privé</b>\n{LINE}\n"
-        f"{link}\n\n"
-        f"<i>Ce lien est personnel — ne le partagez pas.</i>\n{LINE}",
-        parse_mode="HTML",
-        reply_markup=_back_keyboard(),
-    )
+    else:
+        text = (
+            f"🔐 <b>Votre dashboard privé</b>\n{LINE}\n"
+            f"{link}\n\n"
+            f"<i>Ce lien est personnel — ne le partagez pas.</i>\n{LINE}"
+        )
+    kb = _back_keyboard()
+    if ack:
+        try:
+            await ack.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -909,51 +973,67 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     async def edit(text: str, kb: InlineKeyboardMarkup | None = None):
         await q.edit_message_text(text=text, parse_mode="HTML", reply_markup=kb)
 
+    def _safe_get(get_fn, fallback: str, kb):
+        async def _run():
+            try:
+                return await asyncio.wait_for(get_fn(), timeout=5.0)
+            except asyncio.TimeoutError:
+                return fallback
+            except Exception as e:
+                log.exception("Callback error: %s", e)
+                return f"{fallback}\n\n⚠️ {str(e)[:60]}"
+        return _run
+
     # ── Main menu ──
     if data == "menu_back":
+        context.user_data.clear()
         text = await _get_start_text()
         await edit(text, _main_keyboard())
         return
 
     if data == "btn_scan":
         await edit(f"🔍 <b>SCANNING...</b>\n{LINE}", None)
-        text = await _get_scan_text()
+        text = await _safe_get(_get_scan_text, f"🔍 <b>SCANNER</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _scan_keyboard())
         return
 
     if data == "btn_portfolio":
         await edit(f"💼 <b>LOADING...</b>\n{LINE}", None)
-        text = await _get_portfolio_text()
+        text = await _safe_get(_get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _portfolio_keyboard())
         return
 
     if data == "portfolio_positions":
         await edit(f"📋 <b>LOADING...</b>\n{LINE}", None)
-        text, kb, _ = await _get_positions_detail(context)
+        try:
+            text, kb, _ = await asyncio.wait_for(_get_positions_detail(context), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            text = f"📋 <b>POSITIONS</b>\n{LINE}\nDonnées en cours..."
+            kb = _positions_keyboard()
         await edit(text, kb)
         return
 
     if data == "portfolio_history":
         await edit(f"📜 <b>LOADING...</b>\n{LINE}", None)
-        text = await _get_history_text()
+        text = await _safe_get(_get_history_text, f"📜 <b>HISTORIQUE</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _portfolio_keyboard())
         return
 
     if data == "btn_agents":
         await edit(f"🤖 <b>LOADING...</b>\n{LINE}", None)
-        text = await _get_agents_text()
+        text = await _safe_get(_get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _back_keyboard())
         return
 
     if data == "btn_btc":
         await edit(f"📈 <b>LOADING...</b>\n{LINE}", None)
-        text = await _get_btc_text()
+        text = await _safe_get(_get_btc_text, f"📈 <b>BTC</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _back_keyboard())
         return
 
     if data == "btn_whales":
         await edit(f"🐳 <b>LOADING...</b>\n{LINE}", None)
-        text = await _get_whales_text()
+        text = await _safe_get(_get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", None)()
         await edit(text, _back_keyboard())
         return
 
@@ -1229,7 +1309,7 @@ async def close_telegram_session(token: str) -> bool:
     import httpx
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 r = await client.get(
                     f"https://api.telegram.org/bot{token}/deleteWebhook",
                     params={"drop_pending_updates": True},

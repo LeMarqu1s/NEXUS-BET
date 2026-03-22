@@ -88,7 +88,7 @@ async def _call_llm(api_key: str | None, model: str, system: str, user: str) -> 
         vote = "YES" if random.random() > 0.3 else "NO"
         return f"{vote}. Mock reasoning: no API key configured."
     base = "https://api.anthropic.com/v1/messages"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             base,
             headers={
@@ -203,11 +203,16 @@ async def run_swarm(signal: dict[str, Any]) -> SwarmResult:
         persona = _get_persona_for_agent(i)
         tasks.append((persona["name"], persona["system"], user_prompt))
 
-    # Exécution parallèle (batch pour ne pas surcharger l'API)
+    # Exécution parallèle (timeout 10s par agent pour ne pas bloquer)
     sem = asyncio.Semaphore(5)
     async def _one_agent(name: str, system: str, prompt: str) -> SwarmVote:
         async with sem:
-            out = await _call_llm(api_key, model, system, prompt)
+            try:
+                out = await asyncio.wait_for(_call_llm(api_key, model, system, prompt), timeout=10.0)
+            except asyncio.TimeoutError:
+                out = "NO. Timeout."
+            except Exception as e:
+                out = f"NO. {str(e)[:50]}"
         v = _parse_vote(out)
         return SwarmVote(agent_name=name, vote=v, reasoning=out[:300])
 

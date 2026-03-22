@@ -2,9 +2,11 @@
 NEXUS CAPITAL - Vercel Serverless Dashboard API
 Serves Bloomberg-style dashboard + API endpoints with Supabase data.
 Auth: token dans ?token= requis pour les endpoints API (sauf /health et dashboard HTML).
+Performance: timeout 5s, cache market 60s.
 """
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -12,6 +14,9 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 DATA_ROOT = os.getenv("NEXUS_DATA_ROOT", str(Path(__file__).resolve().parent.parent))
+API_TIMEOUT = 5
+CACHE_TTL = 60
+_market_cache: dict[str, tuple[dict, float]] = {}
 
 
 def _get_query_token(path: str) -> str | None:
@@ -182,8 +187,8 @@ def _get_top_markets():
         return []
 
 
-def _fetch_url(url: str, timeout: int = 10) -> dict | list | None:
-    """Fetch JSON from URL. Returns None on error."""
+def _fetch_url(url: str, timeout: int = API_TIMEOUT) -> dict | list | None:
+    """Fetch JSON from URL. Returns None on error. Max 5s timeout."""
     try:
         req = Request(url, headers={"User-Agent": "NexusCapital/1.0"})
         with urlopen(req, timeout=timeout) as r:
@@ -204,7 +209,7 @@ def _get_market_by_id_or_slug(identifier: str) -> dict | None:
             f"{gamma}/markets/slug/{identifier}",
             f"{gamma}/markets?slug={identifier}",
         ):
-            data = _fetch_url(url, timeout=8)
+            data = _fetch_url(url, timeout=API_TIMEOUT)
             if data:
                 m = data[0] if isinstance(data, list) and data else data
                 if isinstance(m, dict):
@@ -214,7 +219,7 @@ def _get_market_by_id_or_slug(identifier: str) -> dict | None:
         f"{gamma}/markets/{identifier}",
         f"{gamma}/markets?condition_id={identifier}",
     ):
-        data = _fetch_url(url, timeout=8)
+        data = _fetch_url(url, timeout=API_TIMEOUT)
         if data:
             m = data[0] if isinstance(data, list) and data else data
             if isinstance(m, dict) and str(m.get("conditionId", m.get("id", ""))) == identifier:
@@ -222,7 +227,7 @@ def _get_market_by_id_or_slug(identifier: str) -> dict | None:
     # Essai 3: recherche dans les marchés actifs (fallback)
     try:
         url = f"{gamma}/markets?limit=200&active=true&closed=false"
-        data = _fetch_url(url, timeout=12)
+        data = _fetch_url(url, timeout=API_TIMEOUT)
         markets = data if isinstance(data, list) else (data.get("data", []) or []) if isinstance(data, dict) else []
         ident_lower = identifier.lower()
         for m in markets:
@@ -259,7 +264,7 @@ def _get_order_book(token_id: str) -> dict:
     """Order book CLOB API - bids/asks top 5."""
     try:
         url = f"https://clob.polymarket.com/book?token_id={token_id}"
-        data = _fetch_url(url, timeout=8)
+        data = _fetch_url(url, timeout=API_TIMEOUT)
         if not data or not isinstance(data, dict):
             return {"bids": [], "asks": [], "spread": 0, "mid_price": 0.5}
         bids = (data.get("bids") or [])[:5]
@@ -282,7 +287,7 @@ def _get_recent_trades(condition_id: str) -> list:
     """Derniers 20 trades depuis Data API."""
     try:
         url = f"https://data-api.polymarket.com/trades?market={condition_id}&size=20"
-        data = _fetch_url(url, timeout=8)
+        data = _fetch_url(url, timeout=API_TIMEOUT)
         if not isinstance(data, list):
             return []
         out = []
@@ -308,7 +313,7 @@ def _get_price_history(condition_id: str) -> list:
     """Série temporelle prix YES sur 24h."""
     try:
         url = f"https://clob.polymarket.com/prices-history?market={condition_id}&interval=1h&fidelity=60"
-        data = _fetch_url(url, timeout=8)
+        data = _fetch_url(url, timeout=API_TIMEOUT)
         if isinstance(data, list):
             return data[:48]
         if isinstance(data, dict) and "history" in data:
@@ -366,7 +371,14 @@ def _get_nexus_edge_and_score(condition_id: str) -> tuple[float | None, float | 
 
 
 def _get_market_object(condition_id_or_slug: str) -> dict | None:
-    """Aggrège Market Object complet depuis APIs Polymarket (style Palantir Gotham)."""
+    """Aggrège Market Object complet depuis APIs Polymarket. Cache 60s, timeout 5s."""
+    now = time.time()
+    cache_key = f"m:{condition_id_or_slug}"
+    if cache_key in _market_cache:
+        data, ts = _market_cache[cache_key]
+        if now - ts < CACHE_TTL:
+            return data
+
     market = _get_market_by_id_or_slug(condition_id_or_slug)
     if not market:
         return None
@@ -413,7 +425,7 @@ def _get_market_object(condition_id_or_slug: str) -> dict | None:
             outcomes = []
     market_type = "binary" if len(outcomes) == 2 else "multi_outcome" if len(outcomes) > 2 else "scalar"
 
-    return {
+    result = {
         "market_id": cid,
         "slug": market.get("slug") or "",
         "question": market.get("question") or "",
@@ -425,11 +437,7 @@ def _get_market_object(condition_id_or_slug: str) -> dict | None:
         "liquidity": round(liquidity, 2),
         "end_date": end_date,
         "days_remaining": days_remaining,
-        "order_book": {
-            "bids": ob["bids"],
-            "asks": ob["asks"],
-            "spread": ob["spread"],
-        },
+        "order_book": {"bids": ob["bids"], "asks": ob["asks"], "spread": ob["spread"]},
         "recent_trades": trades,
         "price_history": price_history,
         "whale_activity": whale,
@@ -437,6 +445,11 @@ def _get_market_object(condition_id_or_slug: str) -> dict | None:
         "nexus_edge": round(nexus_edge, 2) if nexus_edge is not None else None,
         "nexus_score": round(nexus_score, 2) if nexus_score is not None else None,
     }
+    _market_cache[cache_key] = (result, now)
+    if len(_market_cache) > 100:
+        oldest = min(_market_cache, key=lambda k: _market_cache[k][1])
+        del _market_cache[oldest]
+    return result
 
 
 def _get_market_types():
