@@ -1,13 +1,19 @@
 """
 NEXUS BET - Polymarket CLOB API Client
 Async client for Polymarket Central Limit Order Book.
+Hardened: retry 3x, 8s timeout, never raise.
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Optional
 from decimal import Decimal
 import httpx
+
+log = logging.getLogger("nexus.polymarket")
+API_TIMEOUT = 8.0
+API_RETRIES = 3
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
 from py_clob_client.order_builder.constants import BUY
@@ -38,26 +44,30 @@ class PolymarketClient:
         return self._client
 
     async def get_markets(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Fetch active, non-closed markets from Polymarket Gamma API sorted by 24h volume."""
+        """Fetch active, non-closed markets. Retry 3x, 8s timeout, never raise."""
         gamma_url = settings.POLYMARKET_GAMMA_URL
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(
-                    f"{gamma_url}/markets",
-                    params={
-                        "limit": limit,
-                        "active": "true",
-                        "closed": "false",
-                        "archived": "false",
-                        "order": "volume24hr",
-                        "ascending": "false",
-                    },
-                )
-                r.raise_for_status()
-                data = r.json()
-                return data if isinstance(data, list) else data.get("data", []) or []
-        except Exception:
-            return []
+        for attempt in range(API_RETRIES):
+            try:
+                async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                    r = await client.get(
+                        f"{gamma_url}/markets",
+                        params={
+                            "limit": limit,
+                            "active": "true",
+                            "closed": "false",
+                            "archived": "false",
+                            "order": "volume24hr",
+                            "ascending": "false",
+                        },
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                    return data if isinstance(data, list) else data.get("data", []) or []
+            except Exception as e:
+                log.debug("get_markets attempt %d: %s", attempt + 1, e)
+                if attempt < API_RETRIES - 1:
+                    await asyncio.sleep(2)
+        return []
 
     async def get_token_id_from_market(self, market_id: str, outcome: str) -> Optional[str]:
         """Get token ID for a market outcome. Fetches market from Gamma API."""

@@ -415,16 +415,20 @@ class EdgeEngine:
         order_book: dict[str, Any],
     ) -> Optional[EdgeSignal]:
         """
-        Compute mispricing edge by market type.
+        Compute mispricing edge by market type. Never raises — skip bad markets.
         Returns EdgeSignal if edge > min_edge_pct, else None.
         """
-        market_type = detect_market_type(market)
+        try:
+            market_type = detect_market_type(market)
 
-        if market_type == "binary":
+            if market_type == "binary":
+                return self._compute_edge_binary(market, token_id, side, polymarket_price, order_book)
+            if market_type == "multi_outcome":
+                return self._compute_edge_multi_outcome(market, token_id, side, polymarket_price, order_book)
+            if market_type == "scalar":
+                return self._compute_edge_scalar(market, token_id, side, polymarket_price, order_book)
+
             return self._compute_edge_binary(market, token_id, side, polymarket_price, order_book)
-        if market_type == "multi_outcome":
-            return self._compute_edge_multi_outcome(market, token_id, side, polymarket_price, order_book)
-        if market_type == "scalar":
-            return self._compute_edge_scalar(market, token_id, side, polymarket_price, order_book)
-
-        return self._compute_edge_binary(market, token_id, side, polymarket_price, order_book)
+        except Exception as e:
+            log.debug("compute_edge skip market %s: %s", token_id[:16] if token_id else "?", e)
+            return None

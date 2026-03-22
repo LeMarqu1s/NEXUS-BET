@@ -22,10 +22,11 @@ from core.market_filter import passes_filter
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-PING_INTERVAL = 10.0
+PING_INTERVAL = 30.0
 MARKETS_REFRESH_INTERVAL = 60.0
 GAMMA_MARKETS_LIMIT = 200
 GAMMA_FETCH_TIMEOUT = 15.0
+WS_FAIL_THRESHOLD = 3
 
 
 def _mid_from_book(bids: list, asks: list) -> Optional[float]:
@@ -58,6 +59,8 @@ class WebSocketScanner:
         self._task: Optional[asyncio.Task[None]] = None
         self._token_to_market: dict[str, tuple[dict, str]] = {}  # token_id -> (market, side)
         self._last_markets_refresh = 0.0
+        self._ws_fail_count = 0
+        self._use_polling_permanent = False
 
     async def _fetch_markets_gamma(self) -> list[dict[str, Any]]:
         """Fetch markets from Gamma API with extended timeout (scanner critical path)."""
@@ -149,15 +152,26 @@ class WebSocketScanner:
             logger.warning("WebSocket scanner: failed to refresh markets: %s", e)
 
     async def _run(self) -> None:
-        """Main WebSocket loop with reconnect. Falls back to polling if WS fails."""
+        """Main loop: WS with auto-reconnect, or polling after 3 WS failures. Never raises."""
         while self._running:
             try:
+                if self._use_polling_permanent:
+                    await self._run_polling_fallback()
+                    return
                 await self._connect_and_process()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("WebSocket failed: %s — switching to polling fallback", e)
-                await self._run_polling_fallback()
+                self._ws_fail_count += 1
+                logger.warning("WebSocket failed (#%d): %s", self._ws_fail_count, e)
+                if self._ws_fail_count >= WS_FAIL_THRESHOLD:
+                    logger.warning("WebSocket failed %d times → polling permanent", WS_FAIL_THRESHOLD)
+                    self._use_polling_permanent = True
+                else:
+                    try:
+                        await self._run_polling_fallback()
+                    except Exception as poll_err:
+                        logger.debug("Polling fallback error: %s", poll_err)
 
     async def _run_polling_fallback(self) -> None:
         """Fallback: poll Gamma API + order books every 30s when WS fails or no tokens."""
@@ -208,8 +222,12 @@ class WebSocketScanner:
             await asyncio.sleep(30)
 
     async def _connect_and_process(self) -> None:
-        """Connect, subscribe, process messages."""
-        await self._refresh_markets()
+        """Connect, subscribe, process messages. Auto-reconnect on any disconnect."""
+        try:
+            await self._refresh_markets()
+        except Exception as e:
+            logger.warning("Refresh markets failed: %s", e)
+            return
         if not self._token_to_market:
             logger.warning("WebSocket scanner: no tokens — switching to polling fallback")
             await self._run_polling_fallback()
@@ -222,33 +240,48 @@ class WebSocketScanner:
             "custom_feature_enabled": True,
         })
 
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(WS_URL) as ws:
-                await ws.send_str(subscribe_msg)
-                logger.info("Connected to WS — subscribed to %d assets", len(asset_ids))
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(WS_URL, heartbeat=30) as ws:
+                    await ws.send_str(subscribe_msg)
+                    logger.info("Connected to WS — subscribed to %d assets", len(asset_ids))
+                    self._ws_fail_count = 0
 
-                last_ping = time.monotonic()
-                last_markets = last_ping
+                    last_ping = time.monotonic()
+                    last_markets = last_ping
 
-                async for msg in ws:
-                    if not self._running:
-                        break
-                    now = time.monotonic()
+                    async for msg in ws:
+                        if not self._running:
+                            break
+                        now = time.monotonic()
 
-                    # Refresh markets periodically
-                    if now - last_markets > MARKETS_REFRESH_INTERVAL:
-                        await self._refresh_markets()
-                        last_markets = now
+                        # Refresh markets periodically
+                        if now - last_markets > MARKETS_REFRESH_INTERVAL:
+                            try:
+                                await self._refresh_markets()
+                            except Exception:
+                                pass
+                            last_markets = now
 
-                    # PING every 10s
-                    if now - last_ping > PING_INTERVAL:
-                        await ws.send_str("PING")
-                        last_ping = now
+                        # PING every 30s keepalive
+                        if now - last_ping > PING_INTERVAL:
+                            try:
+                                await ws.send_str("PING")
+                            except Exception:
+                                break
+                            last_ping = now
 
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await self._handle_message(msg.data)
-                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                        break
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                await self._handle_message(msg.data)
+                            except Exception as e:
+                                logger.debug("handle_message: %s", e)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                            break
+        except aiohttp.ClientError:
+            raise
+        except Exception:
+            raise
 
     async def _handle_message(self, data: str) -> None:
         """Process WebSocket message (book, price_change, etc.)."""
@@ -319,29 +352,40 @@ class WebSocketScanner:
 async def run_scanner_ws() -> None:
     """
     Main entry point for WebSocket market scanner.
-    Replaces polling with real-time WebSocket updates.
+    Never raises — all errors caught and logged.
     """
-    polymarket = PolymarketClient()
-    edge_engine = EdgeEngine()
     try:
-        from paperclip_bridge import on_signal as paperclip_on_signal
-        _on_signal = paperclip_on_signal
-    except ImportError:
-        _on_signal = None
+        polymarket = PolymarketClient()
+        edge_engine = EdgeEngine()
+        try:
+            from paperclip_bridge import on_signal as paperclip_on_signal
+            _on_signal = paperclip_on_signal
+        except ImportError:
+            _on_signal = None
 
-    scanner = WebSocketScanner(
-        polymarket=polymarket,
-        edge_engine=edge_engine,
-        on_signal=_on_signal,
-    )
-    scanner.start()
-    try:
-        while scanner._running and scanner._task:
-            await asyncio.sleep(1)
-            if scanner._task.done():
-                break
+        scanner = WebSocketScanner(
+            polymarket=polymarket,
+            edge_engine=edge_engine,
+            on_signal=_on_signal,
+        )
+        scanner.start()
+        try:
+            while scanner._running and scanner._task:
+                await asyncio.sleep(1)
+                if scanner._task.done():
+                    break
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                await scanner.stop()
+            except Exception as e:
+                logger.warning("Scanner stop: %s", e)
+            try:
+                await polymarket.close()
+            except Exception as e:
+                logger.debug("Polymarket close: %s", e)
     except asyncio.CancelledError:
-        pass
-    finally:
-        await scanner.stop()
-        await polymarket.close()
+        raise
+    except Exception as e:
+        logger.exception("run_scanner_ws fatal: %s", e)

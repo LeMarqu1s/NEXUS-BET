@@ -19,9 +19,11 @@ from pathlib import Path
 import httpx
 
 POLYGON_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
-API_TIMEOUT = 5.0
+API_TIMEOUT = 8.0
+HANDLER_TIMEOUT = 10.0
 CACHE_TTL = 60
 _market_cache: dict[str, tuple[dict, float]] = {}
+_poller_lock: asyncio.Lock | None = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -657,7 +659,7 @@ async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb
     except Exception:
         ack = None
     try:
-        result = await asyncio.wait_for(get_content(), timeout=10.0)
+        result = await asyncio.wait_for(get_content(), timeout=HANDLER_TIMEOUT)
         content = result[0] if isinstance(result, tuple) else result
         reply_markup = result[1] if isinstance(result, tuple) and len(result) > 1 else default_kb
     except asyncio.TimeoutError:
@@ -665,7 +667,7 @@ async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb
         reply_markup = default_kb
     except Exception as e:
         log.exception("Handler error: %s", e)
-        content = f"{fallback}\n\n⚠️ {str(e)[:80]}"
+        content = f"{fallback}\n\n⚠️ Délai ou erreur — réessayez."
         reply_markup = default_kb
     if ack:
         try:
@@ -676,15 +678,32 @@ async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb
         await update.message.reply_text(content, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
+async def _safe_reply(update: Update, text: str, reply_markup=None, parse_mode="HTML") -> None:
+    """Reply to user, never raise."""
+    try:
+        if update and update.message:
+            await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        log.debug("safe_reply: %s", e)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reset user state + clear pending callbacks on /start."""
-    context.user_data.clear()
-    text = await _get_start_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
+    try:
+        context.user_data.clear()
+        text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
+    except Exception as e:
+        log.exception("cmd_start: %s", e)
+        await _safe_reply(update, f"⚡ <b>NEXUS</b>\n{LINE}\nChargement… Réessayez.", _main_keyboard())
 
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _ack_then_reply(update, _get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", _portfolio_keyboard())
+    try:
+        await _ack_then_reply(update, _get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", _portfolio_keyboard())
+    except Exception as e:
+        log.exception("cmd_portfolio: %s", e)
+        await _safe_reply(update, f"💼 <b>PORTFOLIO</b>\n{LINE}\nErreur. Réessayez.", _portfolio_keyboard())
 
 
 def _scan_fallback() -> str:
@@ -699,15 +718,27 @@ def _scan_fallback() -> str:
 
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _ack_then_reply(update, _get_scan_text, _scan_fallback(), _scan_keyboard())
+    try:
+        await _ack_then_reply(update, _get_scan_text, _scan_fallback(), _scan_keyboard())
+    except Exception as e:
+        log.exception("cmd_scan: %s", e)
+        await _safe_reply(update, _scan_fallback(), _scan_keyboard())
 
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _ack_then_reply(update, _get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+    try:
+        await _ack_then_reply(update, _get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_agents: %s", e)
+        await _safe_reply(update, f"🤖 <b>AI AGENTS</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
 
 
 async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _ack_then_reply(update, _get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+    try:
+        await _ack_then_reply(update, _get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_whales: %s", e)
+        await _safe_reply(update, f"🐳 <b>WHALES</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
 
 
 async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -719,19 +750,25 @@ async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = _get_settings_text()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_settings_keyboard())
+    try:
+        text = _get_settings_text()
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=_settings_keyboard())
+    except Exception as e:
+        log.exception("cmd_settings: %s", e)
+        await _safe_reply(update, f"⚙️ <b>SETTINGS</b>\n{LINE}\nErreur.", _settings_keyboard())
 
 
 async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fiche Market Object : /market <slug_ou_question> (cache 60s, timeout 5s)."""
-    query = " ".join((context.args or [])).strip()
+    """Fiche Market Object : /market <slug_ou_question> (cache 60s, timeout 10s)."""
     try:
-        text, kb = await asyncio.wait_for(_get_market_text(query), timeout=5.0)
+        query = " ".join((context.args or [])).strip()
+        text, kb = await asyncio.wait_for(_get_market_text(query), timeout=HANDLER_TIMEOUT)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     except asyncio.TimeoutError:
-        text = f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\nDonnées en cours... Réessayez.\n{LINE}"
-        kb = _back_keyboard()
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        await _safe_reply(update, f"🎯 <b>MARKET</b>\n{LINE}\nDélai. Réessayez.", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_market: %s", e)
+        await _safe_reply(update, f"🎯 <b>MARKET</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
 
 
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -982,17 +1019,24 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    await q.answer()
+    try:
+        q = update.callback_query
+        await q.answer()
+    except Exception as e:
+        log.debug("callback answer: %s", e)
+        return
     data = q.data or ""
 
     async def edit(text: str, kb: InlineKeyboardMarkup | None = None):
-        await q.edit_message_text(text=text, parse_mode="HTML", reply_markup=kb)
+        try:
+            await q.edit_message_text(text=text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            log.debug("callback edit: %s", e)
 
     def _safe_get(get_fn, fallback: str, kb):
         async def _run():
             try:
-                return await asyncio.wait_for(get_fn(), timeout=10.0)
+                return await asyncio.wait_for(get_fn(), timeout=HANDLER_TIMEOUT)
             except asyncio.TimeoutError:
                 return fallback
             except Exception as e:
@@ -1003,7 +1047,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # ── Main menu ──
     if data == "menu_back":
         context.user_data.clear()
-        text = await _get_start_text()
+        try:
+            text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
+        except Exception:
+            text = f"⚡ <b>NEXUS</b>\n{LINE}\nChargement... Réessayez."
         await edit(text, _main_keyboard())
         return
 
@@ -1022,7 +1069,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "portfolio_positions":
         await edit(f"📋 <b>LOADING...</b>\n{LINE}", None)
         try:
-            text, kb, _ = await asyncio.wait_for(_get_positions_detail(context), timeout=5.0)
+            text, kb, _ = await asyncio.wait_for(_get_positions_detail(context), timeout=HANDLER_TIMEOUT)
         except (asyncio.TimeoutError, Exception):
             text = f"📋 <b>POSITIONS</b>\n{LINE}\nDonnées en cours..."
             kb = _positions_keyboard()
@@ -1141,7 +1188,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit(f"🔴 <b>EXIT EXÉCUTÉ</b>\n{LINE}\nPosition soldée.", _main_keyboard())
         return
 
-    # ── Settings ──
+        # ── Settings ──
     if data == "btn_settings":
         await edit(_get_settings_text(), _settings_keyboard())
         return
@@ -1250,7 +1297,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit("Mots-clés à exclure (virgules) :\n<code>war,nuclear</code>", _settings_advanced_keyboard())
         return
 
-    # ── Auto-trade confirm/ignore ──
+        # ── Auto-trade confirm/ignore ──
     if data.startswith("autotrade_confirm_"):
         sid = data.replace("autotrade_confirm_", "")
         from monitoring.auto_trade import get_pending_confirm, remove_pending_confirm, execute_signal
@@ -1274,7 +1321,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit(f"❌ Signal ignoré\n{LINE}", _main_keyboard())
         return
 
-    # ── Wealth suggestion: approve / wait ──
+        # ── Wealth suggestion: approve / wait ──
     if data.startswith("approve_"):
         from monitoring.wealth_suggestions import get_suggestion, remove_suggestion
         sid = data.replace("approve_", "")
@@ -1355,13 +1402,25 @@ def _is_conflict_error(exc: BaseException) -> bool:
     return "409" in str(exc) or "Conflict" in str(exc)
 
 
+def _get_poller_lock() -> asyncio.Lock:
+    global _poller_lock
+    if _poller_lock is None:
+        _poller_lock = asyncio.Lock()
+    return _poller_lock
+
+
 async def run_telegram_poller() -> None:
-    """Single polling instance. Await start_polling directly (PTB wiki). No create_task + restart loop."""
+    """Single polling instance. Lock ensures only one runs. Never crashes."""
     import traceback
 
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         log.info("Telegram token non configuré, poller désactivé")
+        return
+
+    lock = _get_poller_lock()
+    if lock.locked():
+        log.warning("Telegram poller déjà actif (lock), skip")
         return
 
     for _log in ("telegram", "telegram.ext"):
@@ -1427,30 +1486,30 @@ async def run_telegram_poller() -> None:
                 except Exception as cleanup_err:
                     log.debug("Telegram cleanup: %s", cleanup_err)
 
-    try:
-        while True:
-            try:
-                await _run_once()
-                # start_polling returned without exception — unexpected
+    async with lock:
+        try:
+            while True:
+                try:
+                    await _run_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.exception("Telegram poller erreur (retry dans %.0fs): %s", delay, e)
+                    if _is_conflict_error(e):
+                        await close_telegram_session(token)
+                        delay = base_delay
+                    else:
+                        delay = min(delay * 2, max_delay)
+                    await asyncio.sleep(delay)
+                    continue
                 log.warning(
                     "Telegram poller: start_polling a retourné sans exception. Call stack:\n%s",
                     "".join(traceback.format_stack()[-8:-1]),
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * 1.5, max_delay)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                log.exception("Telegram poller erreur (retry dans %.0fs): %s", delay, e)
-                if _is_conflict_error(e):
-                    await close_telegram_session(token)
-                    delay = base_delay
-                else:
-                    delay = min(delay * 2, max_delay)
-                await asyncio.sleep(delay)
-    except asyncio.CancelledError:
-        log.info("Telegram poller arrêté")
-        raise
-    except Exception as e:
-        log.exception("Telegram poller crash fatal (non récupéré): %s", e)
-        raise
+        except asyncio.CancelledError:
+            log.info("Telegram poller arrêté")
+            raise
+        except Exception as e:
+            log.exception("Telegram poller crash: %s", e)

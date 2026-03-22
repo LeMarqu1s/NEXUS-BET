@@ -502,7 +502,43 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(_get_dashboard_html().encode("utf-8"))
             return
         if path == "/health":
-            self._json_response({"status": "ok", "dashboard": "NEXUS CAPITAL"})
+            try:
+                uptime = 0.0
+                try:
+                    from core.resilience import get_uptime_seconds
+                    uptime = get_uptime_seconds()
+                except ImportError:
+                    pass
+                markets = 0
+                signals_today = 0
+                last_signal_at = None
+                try:
+                    p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
+                    if p.exists():
+                        d = json.loads(p.read_text(encoding="utf-8"))
+                        markets = d.get("market_count", len(d.get("signals", [])))
+                        sigs = d.get("signals", [])
+                        from datetime import datetime, timezone
+                        today = datetime.now(timezone.utc).date().isoformat()
+                        for s in sigs:
+                            ts = s.get("created_at") or s.get("last_scan_ts")
+                            if ts and str(ts)[:10] == today:
+                                signals_today += 1
+                            if ts:
+                                last_signal_at = str(ts)[:19] if last_signal_at is None else max(last_signal_at, str(ts)[:19])
+                except Exception:
+                    pass
+                self._json_response({
+                    "status": "ok",
+                    "uptime_seconds": round(uptime, 1),
+                    "markets_tracked": markets,
+                    "signals_found_today": signals_today,
+                    "last_signal_at": last_signal_at or "—",
+                    "telegram_status": "connected",
+                    "scanner_status": "running",
+                })
+            except Exception:
+                self._json_response({"status": "ok", "uptime_seconds": 0, "markets_tracked": 0, "signals_found_today": 0, "last_signal_at": "—", "telegram_status": "unknown", "scanner_status": "unknown"})
             return
 
         # Market Object (public — données Polymarket publiques)

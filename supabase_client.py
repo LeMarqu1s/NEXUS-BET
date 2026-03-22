@@ -1,5 +1,6 @@
 """
 NEXUS BET - Supabase logging client for trades, debates, positions, smart money.
+Hardened: retry 3x, never raise — if Supabase down, continue without logging.
 """
 
 import asyncio
@@ -8,6 +9,8 @@ from datetime import datetime
 
 from supabase import create_client, Client
 from config.settings import settings
+
+DB_RETRIES = 3
 
 
 class SupabaseClient:
@@ -53,23 +56,30 @@ class SupabaseClient:
             return None
 
         def _insert():
-            result = client.table("trades").insert(
-                {
-                    "market_id": market_id,
-                    "token_id": token_id,
-                    "side": side,
-                    "amount_usd": amount_usd,
-                    "shares": shares,
-                    "price": price,
-                    "order_type": order_type,
-                    "status": status,
-                    "market_question": market_question,
-                    "raw_order_id": raw_order_id,
-                    "metadata": metadata or {},
-                }
-            ).execute()
-            if result.data and len(result.data) > 0:
-                return result.data[0].get("id")
+            for _ in range(DB_RETRIES):
+                try:
+                    result = client.table("trades").insert(
+                        {
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "side": side,
+                            "amount_usd": amount_usd,
+                            "shares": shares,
+                            "price": price,
+                            "order_type": order_type,
+                            "status": status,
+                            "market_question": market_question,
+                            "raw_order_id": raw_order_id,
+                            "metadata": metadata or {},
+                        }
+                    ).execute()
+                    if result.data and len(result.data) > 0:
+                        return result.data[0].get("id")
+                    return None
+                except Exception:
+                    pass
+                import time
+                time.sleep(2)
             return None
 
         return await asyncio.get_event_loop().run_in_executor(None, _insert)

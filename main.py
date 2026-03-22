@@ -1,6 +1,7 @@
 """
 NEXUS CAPITAL - Master Loop (Point d'entrée principal)
 Chef d'orchestre 24h/24 : Scan → Swarm → DeFi Yield → Exécution.
+BULLETPROOF: chaque tâche a son propre retry loop, return_exceptions=True, jamais de crash.
 """
 import asyncio
 import logging
@@ -13,6 +14,7 @@ from pathlib import Path
 # Ajouter le projet au path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from core.resilience import run_task_with_restart, set_uptime_start
 from core.scanner_ws import run_scanner_ws
 from monitoring.telegram_alerts import alert_startup, alert_error
 from monitoring.telegram_bot import run_telegram_poller
@@ -375,27 +377,48 @@ async def main() -> None:
     _loop = asyncio.get_running_loop()
     _main_task = asyncio.current_task()
     assert _main_task is not None
+    set_uptime_start()
 
     # TP/SL monitor (shared OrderManager instance)
     from execution.order_manager import OrderManager
     _order_manager = OrderManager()
 
-    # Tâches du Master Loop (une seule instance Telegram poller)
-    scanner_task = asyncio.create_task(run_scanner_ws())
-    poller_task = asyncio.create_task(run_telegram_poller())
-    log.info("Telegram poller task créé (drop_pending_updates=True au démarrage)")
-    swarm_task = asyncio.create_task(_swarm_loop())
-    autotrade_task = asyncio.create_task(_auto_trade_loop())
-    yield_task = asyncio.create_task(_defi_yield_loop())
-    antisybil_task = asyncio.create_task(_anti_sybil_loop())
-    tpsl_task = asyncio.create_task(_order_manager.start_monitor_loop())
-    copy_task = asyncio.create_task(_copy_trader_loop())
+    # Chaque tâche dans son propre retry loop — crash d'une = restart après 5s, pas tout le bot
+    def _scanner():
+        return run_task_with_restart(run_scanner_ws, "scanner")
+    def _poller():
+        return run_task_with_restart(run_telegram_poller, "telegram_poller")
+    def _swarm():
+        return run_task_with_restart(_swarm_loop, "swarm")
+    def _autotrade():
+        return run_task_with_restart(_auto_trade_loop, "autotrade")
+    def _yield_loop():
+        return run_task_with_restart(_defi_yield_loop, "defi_yield")
+    def _antisybil():
+        return run_task_with_restart(_anti_sybil_loop, "anti_sybil")
+    def _tpsl():
+        return run_task_with_restart(_order_manager.start_monitor_loop, "tpsl")
+    def _copy():
+        return run_task_with_restart(_copy_trader_loop, "copy_trader")
 
-    tasks = [scanner_task, poller_task, swarm_task, autotrade_task, yield_task, antisybil_task, tpsl_task, copy_task]
+    tasks = [
+        asyncio.create_task(_scanner()),
+        asyncio.create_task(_poller()),
+        asyncio.create_task(_swarm()),
+        asyncio.create_task(_autotrade()),
+        asyncio.create_task(_yield_loop()),
+        asyncio.create_task(_antisybil()),
+        asyncio.create_task(_tpsl()),
+        asyncio.create_task(_copy()),
+    ]
     log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil | TP/SL | Copy")
 
     try:
-        await asyncio.gather(*tasks)
+        # return_exceptions=True: une exception ne tue pas les autres tâches
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                log.exception("Task %d failed: %s", i, r)
     except asyncio.CancelledError:
         log.info("Shutdown requested, cancelling tasks...")
         for t in tasks:
