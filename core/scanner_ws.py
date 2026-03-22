@@ -139,9 +139,10 @@ class WebSocketScanner:
                     self._token_to_market[str(no_id)] = (market, "NO")
             self._last_markets_refresh = time.monotonic()
             n_tokens = len(self._token_to_market)
+            n_markets_tracked = n_tokens // 2
             logger.info(
-                "Scanner: Fetched %d tokens from %d markets | filtered=%d | no_tokens=%d",
-                n_tokens, len(markets), filtered_count, no_tokens_count,
+                "Scanner: markets TRACKED=%d (%d tokens) | rejected=%d | no_tokens=%d",
+                n_markets_tracked, n_tokens, filtered_count, no_tokens_count,
             )
             try:
                 from paperclip_bridge import write_scanner_state

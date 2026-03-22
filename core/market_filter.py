@@ -36,12 +36,12 @@ def get_max_days_resolution() -> int:
 
 def get_min_market_volume() -> float:
     v = os.getenv("MIN_MARKET_VOLUME")
-    return float(v) if v else 1000.0
+    return float(v) if v else 1000.0  # lowered from 10k for more markets
 
 
 def get_min_liquidity() -> float:
     v = os.getenv("MIN_LIQUIDITY")
-    return float(v) if v else 100.0
+    return float(v) if v else 100.0  # lowered from 1k for more markets
 
 
 def get_keywords_blacklist() -> list[str]:
@@ -94,14 +94,7 @@ def passes_filter(market: dict[str, Any], reason_out: list[str] | None = None) -
                 reason_out.append(f"category '{cat}' blacklisted")
             return False
 
-    min_days = get_min_days_resolution()
-    max_days = get_max_days_resolution()
-    days = _days_to_resolution(market)
-    if days is not None:
-        if days < min_days or days > max_days:
-            if reason_out is not None:
-                reason_out.append(f"days={days} outside [{min_days},{max_days}]")
-            return False
+    # Days filter disabled - let edge_engine decide. Was rejecting 2028 elections (960 days).
 
     keywords = get_keywords_blacklist()
     if keywords:
