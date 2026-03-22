@@ -71,6 +71,14 @@ SPORT_KEYWORDS_MAP = (
 ODDS_CACHE_TTL = 300
 
 
+def _mask_api_key(s: str) -> str:
+    """Mask apiKey in URLs/logs for security. Replaces apiKey=xxx with apiKey=******"""
+    if not s:
+        return s
+    import re
+    return re.sub(r"apiKey=[^&\s\"']+", "apiKey=******", str(s), flags=re.IGNORECASE)
+
+
 @dataclass
 class ScoringWeights:
     """Poids des piliers pour le score final."""
@@ -233,7 +241,7 @@ class NexusScoringEngine:
                 self._odds_cache[cache_key] = (now, events)
                 return events
         except Exception as e:
-            log.debug("odds fetch %s: %s", sport_key, e)
+            log.debug("odds fetch %s: %s", sport_key, _mask_api_key(str(e)))
         return None
 
     def get_fair_value_for_yes(self, market_data: dict[str, Any]) -> Optional[float]:
@@ -266,7 +274,7 @@ class NexusScoringEngine:
                 )
                 return fair
         except Exception as e:
-            log.debug("get_fair_value_for_yes: %s", e)
+            log.debug("get_fair_value_for_yes: %s", _mask_api_key(str(e)))
         return None
 
     def _score_binary_sport(

@@ -1427,7 +1427,7 @@ async def run_forever() -> None:
         logging.getLogger(_log).setLevel(logging.ERROR)
 
     await close_telegram_session(token)
-    await asyncio.sleep(2)
+    await asyncio.sleep(3)  # let old instance fully terminate during Railway deploy
 
     app = build_application(token)
     try:
@@ -1447,16 +1447,40 @@ async def run_forever() -> None:
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
-        await app.updater.start_polling(
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query"],
-        )
-        log.info("Bot is now listening for messages...")
-        try:
-            while True:
-                await asyncio.sleep(1)  # keep alive
-        except asyncio.CancelledError:
-            pass
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                await app.updater.start_polling(
+                    drop_pending_updates=True,
+                    allowed_updates=["message", "callback_query"],
+                )
+                log.info("Bot is now listening for messages...")
+                try:
+                    while True:
+                        await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    pass
+                break
+            except Exception as e:
+                try:
+                    from telegram.error import Conflict
+                    if isinstance(e, Conflict):
+                        log.warning("Telegram Conflict (other getUpdates): wait 10s, deleteWebhook, retry")
+                        await asyncio.sleep(10)
+                        await close_telegram_session(token)
+                        await asyncio.sleep(2)
+                        if attempt < max_retries - 1:
+                            continue
+                except ImportError:
+                    pass
+                if "Conflict" in str(e) or "409" in str(e):
+                    log.warning("Telegram Conflict detected: %s", str(e)[:80])
+                    await asyncio.sleep(10)
+                    await close_telegram_session(token)
+                    await asyncio.sleep(2)
+                    if attempt < max_retries - 1:
+                        continue
+                raise
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise
