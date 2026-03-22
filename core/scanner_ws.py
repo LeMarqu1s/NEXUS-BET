@@ -88,20 +88,45 @@ def _extract_market_price(market: dict, side: str) -> float | None:
         return None
 
 
-def _write_scan_ts(market_count: int) -> None:
-    """Write last_scan_ts and market_count to paperclip_pending_signals.json after each scan cycle."""
+def _signal_to_entry(sig: EdgeSignal) -> dict:
+    """Convert EdgeSignal to paperclip-compatible dict."""
+    return {
+        "market_id": sig.market_id,
+        "token_id": sig.token_id,
+        "side": sig.side,
+        "question": sig.metadata.get("question", "")[:120],
+        "polymarket_price": sig.polymarket_price,
+        "edge_pct": sig.edge_pct * 100,
+        "kelly_fraction": sig.kelly_fraction,
+        "model": sig.model.value,
+        "confidence": sig.confidence,
+        "signal_strength": getattr(sig, "signal_strength", "BUY"),
+    }
+
+
+def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = None) -> None:
+    """Write last_scan_ts, market_count, and signals to paperclip_pending_signals.json. Same file/key as telegram."""
     try:
-        from pathlib import Path
-        p = Path(__file__).resolve().parent.parent / "paperclip_pending_signals.json"
-        data: dict = {"last_scan_ts": time.time(), "market_count": market_count, "signals": []}
+        from paperclip_bridge import PENDING_SIGNALS_FILE
+        p = PENDING_SIGNALS_FILE
+        ts = time.time()
+        data: dict = {"last_scan_ts": ts, "market_count": market_count, "signals": [], "count": 0}
         if p.exists():
             with open(p, encoding="utf-8") as f:
                 existing = json.load(f)
             if isinstance(existing, dict):
-                data["signals"] = existing.get("signals", [])
-                data["count"] = len(data["signals"])
+                data["signals"] = list(existing.get("signals", []))
+        if new_signals:
+            for sig in new_signals:
+                entry = _signal_to_entry(sig)
+                if not any(e.get("market_id") == entry["market_id"] and e.get("side") == entry["side"] for e in data["signals"]):
+                    data["signals"].append(entry)
+                    logger.info("SIGNAL STORED: %s edge=%.2f%%", entry.get("question", "")[:40], entry["edge_pct"])
+            data["signals"] = data["signals"][-50:]
+        data["count"] = len(data["signals"])
         with open(p, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        logger.info("Wrote scan timestamp: %s", int(ts))
     except Exception as e:
         logger.debug("_write_scan_ts: %s", e)
 
@@ -252,6 +277,7 @@ class WebSocketScanner:
                     continue
                 items = list(self._token_to_market.items())[:200]
                 n_markets = len(items) // 2
+                signals_found: list[EdgeSignal] = []
                 logger.info("Processing %d markets through edge engine", n_markets)
                 for token_id, (market, side) in items:
                     if not self._running:
@@ -265,25 +291,19 @@ class WebSocketScanner:
                             )
                         if price is None or price <= 0.01 or price >= 0.99:
                             continue
-                        q = (market.get("question") or "")[:40]
-                        op = market.get("outcomePrices")
-                        logger.info("Sending to edge: %s | outcomePrices=%s | price=%.2f", q, op, price)
                         sig = self.edge_engine.compute_edge(
                             market, token_id, side, price, ob
                         )
                         if sig:
-                            edge_pct = sig.edge_pct * 100
-                            if edge_pct > 3.0:
-                                q = (market.get("question") or "")[:50]
-                                logger.info("POTENTIAL SIGNAL: %s edge=%.2f%% | %s", token_id[:16], edge_pct, q)
-                        if sig and self.on_signal:
-                            if asyncio.iscoroutinefunction(self.on_signal):
-                                await self.on_signal(sig)
-                            else:
-                                self.on_signal(sig)
+                            signals_found.append(sig)
+                            if self.on_signal:
+                                if asyncio.iscoroutinefunction(self.on_signal):
+                                    await self.on_signal(sig)
+                                else:
+                                    self.on_signal(sig)
                     except Exception as e:
                         logger.debug("Polling market %s: %s", token_id[:16], e)
-                _write_scan_ts(n // 2)
+                _write_scan_ts(n // 2, signals_found)
                 logger.info("Polling fallback: processed %d tokens", n)
             except asyncio.CancelledError:
                 break
@@ -377,15 +397,10 @@ class WebSocketScanner:
                 if price is None or price <= 0.01 or price >= 0.99:
                     return
                 ob = _orderbook_from_event(bids, asks)
-                q = (market.get("question") or "")[:40]
-                op = market.get("outcomePrices")
-                logger.info("Sending to edge: %s | outcomePrices=%s | price=%.2f", q, op, price)
                 sig = self.edge_engine.compute_edge(market, asset_id, side, price, ob)
                 if sig:
-                    edge_pct = sig.edge_pct * 100
-                    if edge_pct > 3.0:
-                        q = (market.get("question") or "")[:50]
-                        logger.info("POTENTIAL SIGNAL: %s edge=%.2f%% | %s", asset_id[:16], edge_pct, q)
+                    n_markets = len(self._token_to_market) // 2
+                    _write_scan_ts(n_markets, [sig])
                 if sig and self.on_signal:
                     try:
                         if asyncio.iscoroutinefunction(self.on_signal):

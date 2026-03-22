@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -118,7 +117,7 @@ class EdgeEngine:
             elif polymarket_price > 0.7:
                 fair = polymarket_price * 0.95
             else:
-                fair = polymarket_price + 0.05
+                fair = polymarket_price + 0.07
             fair = max(0.01, min(0.99, fair))
             return fair, 0.5
         bids = order_book.get("bids", []) or []
@@ -240,7 +239,7 @@ class EdgeEngine:
         question = (market.get("question") or "")[:40]
         log.debug("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
 
-        min_edge = 0.01 if os.getenv("DEBUG_EDGE") == "1" else (settings.MIN_EDGE_PCT / 100.0)
+        min_edge = settings.MIN_EDGE_PCT / 100.0
         if edge_pct < min_edge or conf < min_confidence:
             return None
 

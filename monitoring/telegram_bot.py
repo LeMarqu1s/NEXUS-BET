@@ -230,20 +230,18 @@ async def _get_scan_text() -> str:
         threshold = getattr(settings, "MIN_EDGE_THRESHOLD", 5.0) or 5.0
         last_scan_ts = 0
         try:
-            for fname in ("defi_yield_state.json", "paperclip_pending_signals.json", "dashboard_state.json"):
-                p = Path(__file__).resolve().parent.parent / fname
-                if p.exists():
-                    data = json.loads(p.read_text(encoding="utf-8"))
-                    ts = data.get("last_scan_ts") or data.get("last_updated")
-                    if ts:
-                        if isinstance(ts, (int, float)):
-                            last_scan_ts = int(ts)
-                        elif isinstance(ts, str):
-                            try:
-                                last_scan_ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                            except Exception:
-                                pass
-                    break
+            p = Path(__file__).resolve().parent.parent / "paperclip_pending_signals.json"
+            if p.exists():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                ts = data.get("last_scan_ts") or data.get("last_updated")
+                if ts:
+                    if isinstance(ts, (int, float)):
+                        last_scan_ts = int(ts)
+                    elif isinstance(ts, str):
+                        try:
+                            last_scan_ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+                        except Exception:
+                            pass
         except Exception:
             pass
         mins = "—"
