@@ -98,8 +98,12 @@ class EdgeEngine:
         self,
         market: dict[str, Any],
         order_book: dict[str, Any],
+        polymarket_price: float | None = None,
     ) -> tuple[float, float]:
-        """Fair value from scoring_engine (Odds API) when available; else order book as fallback."""
+        """
+        Fair value: scoring_engine (Odds API) if available; else heuristic from polymarket_price.
+        Heuristic (temporary until real scoring): underdog boost, favorite discount, or small edge on liquid.
+        """
         try:
             from core.scoring_engine import NexusScoringEngine
             engine = NexusScoringEngine()
@@ -108,6 +112,15 @@ class EdgeEngine:
                 return fair, 0.75
         except Exception as e:
             log.debug("scoring_engine fair_value: %s", e)
+        if polymarket_price is not None and 0.01 < polymarket_price < 0.99:
+            if polymarket_price < 0.3:
+                fair = polymarket_price * 1.5
+            elif polymarket_price > 0.7:
+                fair = polymarket_price * 0.95
+            else:
+                fair = polymarket_price + 0.05
+            fair = max(0.01, min(0.99, fair))
+            return fair, 0.5
         bids = order_book.get("bids", []) or []
         asks = order_book.get("asks", []) or []
         if not bids and not asks:
@@ -120,11 +133,15 @@ class EdgeEngine:
         confidence = 0.4 + 0.15 * min(1.0, len(bids) + len(asks)) / 10
         return mid, confidence
 
-    def _model_fair_price_ucl(self, market: dict[str, Any], order_book: dict[str, Any]) -> tuple[float, float]:
-        return self._model_fair_price_ncaa(market, order_book)
+    def _model_fair_price_ucl(
+        self, market: dict[str, Any], order_book: dict[str, Any], polymarket_price: float | None = None
+    ) -> tuple[float, float]:
+        return self._model_fair_price_ncaa(market, order_book, polymarket_price)
 
-    def _model_fair_price_btc(self, market: dict[str, Any], order_book: dict[str, Any]) -> tuple[float, float]:
-        return self._model_fair_price_ncaa(market, order_book)
+    def _model_fair_price_btc(
+        self, market: dict[str, Any], order_book: dict[str, Any], polymarket_price: float | None = None
+    ) -> tuple[float, float]:
+        return self._model_fair_price_ncaa(market, order_book, polymarket_price)
 
     def _detect_model(self, market: dict[str, Any]) -> MarketModel:
         q = (market.get("question") or "").lower()
@@ -202,12 +219,13 @@ class EdgeEngine:
         """Existing binary logic."""
         min_confidence = settings.MIN_CONFIDENCE
         model = self._detect_model(market)
+        pm_yes = polymarket_price if side.upper() == "YES" else (1.0 - polymarket_price)
         if model == MarketModel.NCAA:
-            fair, conf = self._model_fair_price_ncaa(market, order_book)
+            fair, conf = self._model_fair_price_ncaa(market, order_book, pm_yes)
         elif model == MarketModel.UCL:
-            fair, conf = self._model_fair_price_ucl(market, order_book)
+            fair, conf = self._model_fair_price_ucl(market, order_book, pm_yes)
         else:
-            fair, conf = self._model_fair_price_btc(market, order_book)
+            fair, conf = self._model_fair_price_btc(market, order_book, pm_yes)
 
         if polymarket_price <= 0.01 or polymarket_price >= 0.99:
             return None
@@ -219,9 +237,8 @@ class EdgeEngine:
             pm_no = 1.0 - polymarket_price
             edge_pct = (fair_no - pm_no) / pm_no if pm_no > 0 else 0
 
-        # Debug: log edges for each market (set DEBUG_EDGE=1 to use 1% threshold)
         question = (market.get("question") or "")[:40]
-        log.info("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
+        log.debug("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
 
         min_edge = 0.01 if os.getenv("DEBUG_EDGE") == "1" else (settings.MIN_EDGE_PCT / 100.0)
         if edge_pct < min_edge or conf < min_confidence:

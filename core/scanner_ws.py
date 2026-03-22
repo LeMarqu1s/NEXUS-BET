@@ -43,24 +43,47 @@ def _orderbook_from_event(bids: list, asks: list) -> dict[str, Any]:
     return {"bids": bids or [], "asks": asks or []}
 
 
-def _extract_market_price(market: dict, side: str) -> float | None:
-    """Extract Polymarket price from Gamma API market outcomePrices. YES=outcomePrices[0], NO=outcomePrices[1]."""
-    raw = market.get("outcomePrices")
+def _parse_outcome_prices(raw: Any) -> list[float] | None:
+    """
+    Parse outcomePrices from Polymarket. Handles:
+    - ["0.34", "0.66"]  (string list)
+    - [0.34, 0.66]      (float list)
+    - "0.34,0.66"       (comma string)
+    - '["0.34","0.66"]' (JSON string)
+    """
     if raw is None:
         return None
     if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return None
-    if not isinstance(raw, (list, tuple)) or not raw:
+        raw = raw.strip()
+        if raw.startswith("["):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        else:
+            raw = [p.strip() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, (list, tuple)) and raw:
+        result: list[float] = []
+        for p in raw:
+            try:
+                result.append(float(p))
+            except (ValueError, TypeError):
+                pass
+        return result if result else None
+    return None
+
+
+def _extract_market_price(market: dict, side: str) -> float | None:
+    """Extract Polymarket price from Gamma API market outcomePrices. YES=first value, NO=second or 1-YES."""
+    prices = _parse_outcome_prices(market.get("outcomePrices"))
+    if not prices:
         return None
     try:
         if side.upper() == "YES":
-            return float(raw[0]) if raw else None
-        if len(raw) >= 2:
-            return float(raw[1])
-        return 1.0 - float(raw[0])  # binary: NO = 1 - YES
+            return float(prices[0])
+        if len(prices) >= 2:
+            return float(prices[1])
+        return 1.0 - float(prices[0])
     except (ValueError, TypeError):
         return None
 
@@ -147,6 +170,12 @@ class WebSocketScanner:
                 sample.get("liquidity"),
                 str(sample.get("clobTokenIds", []))[:100],
             )
+            for i, m in enumerate(markets[:3]):
+                logger.info(
+                    "RAW outcomePrices: %s | outcomes: %s",
+                    m.get("outcomePrices"),
+                    m.get("outcomes"),
+                )
             self._token_to_market.clear()
             filtered_count = 0
             no_tokens_count = 0
