@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -209,7 +210,11 @@ class EdgeEngine:
             pm_no = 1.0 - polymarket_price
             edge_pct = (fair_no - pm_no) / pm_no if pm_no > 0 else 0
 
-        min_edge = settings.MIN_EDGE_PCT / 100.0
+        # Debug: log edges for each market (set DEBUG_EDGE=1 to use 1% threshold)
+        question = (market.get("question") or "")[:40]
+        log.info("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
+
+        min_edge = 0.01 if os.getenv("DEBUG_EDGE") == "1" else (settings.MIN_EDGE_PCT / 100.0)
         if edge_pct < min_edge or conf < min_confidence:
             return None
 

@@ -43,6 +43,24 @@ def _orderbook_from_event(bids: list, asks: list) -> dict[str, Any]:
     return {"bids": bids or [], "asks": asks or []}
 
 
+def _write_scan_ts(market_count: int) -> None:
+    """Write last_scan_ts and market_count to paperclip_pending_signals.json after each scan cycle."""
+    try:
+        from pathlib import Path
+        p = Path(__file__).resolve().parent.parent / "paperclip_pending_signals.json"
+        data: dict = {"last_scan_ts": time.time(), "market_count": market_count, "signals": []}
+        if p.exists():
+            with open(p, encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                data["signals"] = existing.get("signals", [])
+                data["count"] = len(data["signals"])
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.debug("_write_scan_ts: %s", e)
+
+
 class WebSocketScanner:
     """Market scanner via Polymarket WebSocket."""
 
@@ -144,11 +162,7 @@ class WebSocketScanner:
                 "Scanner: markets TRACKED=%d (%d tokens) | rejected=%d | no_tokens=%d",
                 n_markets_tracked, n_tokens, filtered_count, no_tokens_count,
             )
-            try:
-                from paperclip_bridge import write_scanner_state
-                write_scanner_state(token_count=n_tokens, market_count=n_tokens // 2)
-            except Exception:
-                pass
+            _write_scan_ts(n_markets_tracked)
         except Exception as e:
             logger.warning("WebSocket scanner: failed to refresh markets: %s", e)
 
@@ -185,7 +199,10 @@ class WebSocketScanner:
                     logger.warning("Polling fallback: 0 tokens, retry in 30s")
                     await asyncio.sleep(30)
                     continue
-                for token_id, (market, side) in list(self._token_to_market.items())[:200]:
+                items = list(self._token_to_market.items())[:200]
+                n_markets = len(items) // 2
+                logger.info("Processing %d markets through edge engine", n_markets)
+                for token_id, (market, side) in items:
                     if not self._running:
                         break
                     try:
@@ -210,11 +227,7 @@ class WebSocketScanner:
                                 self.on_signal(sig)
                     except Exception as e:
                         logger.debug("Polling market %s: %s", token_id[:16], e)
-                try:
-                    from paperclip_bridge import write_scanner_state
-                    write_scanner_state(token_count=n, market_count=n // 2)
-                except Exception:
-                    pass
+                _write_scan_ts(n // 2)
                 logger.info("Polling fallback: processed %d tokens", n)
             except asyncio.CancelledError:
                 break
