@@ -126,9 +126,9 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
         data["count"] = len(data["signals"])
         with open(p, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        logger.info("Wrote scan timestamp: %s", int(ts))
+        logger.info("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
     except Exception as e:
-        logger.debug("_write_scan_ts: %s", e)
+        logger.warning("_write_scan_ts failed: %s", e)
 
 
 class WebSocketScanner:
@@ -265,7 +265,16 @@ class WebSocketScanner:
                         logger.debug("Polling fallback error: %s", poll_err)
 
     async def _run_polling_fallback(self) -> None:
-        """Fallback: poll Gamma API + order books every 30s when WS fails or no tokens."""
+        """
+        Fallback: poll Gamma API + order books every 30s when WS fails.
+        TRACE (one market):
+        1. get_order_book(token_id) → ob
+        2. _extract_market_price(market, side) or _mid_from_book → price
+        3. Skip if price invalid (<=0.01 or >=0.99)
+        4. edge_engine.compute_edge(market, token_id, side, price, ob) → EdgeSignal|None
+        5. If sig: append to signals_found, call on_signal(sig)
+        6. After loop: _write_scan_ts(count, signals_found) → writes paperclip_pending_signals.json
+        """
         logger.warning("Running polling fallback (Gamma API every 30s)")
         while self._running:
             try:
@@ -278,6 +287,7 @@ class WebSocketScanner:
                 items = list(self._token_to_market.items())[:200]
                 n_markets = len(items) // 2
                 signals_found: list[EdgeSignal] = []
+                trace_count = 0
                 logger.info("Processing %d markets through edge engine", n_markets)
                 for token_id, (market, side) in items:
                     if not self._running:
@@ -294,7 +304,12 @@ class WebSocketScanner:
                         sig = self.edge_engine.compute_edge(
                             market, token_id, side, price, ob
                         )
+                        q_short = (market.get("question") or "")[:40]
+                        if trace_count < 3:
+                            logger.info("Edge result type: %s | value: %s", type(sig).__name__, sig)
+                            trace_count += 1
                         if sig:
+                            logger.info("Storing signal: %s", q_short)
                             signals_found.append(sig)
                             if self.on_signal:
                                 if asyncio.iscoroutinefunction(self.on_signal):
@@ -304,6 +319,13 @@ class WebSocketScanner:
                     except Exception as e:
                         logger.debug("Polling market %s: %s", token_id[:16], e)
                 _write_scan_ts(n // 2, signals_found)
+                n_signals = len(signals_found)
+                try:
+                    from paperclip_bridge import get_pending_signals
+                    stored = get_pending_signals()
+                    logger.info("File now has %d signals", len(stored))
+                except Exception:
+                    logger.info("File now has %d signals (from cycle)", n_signals)
                 logger.info("Polling fallback: processed %d tokens", n)
             except asyncio.CancelledError:
                 break
