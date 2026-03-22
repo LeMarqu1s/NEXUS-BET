@@ -99,16 +99,25 @@ class EdgeEngine:
         market: dict[str, Any],
         order_book: dict[str, Any],
     ) -> tuple[float, float]:
+        """Fair value from scoring_engine (Odds API) when available; else order book as fallback."""
+        try:
+            from core.scoring_engine import NexusScoringEngine
+            engine = NexusScoringEngine()
+            fair = engine.get_fair_value_for_yes(market)
+            if fair is not None and 0.01 < fair < 0.99:
+                return fair, 0.75
+        except Exception as e:
+            log.debug("scoring_engine fair_value: %s", e)
         bids = order_book.get("bids", []) or []
         asks = order_book.get("asks", []) or []
         if not bids and not asks:
-            return 0.5, 0.3
+            return 0.5, 0.2
         mid = 0.5
         if bids:
             mid = (mid + float(bids[0].get("price", 0.5))) / 2
         if asks:
             mid = (mid + float(asks[0].get("price", 0.5))) / 2
-        confidence = 0.5 + 0.2 * min(1.0, len(bids) + len(asks)) / 10
+        confidence = 0.4 + 0.15 * min(1.0, len(bids) + len(asks)) / 10
         return mid, confidence
 
     def _model_fair_price_ucl(self, market: dict[str, Any], order_book: dict[str, Any]) -> tuple[float, float]:
@@ -200,7 +209,7 @@ class EdgeEngine:
         else:
             fair, conf = self._model_fair_price_btc(market, order_book)
 
-        if polymarket_price <= 0 or polymarket_price >= 1:
+        if polymarket_price <= 0.01 or polymarket_price >= 0.99:
             return None
 
         if side.upper() == "YES":

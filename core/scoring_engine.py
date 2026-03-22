@@ -230,6 +230,29 @@ class NexusScoringEngine:
             log.debug("odds fetch %s %s: %s", sport_key, market, e)
         return None
 
+    def get_fair_value_for_yes(self, market_data: dict[str, Any]) -> Optional[float]:
+        """
+        Return fair value (0-1) for YES outcome from Odds API, or None if not available.
+        Used by edge_engine for sports binary markets.
+        """
+        api_key = os.getenv("ODDS_API_KEY", "")
+        if not api_key:
+            return None
+        question = (market_data.get("question") or "").lower()
+        if not question or self._is_non_sport(question):
+            return None
+        sport_key = self._match_sport_key_static(question)
+        if not sport_key:
+            return None
+        try:
+            events = self._get_cached_odds(sport_key, api_key, "h2h")
+            if not events:
+                return None
+            return self._binary_fair_value(question, events)
+        except Exception as e:
+            log.debug("get_fair_value_for_yes: %s", e)
+        return None
+
     def _score_binary_sport(
         self,
         market_data: dict[str, Any],
@@ -367,7 +390,13 @@ class NexusScoringEngine:
 
     @staticmethod
     def _extract_pm_yes_price(market_data: dict[str, Any]) -> float:
+        """Extract YES price from outcomePrices. Handles list or JSON string from Gamma API."""
         prices = market_data.get("outcomePrices")
+        if isinstance(prices, str):
+            try:
+                prices = json.loads(prices)
+            except (json.JSONDecodeError, TypeError):
+                pass
         if isinstance(prices, (list, tuple)) and prices:
             try:
                 return float(prices[0])

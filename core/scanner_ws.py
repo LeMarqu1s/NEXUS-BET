@@ -43,6 +43,28 @@ def _orderbook_from_event(bids: list, asks: list) -> dict[str, Any]:
     return {"bids": bids or [], "asks": asks or []}
 
 
+def _extract_market_price(market: dict, side: str) -> float | None:
+    """Extract Polymarket price from Gamma API market outcomePrices. YES=outcomePrices[0], NO=outcomePrices[1]."""
+    raw = market.get("outcomePrices")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return None
+    try:
+        if side.upper() == "YES":
+            return float(raw[0]) if raw else None
+        if len(raw) >= 2:
+            return float(raw[1])
+        return 1.0 - float(raw[0])  # binary: NO = 1 - YES
+    except (ValueError, TypeError):
+        return None
+
+
 def _write_scan_ts(market_count: int) -> None:
     """Write last_scan_ts and market_count to paperclip_pending_signals.json after each scan cycle."""
     try:
@@ -207,13 +229,18 @@ class WebSocketScanner:
                         break
                     try:
                         ob = await self.polymarket.get_order_book(token_id)
-                        mid = _mid_from_book(
-                            ob.get("bids") or [], ob.get("asks") or []
-                        )
-                        if mid is None or mid <= 0 or mid >= 1:
+                        price = _extract_market_price(market, side)
+                        if price is None:
+                            price = _mid_from_book(
+                                ob.get("bids") or [], ob.get("asks") or []
+                            )
+                        if price is None or price <= 0.01 or price >= 0.99:
                             continue
+                        q = (market.get("question") or "")[:40]
+                        op = market.get("outcomePrices")
+                        logger.info("Sending to edge: %s | outcomePrices=%s | price=%.2f", q, op, price)
                         sig = self.edge_engine.compute_edge(
-                            market, token_id, side, mid, ob
+                            market, token_id, side, price, ob
                         )
                         if sig:
                             edge_pct = sig.edge_pct * 100
@@ -315,13 +342,16 @@ class WebSocketScanner:
                 if not entry:
                     return
                 market, side = entry
-                q = (market.get("question") or "")[:40]
-                logger.debug("Processing market: %s | %s", asset_id[:16], q)
-                mid = _mid_from_book(bids, asks)
-                if mid is None or mid <= 0 or mid >= 1:
+                price = _extract_market_price(market, side)
+                if price is None:
+                    price = _mid_from_book(bids, asks)
+                if price is None or price <= 0.01 or price >= 0.99:
                     return
                 ob = _orderbook_from_event(bids, asks)
-                sig = self.edge_engine.compute_edge(market, asset_id, side, mid, ob)
+                q = (market.get("question") or "")[:40]
+                op = market.get("outcomePrices")
+                logger.info("Sending to edge: %s | outcomePrices=%s | price=%.2f", q, op, price)
+                sig = self.edge_engine.compute_edge(market, asset_id, side, price, ob)
                 if sig:
                     edge_pct = sig.edge_pct * 100
                     if edge_pct > 3.0:
