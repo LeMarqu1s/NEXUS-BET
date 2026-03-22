@@ -380,9 +380,10 @@ async def main() -> None:
     from execution.order_manager import OrderManager
     _order_manager = OrderManager()
 
-    # Tâches du Master Loop
+    # Tâches du Master Loop (une seule instance Telegram poller)
     scanner_task = asyncio.create_task(run_scanner_ws())
     poller_task = asyncio.create_task(run_telegram_poller())
+    log.info("Telegram poller task créé (drop_pending_updates=True au démarrage)")
     swarm_task = asyncio.create_task(_swarm_loop())
     autotrade_task = asyncio.create_task(_auto_trade_loop())
     yield_task = asyncio.create_task(_defi_yield_loop())

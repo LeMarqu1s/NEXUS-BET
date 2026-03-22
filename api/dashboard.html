@@ -541,7 +541,7 @@
       const smartEmoji = m.smart_money_signal === 'bullish' ? '🟢' : m.smart_money_signal === 'bearish' ? '🔴' : '⚪';
       const edge = m.nexus_edge != null ? m.nexus_edge.toFixed(1) : '—';
       const score = m.nexus_score != null ? m.nexus_score.toFixed(0) : '—';
-      const confiance = (m.nexus_score >= 70) ? 'HIGH ✅' : (m.nexus_score >= 50) ? 'MEDIUM' : 'LOW';
+      const confiance = (m.nexus_score != null && m.nexus_score >= 70) ? 'HIGH ✅' : (m.nexus_score != null && m.nexus_score >= 50) ? 'MEDIUM' : 'LOW';
       const polyUrl = 'https://polymarket.com/event/' + (m.slug || m.market_id || '').replace(/^0x/, '');
       let html = `
         <h2>MARKET INTELLIGENCE — ${(m.question || '').slice(0, 50)}${(m.question || '').length > 50 ? '...' : ''}</h2>
