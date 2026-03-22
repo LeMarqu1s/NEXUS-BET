@@ -1,6 +1,7 @@
 """
 NEXUS CAPITAL - WebSocket Market Scanner
-Uses wss://ws-subscriptions-clob.polymarket.com/ws/market instead of polling.
+Uses wss://ws-subscriptions-clob.polymarket.com/ws/market.
+Fallback: Gamma API polling every 30s if WebSocket fails.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import time
 from typing import Any, Callable, Optional
 
 import aiohttp
+import httpx
 
 from config.settings import settings
 from data.polymarket_client import PolymarketClient
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 PING_INTERVAL = 10.0
 MARKETS_REFRESH_INTERVAL = 60.0
+GAMMA_MARKETS_LIMIT = 200
+GAMMA_FETCH_TIMEOUT = 15.0
 
 
 def _mid_from_book(bids: list, asks: list) -> Optional[float]:
@@ -55,24 +59,51 @@ class WebSocketScanner:
         self._token_to_market: dict[str, tuple[dict, str]] = {}  # token_id -> (market, side)
         self._last_markets_refresh = 0.0
 
+    async def _fetch_markets_gamma(self) -> list[dict[str, Any]]:
+        """Fetch markets from Gamma API with extended timeout (scanner critical path)."""
+        base = getattr(settings, "POLYMARKET_GAMMA_URL", "https://gamma-api.polymarket.com")
+        url = f"{base.rstrip('/')}/markets"
+        try:
+            async with httpx.AsyncClient(timeout=GAMMA_FETCH_TIMEOUT) as client:
+                r = await client.get(
+                    url,
+                    params={
+                        "limit": GAMMA_MARKETS_LIMIT,
+                        "active": "true",
+                        "closed": "false",
+                        "archived": "false",
+                        "order": "volume24hr",
+                        "ascending": "false",
+                    },
+                )
+                r.raise_for_status()
+                data = r.json()
+                return data if isinstance(data, list) else data.get("data", []) or []
+        except Exception as e:
+            logger.warning("Gamma API fetch failed: %s", e)
+            return []
+
     async def _refresh_markets(self) -> None:
         """Fetch markets and build token_id -> (market, side) map."""
         from core.market_filter import get_min_market_volume, get_min_liquidity
+
         try:
-            markets = await self.polymarket.get_markets(limit=100)
+            markets = await self._fetch_markets_gamma()
             logger.info(
-                "Scanner: %d raw markets from Gamma API | thresholds: MIN_VOLUME=%.0f, MIN_LIQUIDITY=%.0f",
+                "Scanner: Fetched %d raw markets from Gamma API | thresholds: MIN_VOLUME=%.0f, MIN_LIQUIDITY=%.0f",
                 len(markets), get_min_market_volume(), get_min_liquidity(),
             )
-            if markets:
-                sample = markets[0]
-                logger.info(
-                    "Scanner: sample market keys=%s | volumeNum=%s liquidity=%s liquidityNum=%s volume24hr=%s clobTokenIds=%s",
-                    list(sample.keys())[:20],
-                    sample.get("volumeNum"), sample.get("liquidity"),
-                    sample.get("liquidityNum"), sample.get("volume24hr"),
-                    str(sample.get("clobTokenIds", []))[:80],
-                )
+            if not markets:
+                logger.warning("Scanner: Gamma API returned 0 markets")
+                return
+            sample = markets[0]
+            logger.info(
+                "Scanner: sample market keys=%s | volume=%s liquidity=%s clobTokenIds=%s",
+                list(sample.keys())[:15],
+                sample.get("volume") or sample.get("volume24hr"),
+                sample.get("liquidity"),
+                str(sample.get("clobTokenIds", []))[:100],
+            )
             self._token_to_market.clear()
             filtered_count = 0
             no_tokens_count = 0
@@ -104,30 +135,79 @@ class WebSocketScanner:
                 if no_id:
                     self._token_to_market[str(no_id)] = (market, "NO")
             self._last_markets_refresh = time.monotonic()
+            n_tokens = len(self._token_to_market)
             logger.info(
-                "Scanner: %d tokens retained | %d filtered out | %d no tokens",
-                len(self._token_to_market), filtered_count, no_tokens_count,
+                "Scanner: Fetched %d tokens from %d markets | filtered=%d | no_tokens=%d",
+                n_tokens, len(markets), filtered_count, no_tokens_count,
             )
+            try:
+                from paperclip_bridge import write_scanner_state
+                write_scanner_state(token_count=n_tokens, market_count=n_tokens // 2)
+            except Exception:
+                pass
         except Exception as e:
             logger.warning("WebSocket scanner: failed to refresh markets: %s", e)
 
     async def _run(self) -> None:
-        """Main WebSocket loop with reconnect."""
+        """Main WebSocket loop with reconnect. Falls back to polling if WS fails."""
         while self._running:
             try:
                 await self._connect_and_process()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("WebSocket scanner error: %s, reconnecting in 5s", e)
-                await asyncio.sleep(5)
+                logger.warning("WebSocket failed: %s — switching to polling fallback", e)
+                await self._run_polling_fallback()
+
+    async def _run_polling_fallback(self) -> None:
+        """Fallback: poll Gamma API + order books every 30s when WS fails or no tokens."""
+        logger.warning("Running polling fallback (Gamma API every 30s)")
+        while self._running:
+            try:
+                await self._refresh_markets()
+                n = len(self._token_to_market)
+                if n == 0:
+                    logger.warning("Polling fallback: 0 tokens, retry in 30s")
+                    await asyncio.sleep(30)
+                    continue
+                for token_id, (market, side) in list(self._token_to_market.items())[:200]:
+                    if not self._running:
+                        break
+                    try:
+                        ob = await self.polymarket.get_order_book(token_id)
+                        mid = _mid_from_book(
+                            ob.get("bids") or [], ob.get("asks") or []
+                        )
+                        if mid is None or mid <= 0 or mid >= 1:
+                            continue
+                        sig = self.edge_engine.compute_edge(
+                            market, token_id, side, mid, ob
+                        )
+                        if sig and self.on_signal:
+                            if asyncio.iscoroutinefunction(self.on_signal):
+                                await self.on_signal(sig)
+                            else:
+                                self.on_signal(sig)
+                    except Exception as e:
+                        logger.debug("Polling market %s: %s", token_id[:16], e)
+                try:
+                    from paperclip_bridge import write_scanner_state
+                    write_scanner_state(token_count=n, market_count=n // 2)
+                except Exception:
+                    pass
+                logger.info("Polling fallback: processed %d tokens", n)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Polling fallback error: %s", e)
+            await asyncio.sleep(30)
 
     async def _connect_and_process(self) -> None:
         """Connect, subscribe, process messages."""
         await self._refresh_markets()
         if not self._token_to_market:
-            logger.warning("WebSocket scanner: no markets, retrying in 30s")
-            await asyncio.sleep(30)
+            logger.warning("WebSocket scanner: no tokens — switching to polling fallback")
+            await self._run_polling_fallback()
             return
 
         asset_ids = list(self._token_to_market.keys())
@@ -140,7 +220,7 @@ class WebSocketScanner:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(WS_URL) as ws:
                 await ws.send_str(subscribe_msg)
-                logger.info("WebSocket scanner connected, subscribed to %d assets", len(asset_ids))
+                logger.info("Connected to WS — subscribed to %d assets", len(asset_ids))
 
                 last_ping = time.monotonic()
                 last_markets = last_ping
@@ -183,6 +263,8 @@ class WebSocketScanner:
                 if not entry:
                     return
                 market, side = entry
+                q = (market.get("question") or "")[:40]
+                logger.debug("Processing market: %s | %s", asset_id[:16], q)
                 mid = _mid_from_book(bids, asks)
                 if mid is None or mid <= 0 or mid >= 1:
                     return

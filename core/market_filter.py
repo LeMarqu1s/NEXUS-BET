@@ -112,14 +112,16 @@ def passes_filter(market: dict[str, Any], reason_out: list[str] | None = None) -
                 reason_out.append(f"keyword blacklisted: {hit}")
             return False
 
-    volume = float(market.get("volumeNum", market.get("volume", 0)) or 0)
+    vol_raw = market.get("volumeNum") or market.get("volume") or market.get("volume24hr") or market.get("volume_24hr") or 0
+    volume = float(vol_raw) if vol_raw else 0
     min_vol = get_min_market_volume()
     if volume < min_vol:
         if reason_out is not None:
             reason_out.append(f"volume={volume:.0f} < {min_vol:.0f}")
         return False
 
-    liquidity = float(market.get("liquidityNum", market.get("liquidity", 0)) or 0)
+    liq_raw = market.get("liquidityNum") or market.get("liquidity") or 0
+    liquidity = float(liq_raw) if liq_raw else 0
     min_liq = get_min_liquidity()
     if liquidity < min_liq:
         if reason_out is not None:

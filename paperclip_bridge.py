@@ -16,6 +16,23 @@ PENDING_SIGNALS_FILE = Path(__file__).resolve().parent / "paperclip_pending_sign
 log = logging.getLogger("nexus.paperclip_bridge")
 
 
+def write_scanner_state(market_count: int = 0, token_count: int = 0) -> None:
+    """Met à jour market_count pour le dashboard et Telegram (assets trackés)."""
+    try:
+        data: dict[str, Any] = {"signals": []}
+        if PENDING_SIGNALS_FILE.exists():
+            with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        n = market_count or token_count
+        data["market_count"] = n
+        data["last_scan_ts"] = __import__("time").time()
+        data["count"] = len(data.get("signals", []))
+        with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        log.debug("write_scanner_state: %s", e)
+
+
 def on_signal(sig: EdgeSignal) -> None:
     """
     Callback appelé par le scanner quand un signal est détecté.
