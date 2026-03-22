@@ -225,14 +225,16 @@ async def _get_start_text() -> str:
 async def _get_scan_text() -> str:
     try:
         from config.settings import settings
-        from paperclip_bridge import get_pending_signals
+        from paperclip_bridge import get_pending_signals, PENDING_SIGNALS_PATH
 
         threshold = getattr(settings, "MIN_EDGE_THRESHOLD", 5.0) or 5.0
         last_scan_ts = 0
+        p_canonical = Path(PENDING_SIGNALS_PATH)
+        log.info("Scan handler reading from: %s", os.path.abspath(str(p_canonical)))
         try:
-            p = Path(__file__).resolve().parent.parent / "paperclip_pending_signals.json"
-            if p.exists():
-                data = json.loads(p.read_text(encoding="utf-8"))
+            if p_canonical.exists():
+                data = json.loads(p_canonical.read_text(encoding="utf-8"))
+                log.info("Scan file read: signals=%d keys=%s", len(data.get("signals", [])), list(data.keys())[:6])
                 ts = data.get("last_scan_ts") or data.get("last_updated")
                 if ts:
                     if isinstance(ts, (int, float)):
@@ -242,14 +244,31 @@ async def _get_scan_text() -> str:
                             last_scan_ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
                         except Exception:
                             pass
-        except Exception:
-            pass
+            else:
+                cwd_path = Path("paperclip_pending_signals.json").resolve()
+                log.info("Canonical file missing at %s, cwd path: %s", p_canonical, cwd_path)
+                if cwd_path.exists() and cwd_path != p_canonical:
+                    log.info("Found file at cwd path instead - path mismatch!")
+        except Exception as e:
+            log.info("Scan file read error: %s", e)
         mins = "—"
         if last_scan_ts:
             delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
             mins = f"{delta // 60}min ago" if delta >= 60 else "<1min ago"
 
         signals = get_pending_signals()
+        if not signals:
+            cwd_path = Path("paperclip_pending_signals.json").resolve()
+            for try_path in [p_canonical, cwd_path]:
+                if try_path.exists():
+                    try:
+                        data = json.loads(try_path.read_text(encoding="utf-8"))
+                        signals = data.get("signals", []) if isinstance(data, dict) else []
+                        if signals:
+                            log.info("Fallback read from %s: %d signals", try_path, len(signals))
+                        break
+                    except Exception as e:
+                        log.info("Fallback read error %s: %s", try_path, e)
         n_assets = _get_market_count()
         n_signals = len(signals)
 

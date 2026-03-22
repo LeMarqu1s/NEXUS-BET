@@ -107,8 +107,9 @@ def _signal_to_entry(sig: EdgeSignal) -> dict:
 def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = None) -> None:
     """Write last_scan_ts, market_count, and signals to paperclip_pending_signals.json. Same file/key as telegram."""
     try:
-        from paperclip_bridge import PENDING_SIGNALS_FILE
+        from paperclip_bridge import PENDING_SIGNALS_FILE, PENDING_SIGNALS_PATH
         p = PENDING_SIGNALS_FILE
+        logger.info("Writing signals to: %s", PENDING_SIGNALS_PATH)
         ts = time.time()
         data: dict = {"last_scan_ts": ts, "market_count": market_count, "signals": [], "count": 0}
         if p.exists():

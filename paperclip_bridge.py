@@ -12,7 +12,10 @@ from typing import Any
 
 from core.edge_engine import EdgeSignal
 
-PENDING_SIGNALS_FILE = Path(__file__).resolve().parent / "paperclip_pending_signals.json"
+# Use project root: parent of paperclip_bridge.py. Fallback to cwd for Railway.
+_proj_root = Path(__file__).resolve().parent
+PENDING_SIGNALS_FILE = _proj_root / "paperclip_pending_signals.json"
+PENDING_SIGNALS_PATH = str(PENDING_SIGNALS_FILE.resolve())
 log = logging.getLogger("nexus.paperclip_bridge")
 
 
@@ -88,13 +91,19 @@ def on_signal(sig: EdgeSignal) -> None:
 
 def get_pending_signals() -> list[dict[str, Any]]:
     """Retourne les signaux en attente (pour les agents Paperclip)."""
+    path = PENDING_SIGNALS_PATH
+    log.info("Reading signals from: %s", path)
     if not PENDING_SIGNALS_FILE.exists():
+        log.info("File does not exist: %s", path)
         return []
     try:
         with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("signals", []) if isinstance(data, dict) else data
-    except Exception:
+        signals = data.get("signals", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        log.info("File contents: count=%d signals=%d", data.get("count", 0) if isinstance(data, dict) else 0, len(signals))
+        return signals
+    except Exception as e:
+        log.info("File read error: %s", e)
         return []
 
 
