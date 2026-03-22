@@ -23,7 +23,6 @@ API_TIMEOUT = 8.0
 HANDLER_TIMEOUT = 10.0
 CACHE_TTL = 60
 _market_cache: dict[str, tuple[dict, float]] = {}
-_poller_lock: asyncio.Lock | None = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -1392,129 +1391,78 @@ async def close_telegram_session(token: str) -> bool:
     return False
 
 
-def _is_conflict_error(exc: BaseException) -> bool:
-    try:
-        from telegram.error import Conflict
-        if isinstance(exc, Conflict):
-            return True
-    except ImportError:
-        pass
-    return "409" in str(exc) or "Conflict" in str(exc)
+def build_application(token: str) -> Application:
+    """Build Application with all handlers. No event loop — async-native."""
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+    app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("market", cmd_market))
+    app.add_handler(CommandHandler("agents", cmd_agents))
+    app.add_handler(CommandHandler("whales", cmd_whales))
+    app.add_handler(CommandHandler("referral", cmd_referral))
+    app.add_handler(CommandHandler("settings", cmd_settings))
+    app.add_handler(CommandHandler("exit", cmd_exit))
+    app.add_handler(CommandHandler("access", cmd_access))
+    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.Regex(POLYGON_ADDRESS_PATTERN),
+            handle_wallet_paste,
+        ),
+    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
+    return app
 
 
-def _get_poller_lock() -> asyncio.Lock:
-    global _poller_lock
-    if _poller_lock is None:
-        _poller_lock = asyncio.Lock()
-    return _poller_lock
-
-
-async def run_telegram_poller() -> None:
-    """Single polling instance. Lock ensures only one runs. Never crashes."""
-    import traceback
-
+async def run_forever() -> None:
+    """
+    Run Telegram poller using low-level async API (no run_polling event loop).
+    Compatible with asyncio.gather() in main.py.
+    """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         log.info("Telegram token non configuré, poller désactivé")
         return
 
-    lock = _get_poller_lock()
-    if lock.locked():
-        log.warning("Telegram poller déjà actif (lock), skip")
-        return
-
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
-    base_delay = 10.0
-    max_delay = 120.0
-    delay = base_delay
+    await close_telegram_session(token)
+    await asyncio.sleep(2)
 
-    async def _run_once() -> None:
-        """Build app, init, start, await start_polling (PTB wiki). Pas de create_task + sleep(10)."""
-        app = None
+    app = build_application(token)
+    try:
+        await app.initialize()
+        await app.start()
+        await app.bot.set_my_commands([
+            BotCommand("start", "⚡ Menu principal"),
+            BotCommand("access", "🔐 Lien dashboard privé"),
+            BotCommand("portfolio", "💼 Solde et positions ouvertes"),
+            BotCommand("scan", "🔍 Derniers signaux détectés"),
+            BotCommand("market", "🎯 Fiche Market Object par slug/question"),
+            BotCommand("agents", "🤖 Débats IA en cours"),
+            BotCommand("whales", "🐳 Tracker les baleines"),
+            BotCommand("referral", "🤝 Mon lien d'affiliation"),
+            BotCommand("settings", "⚙️ Configurer le bot"),
+            BotCommand("exit", "🔴 Sortir d'une position"),
+        ])
+
+        log.info("Telegram poller démarré (async-native, no run_polling)")
+        await app.updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query"],
+        )
+        # Keep running until cancelled (start_polling may return; Event blocks forever)
+        stop_event = asyncio.Event()
+        await stop_event.wait()
+    except asyncio.CancelledError:
+        log.info("Telegram poller arrêté")
+        raise
+    finally:
         try:
-            ok = await close_telegram_session(token)
-            if not ok:
-                log.warning("Session clear failed, continuing anyway…")
-            await asyncio.sleep(2)
-
-            app = Application.builder().token(token).build()
-            app.add_handler(CommandHandler("start", cmd_start))
-            app.add_handler(CommandHandler("portfolio", cmd_portfolio))
-            app.add_handler(CommandHandler("scan", cmd_scan))
-            app.add_handler(CommandHandler("market", cmd_market))
-            app.add_handler(CommandHandler("agents", cmd_agents))
-            app.add_handler(CommandHandler("whales", cmd_whales))
-            app.add_handler(CommandHandler("referral", cmd_referral))
-            app.add_handler(CommandHandler("settings", cmd_settings))
-            app.add_handler(CommandHandler("exit", cmd_exit))
-            app.add_handler(CommandHandler("access", cmd_access))
-            app.add_handler(CallbackQueryHandler(callback_handler))
-            app.add_handler(
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND & filters.Regex(POLYGON_ADDRESS_PATTERN),
-                    handle_wallet_paste,
-                ),
-            )
-            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
-
-            await app.initialize()
-            await app.start()
-            await app.bot.set_my_commands([
-                BotCommand("start", "⚡ Menu principal"),
-                BotCommand("access", "🔐 Lien dashboard privé"),
-                BotCommand("portfolio", "💼 Solde et positions ouvertes"),
-                BotCommand("scan", "🔍 Derniers signaux détectés"),
-                BotCommand("market", "🎯 Fiche Market Object par slug/question"),
-                BotCommand("agents", "🤖 Débats IA en cours"),
-                BotCommand("whales", "🐳 Tracker les baleines"),
-                BotCommand("referral", "🤝 Mon lien d'affiliation"),
-                BotCommand("settings", "⚙️ Configurer le bot"),
-                BotCommand("exit", "🔴 Sortir d'une position"),
-            ])
-
-            log.info("Telegram poller démarré — await start_polling (bloquant)")
-            # Await directement: pas de create_task, pas de boucle 10s qui causait restarts
-            await app.updater.start_polling(drop_pending_updates=True)
-        finally:
-            if app:
-                try:
-                    await app.updater.stop()
-                    await app.stop()
-                    await app.shutdown()
-                except Exception as cleanup_err:
-                    log.debug("Telegram cleanup: %s", cleanup_err)
-
-    async with lock:
-        try:
-            while True:
-                try:
-                    await _run_once()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    log.exception("Telegram poller erreur (retry dans %.0fs): %s", delay, e)
-                    if _is_conflict_error(e):
-                        await close_telegram_session(token)
-                        delay = base_delay
-                    else:
-                        delay = min(delay * 2, max_delay)
-                    await asyncio.sleep(delay)
-                    continue
-                log.warning(
-                    "Telegram poller: start_polling a retourné sans exception. Call stack:\n%s",
-                    "".join(traceback.format_stack()[-8:-1]),
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 1.5, max_delay)
-        except asyncio.CancelledError:
-            log.info("Telegram poller arrêté")
-            raise
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
         except Exception as e:
-            log.exception("Telegram poller crash: %s", e)
-
-
-async def run_forever() -> None:
-    """Main entry point. Runs Telegram poller until cancelled."""
-    await run_telegram_poller()
+            log.debug("Telegram cleanup: %s", e)
