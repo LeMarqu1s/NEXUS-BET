@@ -1453,9 +1453,12 @@ async def run_forever() -> None:
             drop_pending_updates=True,
             allowed_updates=["message", "callback_query"],
         )
-        # Keep running until cancelled (start_polling may return; Event blocks forever)
-        stop_event = asyncio.Event()
-        await stop_event.wait()
+        log.info("Bot is now listening for messages...")
+        try:
+            while True:
+                await asyncio.sleep(1)  # keep alive
+        except asyncio.CancelledError:
+            pass
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise
