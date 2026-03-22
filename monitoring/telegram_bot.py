@@ -1356,7 +1356,9 @@ def _is_conflict_error(exc: BaseException) -> bool:
 
 
 async def run_telegram_poller() -> None:
-    """Single polling instance. Clears webhook/pending updates to avoid 409 Conflict."""
+    """Single polling instance. Await start_polling directly (PTB wiki). No create_task + restart loop."""
+    import traceback
+
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         log.info("Telegram token non configuré, poller désactivé")
@@ -1365,93 +1367,90 @@ async def run_telegram_poller() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
-    base_delay = 5.0
-    max_delay = 300.0
+    base_delay = 10.0
+    max_delay = 120.0
     delay = base_delay
+
+    async def _run_once() -> None:
+        """Build app, init, start, await start_polling (PTB wiki). Pas de create_task + sleep(10)."""
+        app = None
+        try:
+            ok = await close_telegram_session(token)
+            if not ok:
+                log.warning("Session clear failed, continuing anyway…")
+            await asyncio.sleep(2)
+
+            app = Application.builder().token(token).build()
+            app.add_handler(CommandHandler("start", cmd_start))
+            app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+            app.add_handler(CommandHandler("scan", cmd_scan))
+            app.add_handler(CommandHandler("market", cmd_market))
+            app.add_handler(CommandHandler("agents", cmd_agents))
+            app.add_handler(CommandHandler("whales", cmd_whales))
+            app.add_handler(CommandHandler("referral", cmd_referral))
+            app.add_handler(CommandHandler("settings", cmd_settings))
+            app.add_handler(CommandHandler("exit", cmd_exit))
+            app.add_handler(CommandHandler("access", cmd_access))
+            app.add_handler(CallbackQueryHandler(callback_handler))
+            app.add_handler(
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & filters.Regex(POLYGON_ADDRESS_PATTERN),
+                    handle_wallet_paste,
+                ),
+            )
+            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
+
+            await app.initialize()
+            await app.start()
+            await app.bot.set_my_commands([
+                BotCommand("start", "⚡ Menu principal"),
+                BotCommand("access", "🔐 Lien dashboard privé"),
+                BotCommand("portfolio", "💼 Solde et positions ouvertes"),
+                BotCommand("scan", "🔍 Derniers signaux détectés"),
+                BotCommand("market", "🎯 Fiche Market Object par slug/question"),
+                BotCommand("agents", "🤖 Débats IA en cours"),
+                BotCommand("whales", "🐳 Tracker les baleines"),
+                BotCommand("referral", "🤝 Mon lien d'affiliation"),
+                BotCommand("settings", "⚙️ Configurer le bot"),
+                BotCommand("exit", "🔴 Sortir d'une position"),
+            ])
+
+            log.info("Telegram poller démarré — await start_polling (bloquant)")
+            # Await directement: pas de create_task, pas de boucle 10s qui causait restarts
+            await app.updater.start_polling(drop_pending_updates=True)
+        finally:
+            if app:
+                try:
+                    await app.updater.stop()
+                    await app.stop()
+                    await app.shutdown()
+                except Exception as cleanup_err:
+                    log.debug("Telegram cleanup: %s", cleanup_err)
 
     try:
         while True:
-            app = None
-            poll_task = None
             try:
-                ok = await close_telegram_session(token)
-                if not ok:
-                    log.warning("Session clear failed, continuing anyway…")
-                await asyncio.sleep(3)
-
-                app = Application.builder().token(token).build()
-                app.add_handler(CommandHandler("start", cmd_start))
-                app.add_handler(CommandHandler("portfolio", cmd_portfolio))
-                app.add_handler(CommandHandler("scan", cmd_scan))
-                app.add_handler(CommandHandler("market", cmd_market))
-                app.add_handler(CommandHandler("agents", cmd_agents))
-                app.add_handler(CommandHandler("whales", cmd_whales))
-                app.add_handler(CommandHandler("referral", cmd_referral))
-                app.add_handler(CommandHandler("settings", cmd_settings))
-                app.add_handler(CommandHandler("exit", cmd_exit))
-                app.add_handler(CommandHandler("access", cmd_access))
-                app.add_handler(CallbackQueryHandler(callback_handler))
-                app.add_handler(
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND & filters.Regex(POLYGON_ADDRESS_PATTERN),
-                        handle_wallet_paste,
-                    ),
+                await _run_once()
+                # start_polling returned without exception — unexpected
+                log.warning(
+                    "Telegram poller: start_polling a retourné sans exception. Call stack:\n%s",
+                    "".join(traceback.format_stack()[-8:-1]),
                 )
-                app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text))
-
-                await app.initialize()
-                await app.start()
-                await app.bot.set_my_commands([
-                    BotCommand("start", "⚡ Menu principal"),
-                    BotCommand("access", "🔐 Lien dashboard privé"),
-                    BotCommand("portfolio", "💼 Solde et positions ouvertes"),
-                    BotCommand("scan", "🔍 Derniers signaux détectés"),
-                    BotCommand("market", "🎯 Fiche Market Object par slug/question"),
-                    BotCommand("agents", "🤖 Débats IA en cours"),
-                    BotCommand("whales", "🐳 Tracker les baleines"),
-                    BotCommand("referral", "🤝 Mon lien d'affiliation"),
-                    BotCommand("settings", "⚙️ Configurer le bot"),
-                    BotCommand("exit", "🔴 Sortir d'une position"),
-                ])
-                poll_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
-
-                log.info("Telegram poller démarré — seule instance active (drop_pending_updates=True)")
-                delay = base_delay
-
-                while poll_task and not poll_task.done():
-                    await asyncio.sleep(10)
-
-                if poll_task and poll_task.done():
-                    exc = poll_task.exception()
-                    if exc is not None:
-                        raise exc
-                    log.warning("Telegram poller s'est arrêté sans exception (restart)")
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.5, max_delay)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                log.exception("Telegram poller erreur (retry dans %.0fs): %s", delay, e)
                 if _is_conflict_error(e):
-                    log.error("Telegram 409 Conflict — autre instance ou webhook actif. Purge + retry 5s: %s", e)
                     await close_telegram_session(token)
-                    await asyncio.sleep(5)
                     delay = base_delay
                 else:
-                    log.exception("Telegram poller erreur (retry dans %.0fs): %s", delay, e)
-                    await asyncio.sleep(delay)
                     delay = min(delay * 2, max_delay)
-            finally:
-                if poll_task and not poll_task.done():
-                    poll_task.cancel()
-                    try:
-                        await asyncio.wait_for(poll_task, timeout=5.0)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        pass
-                if app:
-                    try:
-                        await app.updater.stop()
-                        await app.stop()
-                        await app.shutdown()
-                    except Exception as cleanup_err:
-                        log.debug("Telegram cleanup: %s", cleanup_err)
+                await asyncio.sleep(delay)
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
+        raise
+    except Exception as e:
+        log.exception("Telegram poller crash fatal (non récupéré): %s", e)
         raise
