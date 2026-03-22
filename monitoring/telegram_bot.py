@@ -1513,3 +1513,8 @@ async def run_telegram_poller() -> None:
             raise
         except Exception as e:
             log.exception("Telegram poller crash: %s", e)
+
+
+async def run_forever() -> None:
+    """Main entry point. Runs Telegram poller until cancelled."""
+    await run_telegram_poller()

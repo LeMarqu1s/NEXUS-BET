@@ -390,3 +390,8 @@ async def run_scanner_ws() -> None:
         raise
     except Exception as e:
         logger.exception("run_scanner_ws fatal: %s", e)
+
+
+async def run_forever() -> None:
+    """Main entry point. Runs scanner until cancelled."""
+    await run_scanner_ws()

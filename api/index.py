@@ -504,11 +504,6 @@ class handler(BaseHTTPRequestHandler):
         if path == "/health":
             try:
                 uptime = 0.0
-                try:
-                    from core.resilience import get_uptime_seconds
-                    uptime = get_uptime_seconds()
-                except ImportError:
-                    pass
                 markets = 0
                 signals_today = 0
                 last_signal_at = None
