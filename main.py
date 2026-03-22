@@ -383,33 +383,16 @@ async def main() -> None:
     from execution.order_manager import OrderManager
     _order_manager = OrderManager()
 
-    # Chaque tâche dans son propre retry loop — crash d'une = restart après 5s, pas tout le bot
-    def _scanner():
-        return run_task_with_restart(run_scanner_ws, "scanner")
-    def _poller():
-        return run_task_with_restart(run_telegram_poller, "telegram_poller")
-    def _swarm():
-        return run_task_with_restart(_swarm_loop, "swarm")
-    def _autotrade():
-        return run_task_with_restart(_auto_trade_loop, "autotrade")
-    def _yield_loop():
-        return run_task_with_restart(_defi_yield_loop, "defi_yield")
-    def _antisybil():
-        return run_task_with_restart(_anti_sybil_loop, "anti_sybil")
-    def _tpsl():
-        return run_task_with_restart(_order_manager.start_monitor_loop, "tpsl")
-    def _copy():
-        return run_task_with_restart(_copy_trader_loop, "copy_trader")
-
+    # Chaque tâche: passer la FONCTION, pas la coroutine. Factory appelée à chaque restart.
     tasks = [
-        asyncio.create_task(_scanner()),
-        asyncio.create_task(_poller()),
-        asyncio.create_task(_swarm()),
-        asyncio.create_task(_autotrade()),
-        asyncio.create_task(_yield_loop()),
-        asyncio.create_task(_antisybil()),
-        asyncio.create_task(_tpsl()),
-        asyncio.create_task(_copy()),
+        asyncio.create_task(run_task_with_restart(run_scanner_ws, task_name="scanner")),
+        asyncio.create_task(run_task_with_restart(run_telegram_poller, task_name="telegram_poller")),
+        asyncio.create_task(run_task_with_restart(_swarm_loop, task_name="swarm")),
+        asyncio.create_task(run_task_with_restart(_auto_trade_loop, task_name="autotrade")),
+        asyncio.create_task(run_task_with_restart(_defi_yield_loop, task_name="defi_yield")),
+        asyncio.create_task(run_task_with_restart(_anti_sybil_loop, task_name="antisybil")),
+        asyncio.create_task(run_task_with_restart(_order_manager.start_monitor_loop, task_name="tpsl")),
+        asyncio.create_task(run_task_with_restart(_copy_trader_loop, task_name="copy_trader")),
     ]
     log.info("Master Loop running: Scanner | Telegram | Swarm | Auto-Trade | DeFi Yield | Anti-Sybil | TP/SL | Copy")
 

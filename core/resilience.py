@@ -74,30 +74,31 @@ def with_api_retry(
 
 
 async def run_task_with_restart(
-    coro_fn: Callable[[], Any],
-    name: str,
+    task_factory: Callable[..., Any],
+    *args: Any,
+    task_name: str = "task",
+    **kwargs: Any,
 ) -> None:
     """
-    Run coroutine in infinite retry loop. On exception: log traceback, wait 5s, restart.
-    Never exits except on CancelledError.
+    Run task in infinite retry loop. task_factory must be a CALLABLE that returns
+    a fresh coroutine when called. A coroutine can only be awaited ONCE — each
+    restart must call the factory again to get a new coroutine.
     """
     delay = TASK_RESTART_DELAY
     while True:
         try:
-            coro = coro_fn() if callable(coro_fn) else coro_fn
-            if asyncio.iscoroutine(coro):
-                await coro
-            else:
-                await coro
-            # Coro returned without exception — loop for another run
-            log.info("%s completed normally, restarting in 5s", name)
+            coro = task_factory(*args, **kwargs)
+            if not asyncio.iscoroutine(coro):
+                raise TypeError(f"{task_name}: factory must return a coroutine, got {type(coro)}")
+            await coro
+            log.info("%s completed normally, restarting in 5s", task_name)
             await asyncio.sleep(TASK_RESTART_DELAY)
             delay = TASK_RESTART_DELAY
         except asyncio.CancelledError:
-            log.info("%s cancelled", name)
+            log.info("%s cancelled", task_name)
             raise
         except Exception as e:
-            log.exception("%s crashed: %s — restarting in %.0fs", name, e, delay)
+            log.exception("%s crashed: %s — restarting in %.0fs", task_name, e, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, TASK_MAX_BACKOFF)
 
