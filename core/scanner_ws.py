@@ -183,6 +183,11 @@ class WebSocketScanner:
                         sig = self.edge_engine.compute_edge(
                             market, token_id, side, mid, ob
                         )
+                        if sig:
+                            edge_pct = sig.edge_pct * 100
+                            if edge_pct > 3.0:
+                                q = (market.get("question") or "")[:50]
+                                logger.info("POTENTIAL SIGNAL: %s edge=%.2f%% | %s", token_id[:16], edge_pct, q)
                         if sig and self.on_signal:
                             if asyncio.iscoroutinefunction(self.on_signal):
                                 await self.on_signal(sig)
@@ -270,6 +275,11 @@ class WebSocketScanner:
                     return
                 ob = _orderbook_from_event(bids, asks)
                 sig = self.edge_engine.compute_edge(market, asset_id, side, mid, ob)
+                if sig:
+                    edge_pct = sig.edge_pct * 100
+                    if edge_pct > 3.0:
+                        q = (market.get("question") or "")[:50]
+                        logger.info("POTENTIAL SIGNAL: %s edge=%.2f%% | %s", asset_id[:16], edge_pct, q)
                 if sig and self.on_signal:
                     try:
                         if asyncio.iscoroutinefunction(self.on_signal):

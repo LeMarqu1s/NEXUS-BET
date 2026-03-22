@@ -264,7 +264,12 @@ async def _get_scan_text() -> str:
             f"{LINE}\n"
         )
         if not signals:
-            return header + f"Aucun edge ≥{threshold}% détecté\nScan continu en cours...\n\n{LINE}"
+            return (
+                header
+                + f"🔍 Scanner actif — {n_assets} marchés surveillés\n"
+                + f"Aucun signal ≥{threshold}% pour l'instant\n"
+                + f"Prochain scan dans 30s\n\n{LINE}"
+            )
 
         lines = [header + "TOP SIGNALS :\n"]
         mt_map = {"binary": "BINARY", "multi_outcome": "MULTI", "scalar": "SCALAR"}
@@ -652,7 +657,7 @@ async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb
     except Exception:
         ack = None
     try:
-        result = await asyncio.wait_for(get_content(), timeout=5.0)
+        result = await asyncio.wait_for(get_content(), timeout=10.0)
         content = result[0] if isinstance(result, tuple) else result
         reply_markup = result[1] if isinstance(result, tuple) and len(result) > 1 else default_kb
     except asyncio.TimeoutError:
@@ -682,8 +687,19 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await _ack_then_reply(update, _get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", _portfolio_keyboard())
 
 
+def _scan_fallback() -> str:
+    """Fallback when scan fails — never leave user with nothing."""
+    n = _get_market_count()
+    return (
+        f"🔍 <b>SCANNER</b>\n{LINE}\n"
+        f"🔍 Scanner actif — {n} marchés surveillés\n"
+        f"Aucun signal ≥5% pour l'instant\n"
+        f"Prochain scan dans 30s\n\n{LINE}"
+    )
+
+
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _ack_then_reply(update, _get_scan_text, f"🔍 <b>SCANNER</b>\n{LINE}\nDonnées en cours...", _scan_keyboard())
+    await _ack_then_reply(update, _get_scan_text, _scan_fallback(), _scan_keyboard())
 
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -976,7 +992,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     def _safe_get(get_fn, fallback: str, kb):
         async def _run():
             try:
-                return await asyncio.wait_for(get_fn(), timeout=5.0)
+                return await asyncio.wait_for(get_fn(), timeout=10.0)
             except asyncio.TimeoutError:
                 return fallback
             except Exception as e:
@@ -993,7 +1009,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_scan":
         await edit(f"🔍 <b>SCANNING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_scan_text, f"🔍 <b>SCANNER</b>\n{LINE}\nDonnées en cours...", None)()
+        text = await _safe_get(_get_scan_text, _scan_fallback(), None)()
         await edit(text, _scan_keyboard())
         return
 

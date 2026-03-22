@@ -42,6 +42,7 @@ def on_signal(sig: EdgeSignal) -> None:
         return
     try:
         existing: list[dict[str, Any]] = []
+        data: dict[str, Any] = {}
         if PENDING_SIGNALS_FILE.exists():
             with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
                 data = json.load(f)
@@ -62,8 +63,12 @@ def on_signal(sig: EdgeSignal) -> None:
         # Éviter les doublons
         if not any(e.get("market_id") == entry["market_id"] and e.get("side") == entry["side"] for e in existing):
             existing.append(entry)
+            out: dict[str, Any] = {"signals": existing[-50:], "count": len(existing)}
+            if isinstance(data, dict):
+                out["market_count"] = data.get("market_count", 0)
+                out["last_scan_ts"] = data.get("last_scan_ts", __import__("time").time())
             with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
-                json.dump({"signals": existing[-50:], "count": len(existing)}, f, indent=2)
+                json.dump(out, f, indent=2)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
             # Push notification for STRONG_BUY even when bot idle
             if getattr(sig, "signal_strength", "BUY") == "STRONG_BUY":
@@ -102,7 +107,11 @@ def clear_signal(market_id: str, side: str) -> None:
             data = json.load(f)
         signals = data.get("signals", []) if isinstance(data, dict) else []
         signals = [s for s in signals if not (s.get("market_id") == market_id and s.get("side") == side)]
+        out = {"signals": signals, "count": len(signals)}
+        if isinstance(data, dict):
+            out["market_count"] = data.get("market_count", 0)
+            out["last_scan_ts"] = data.get("last_scan_ts", __import__("time").time())
         with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
-            json.dump({"signals": signals, "count": len(signals)}, f, indent=2)
+            json.dump(out, f, indent=2)
     except Exception:
         pass
