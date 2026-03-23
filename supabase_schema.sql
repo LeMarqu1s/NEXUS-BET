@@ -125,3 +125,32 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
 CREATE INDEX idx_users_access_token ON users(access_token);
+
+-- ============================================
+-- ROW LEVEL SECURITY
+-- ============================================
+-- La table users contient des access_token sensibles → RLS activé.
+-- Les autres tables (trades, debates, positions, etc.) sont des données
+-- internes, accédées uniquement via service_role ou anon depuis Railway.
+-- Laisser RLS désactivé sur ces tables est acceptable si le projet est privé.
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+-- Le service_role bypasse RLS automatiquement (clé SUPABASE_SERVICE_ROLE_KEY).
+-- Si seul l'anon_key est configuré, ces policies permettent au bot de fonctionner.
+
+-- Dashboard : vérification token par valeur exacte (SELECT)
+CREATE POLICY "users_anon_select" ON users
+    FOR SELECT TO anon
+    USING (true);
+
+-- Bot /access : création d'un nouvel utilisateur (INSERT)
+CREATE POLICY "users_anon_insert" ON users
+    FOR INSERT TO anon
+    WITH CHECK (true);
+
+-- Bot /access : rafraîchissement du token (UPDATE)
+CREATE POLICY "users_anon_update" ON users
+    FOR UPDATE TO anon
+    USING (true)
+    WITH CHECK (true);
