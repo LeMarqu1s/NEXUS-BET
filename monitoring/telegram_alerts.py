@@ -3,6 +3,7 @@ NEXUS BET - Alertes Telegram
 Notifications pour trades, erreurs et signaux.
 """
 import logging
+import os
 from typing import Optional
 
 import httpx
@@ -232,3 +233,112 @@ async def alert_anti_sybil(details: str) -> bool:
         f"<i>{details[:300]}</i>"
     )
     return await send_telegram_message(msg)
+
+
+async def _get_active_subscriber_chat_ids() -> list[str]:
+    """Retourne les telegram_chat_id de tous les abonnés actifs (Supabase)."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={
+                        "is_active": "eq.true",
+                        "select": "telegram_chat_id",
+                    },
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    rows = r.json()
+                    ids = [row["telegram_chat_id"] for row in rows if row.get("telegram_chat_id")]
+                    if ids:
+                        return ids
+        except Exception as e:
+            log.debug("_get_active_subscriber_chat_ids: %s", e)
+    # Fallback: env var TELEGRAM_CHAT_ID
+    cid = os.getenv("TELEGRAM_CHAT_ID", "")
+    return [cid] if cid else []
+
+
+def _signal_buy_keyboard(market_id: str, side: str) -> dict:
+    """Boutons [✅ BUY] [❌ PASS] pour le signal pushé aux abonnés."""
+    cb = f"{market_id[:40]}|{side}"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ BUY", "callback_data": f"buy_{cb}"},
+                {"text": "❌ PASS", "callback_data": f"ignore_{cb}"},
+            ]
+        ]
+    }
+
+
+async def push_signal_to_subscribers(
+    market_id: str,
+    question: str,
+    side: str,
+    edge_pct: float,
+    confidence: float,
+    kelly_fraction: float,
+    polymarket_price: float,
+    signal_strength: str = "BUY",
+    capital: float = 1000.0,
+) -> int:
+    """
+    Push un signal à tous les abonnés actifs.
+    Inclut : marché, side, edge, confiance, mise conseillée, boutons BUY/PASS.
+    Returns le nombre d'envois réussis.
+    """
+    chat_ids = await _get_active_subscriber_chat_ids()
+    if not chat_ids:
+        return 0
+
+    t = SETTINGS.get("telegram")
+    token = getattr(t, "bot_token", None) if t else None
+    token = token or os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return 0
+
+    # Mise conseillée : Kelly fraction, plafonné à 5% du capital
+    stake = round(capital * min(kelly_fraction, 0.05), 2)
+    strength_icon = "⚡" if signal_strength == "STRONG_BUY" else "🟢"
+    line = "━━━━━━━━━━━━━━━━━━━━━"
+
+    msg = (
+        f"{strength_icon} <b>SIGNAL NEXUS CAPITAL</b>\n"
+        f"{line}\n"
+        f"<b>{question[:80]}</b>\n\n"
+        f"🎯 Signal      : <b>{side}</b>\n"
+        f"💲 Prix actuel : <b>${polymarket_price:.2f}</b>\n"
+        f"📊 Edge        : <b>{edge_pct:.1f}%</b>\n"
+        f"💡 Confiance   : <b>{confidence:.0%}</b>\n"
+        f"💰 Mise conseillée : <b>${stake:.2f}</b>\n"
+        f"{line}"
+    )
+    kb = _signal_buy_keyboard(market_id, side)
+
+    sent = 0
+    for chat_id in chat_ids:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": msg,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                        "reply_markup": kb,
+                    },
+                )
+                if r.status_code == 200:
+                    sent += 1
+                else:
+                    log.debug("push_signal to %s: %s %s", chat_id, r.status_code, r.text[:80])
+        except Exception as e:
+            log.debug("push_signal to %s failed: %s", chat_id, e)
+
+    log.info("push_signal_to_subscribers: sent to %d/%d subscribers", sent, len(chat_ids))
+    return sent

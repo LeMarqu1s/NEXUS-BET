@@ -73,18 +73,28 @@ def on_signal(sig: EdgeSignal) -> None:
             with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
-            # Push notification for STRONG_BUY even when bot idle
-            if getattr(sig, "signal_strength", "BUY") == "STRONG_BUY":
-                try:
-                    import asyncio
-                    from monitoring.telegram_alerts import send_telegram_message
-                    msg = f"🔥 <b>STRONG_BUY</b> détecté!\n{entry.get('question','')[:60]}...\nEdge: {entry.get('edge_pct',0):.1f}%"
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(send_telegram_message(msg))
-                except RuntimeError:
-                    pass  # No running loop (sync context)
-                except Exception:
-                    pass
+            # Push signal to all active subscribers
+            try:
+                import asyncio
+                from monitoring.telegram_alerts import push_signal_to_subscribers
+                from config.settings import settings as _settings
+                _capital = getattr(_settings, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+                loop = asyncio.get_running_loop()
+                loop.create_task(push_signal_to_subscribers(
+                    market_id=sig.market_id,
+                    question=entry.get("question", ""),
+                    side=sig.side,
+                    edge_pct=sig.edge_pct * 100,
+                    confidence=sig.confidence,
+                    kelly_fraction=sig.kelly_fraction,
+                    polymarket_price=sig.polymarket_price,
+                    signal_strength=getattr(sig, "signal_strength", "BUY"),
+                    capital=_capital,
+                ))
+            except RuntimeError:
+                pass  # No running loop (sync context)
+            except Exception:
+                pass
     except Exception as e:
         log.warning("paperclip_bridge on_signal error: %s", e)
 

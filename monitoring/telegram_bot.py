@@ -703,10 +703,52 @@ async def _safe_reply(update: Update, text: str, reply_markup=None, parse_mode="
         log.debug("safe_reply: %s", e)
 
 
+async def _register_referred_user(chat_id: str, ref_code: str) -> None:
+    """Enregistre un nouvel utilisateur avec son parrain dans Supabase."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            # Find referrer
+            r = await client.get(
+                f"{url}/rest/v1/users",
+                params={"referral_code": f"eq.{ref_code}", "select": "id"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            referrer_id = r.json()[0]["id"] if r.status_code == 200 and r.json() else None
+            # Upsert new user with referred_by
+            payload: dict = {"telegram_chat_id": chat_id, "is_active": False, "plan": "free"}
+            if referrer_id:
+                payload["referred_by"] = referrer_id
+            await client.post(
+                f"{url}/rest/v1/users",
+                headers={**headers, "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                json=payload,
+            )
+            # Increment referrer's referred_count
+            if referrer_id:
+                await client.post(
+                    f"{url}/rest/v1/rpc/increment_referred_count",
+                    headers=headers,
+                    json={"user_id": referrer_id},
+                )
+    except Exception as e:
+        log.debug("_register_referred_user: %s", e)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reset user state + clear pending callbacks on /start."""
+    """Reset user state + clear pending callbacks on /start. Handles deep-link referral."""
     try:
         context.user_data.clear()
+        # Handle deep-link: /start ref_XXXXXXXX
+        args = context.args or []
+        if args and str(args[0]).startswith("ref_"):
+            ref_code = str(args[0])[4:].upper()
+            chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+            asyncio.create_task(_register_referred_user(chat_id, ref_code))
         text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
     except Exception as e:
@@ -757,12 +799,62 @@ async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _safe_reply(update, f"🐳 <b>WHALES</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
 
 
-async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        f"🤝 <b>REFERRAL</b>\n{LINE}\n<i>Programme de parrainage à venir.</i>\n{LINE}",
-        parse_mode="HTML",
-        reply_markup=_back_keyboard(),
+async def _get_referral_text(chat_id: str, bot_username: str = "") -> str:
+    """Récupère ou génère le code referral de l'utilisateur."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    code = ""
+    referred_count = 0
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+                r = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={"telegram_chat_id": f"eq.{chat_id}", "select": "referral_code,referred_count"},
+                    headers=headers,
+                )
+                if r.status_code == 200 and r.json():
+                    row = r.json()[0]
+                    code = row.get("referral_code") or ""
+                    referred_count = int(row.get("referred_count") or 0)
+                if not code:
+                    import uuid as _uuid
+                    code = _uuid.uuid4().hex[:8].upper()
+                    await client.patch(
+                        f"{url}/rest/v1/users",
+                        params={"telegram_chat_id": f"eq.{chat_id}"},
+                        headers={**headers, "Content-Type": "application/json", "Prefer": "return=minimal"},
+                        json={"referral_code": code},
+                    )
+        except Exception as e:
+            log.debug("referral fetch: %s", e)
+    if not code:
+        import hashlib as _hl
+        code = _hl.md5(chat_id.encode()).hexdigest()[:8].upper()
+    bot_name = bot_username or os.getenv("TELEGRAM_BOT_USERNAME", "NexusCapitalBot")
+    ref_link = f"https://t.me/{bot_name}?start=ref_{code}"
+    return (
+        f"🤝 <b>REFERRAL</b>\n{LINE}\n"
+        f"Ton code : <code>{code}</code>\n\n"
+        f"👥 Filleuls actifs : <b>{referred_count}</b>\n\n"
+        f"🔗 Lien :\n<code>{ref_link}</code>\n\n"
+        f"<i>Partage ce lien — chaque abonné via ton lien te rapporte une commission.</i>\n{LINE}"
     )
+
+
+async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+    bot_username = ""
+    try:
+        bot_username = (await context.bot.get_me()).username or ""
+    except Exception:
+        pass
+    try:
+        text = await asyncio.wait_for(_get_referral_text(chat_id, bot_username), timeout=6.0)
+    except Exception:
+        text = f"🤝 <b>REFERRAL</b>\n{LINE}\n❌ Erreur. Réessayez."
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -910,6 +1002,73 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     else:
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+
+async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin only: /activate <chat_id> [plan] — active un utilisateur dans Supabase."""
+    caller = update.effective_user.id if update.effective_user else 0
+    if not _is_admin(caller):
+        await _safe_reply(update, "⛔ Réservé aux admins.")
+        return
+    args = context.args or []
+    if not args:
+        await _safe_reply(update, "Usage: /activate <chat_id> [free|premium|pro]")
+        return
+    target_chat_id = args[0].strip()
+    plan = args[1].strip() if len(args) > 1 else "premium"
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        await _safe_reply(update, "❌ Supabase non configuré.")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            headers = {
+                "apikey": key, "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
+            }
+            # Upsert user as active
+            r = await client.post(
+                f"{url}/rest/v1/users",
+                headers=headers,
+                json={"telegram_chat_id": target_chat_id, "is_active": True, "plan": plan},
+            )
+            ok = r.status_code in (200, 201, 204)
+            # Also PATCH in case user already exists
+            await client.patch(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{target_chat_id}"},
+                headers=headers,
+                json={"is_active": True, "plan": plan},
+            )
+        if ok:
+            await _safe_reply(update, f"✅ Utilisateur <code>{target_chat_id}</code> activé (plan: {plan})")
+            # Notify the user
+            try:
+                from config.settings import SETTINGS as _SETTINGS
+                t_cfg = _SETTINGS.get("telegram")
+                token = getattr(t_cfg, "bot_token", None) or os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+                if token:
+                    async with httpx.AsyncClient(timeout=5.0) as c:
+                        await c.post(
+                            f"https://api.telegram.org/bot{token}/sendMessage",
+                            json={
+                                "chat_id": target_chat_id,
+                                "text": (
+                                    f"✅ <b>Accès activé !</b>\n{LINE}\n"
+                                    f"Ton abonnement <b>{plan.upper()}</b> est actif.\n"
+                                    f"Utilise /start pour accéder à tous les signaux.\n{LINE}"
+                                ),
+                                "parse_mode": "HTML",
+                            },
+                        )
+            except Exception:
+                pass
+        else:
+            await _safe_reply(update, f"❌ Erreur activation ({r.status_code})")
+    except Exception as e:
+        log.exception("cmd_activate: %s", e)
+        await _safe_reply(update, f"❌ Erreur: {e}")
 
 
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1117,7 +1276,51 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "btn_referral":
-        await edit(f"🤝 <b>REFERRAL</b>\n{LINE}\n<i>Programme de parrainage à venir.</i>\n{LINE}", _back_keyboard())
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        bot_username = ""
+        try:
+            bot_username = (await context.bot.get_me()).username or ""
+        except Exception:
+            pass
+        try:
+            text = await asyncio.wait_for(_get_referral_text(chat_id, bot_username), timeout=6.0)
+        except Exception:
+            text = f"🤝 <b>REFERRAL</b>\n{LINE}\n❌ Erreur. Réessayez."
+        await edit(text, _back_keyboard())
+        return
+
+    # ── Signal callbacks: BUY / PASS / Investiguer ──
+    if data.startswith("buy_"):
+        parts = data[4:].split("|", 1)
+        market_id = parts[0] if parts else ""
+        side = parts[1] if len(parts) > 1 else "YES"
+        from config.settings import settings as _s
+        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+        await edit(
+            f"✅ <b>CONFIRMER L'ACHAT</b>\n{LINE}\n"
+            f"Marché : <code>{market_id[:40]}</code>\n"
+            f"Side   : <b>{side}</b>\n"
+            f"Capital: <b>${cap:,.0f}</b>\n{LINE}\n"
+            f"<i>Active l'Auto-Trade dans ⚙️ Settings pour l'exécution automatique.</i>",
+            _back_keyboard(),
+        )
+        return
+
+    if data.startswith("ignore_"):
+        await edit(f"❌ Signal ignoré\n{LINE}", _main_keyboard())
+        return
+
+    if data.startswith("inv_"):
+        parts = data[4:].split("|", 1)
+        market_id = parts[0] if parts else ""
+        side = parts[1] if len(parts) > 1 else ""
+        await edit(
+            f"🔍 <b>INVESTIGATION</b>\n{LINE}\n"
+            f"Marché : <code>{market_id}</code>\n"
+            f"Side   : {side}\n{LINE}\n"
+            f"<i>Utilise /market pour la fiche complète.</i>",
+            _back_keyboard(),
+        )
         return
 
     # ── Paste & Monitor (wallet add/cancel) ──
@@ -1421,6 +1624,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("exit", cmd_exit))
     app.add_handler(CommandHandler("access", cmd_access))
+    app.add_handler(CommandHandler("activate", cmd_activate))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -1463,6 +1667,7 @@ async def run_forever() -> None:
             BotCommand("referral", "🤝 Mon lien d'affiliation"),
             BotCommand("settings", "⚙️ Configurer le bot"),
             BotCommand("exit", "🔴 Sortir d'une position"),
+            BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
