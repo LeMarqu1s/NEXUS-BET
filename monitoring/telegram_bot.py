@@ -42,6 +42,7 @@ if _env.exists():
                 os.environ.setdefault(k, v)
 
 LINE = "━━━━━━━━━━━━━━━━━━━━━"
+GOLD = "✦"  # Gold accent for premium look
 
 
 # ══════════════════════════════════════════════
@@ -177,6 +178,13 @@ def _get_capital() -> float:
 
 def _get_market_count() -> int:
     try:
+        from paperclip_bridge import get_market_count
+        n = get_market_count()
+        if n:
+            return n
+    except Exception:
+        pass
+    try:
         p = Path(__file__).resolve().parent.parent / "paperclip_pending_signals.json"
         if p.exists():
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -211,13 +219,16 @@ async def _get_balance() -> float:
 async def _get_start_text() -> str:
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
     mode = "LIVE" if not sim else "SIM"
+    mode_icon = "🟢" if not sim else "🟡"
     n = _get_market_count()
     balance = await _get_balance()
     return (
         f"⚡ <b>NEXUS CAPITAL</b>\n"
         f"<i>Prediction Market Intelligence</i>\n"
         f"{LINE}\n"
-        f"● {mode}  📡 {n} marchés  💰 ${balance:,.2f}\n"
+        f"{GOLD} Mode     <b>{mode_icon} {mode}</b>\n"
+        f"{GOLD} Marchés  <b>{n:,} surveillés</b>\n"
+        f"{GOLD} Capital  <b>${balance:,.2f} USDC</b>\n"
         f"{LINE}"
     )
 
@@ -225,85 +236,66 @@ async def _get_start_text() -> str:
 async def _get_scan_text() -> str:
     try:
         from config.settings import settings
-        from paperclip_bridge import get_pending_signals, PENDING_SIGNALS_PATH
+        from paperclip_bridge import get_pending_signals, get_last_scan_ts, PENDING_SIGNALS_PATH
+        import paperclip_bridge as pb
 
         threshold = getattr(settings, "MIN_EDGE_THRESHOLD", 5.0) or 5.0
-        last_scan_ts = 0
-        p_canonical = Path(PENDING_SIGNALS_PATH)
-        log.info("Scan handler reading from: %s", os.path.abspath(str(p_canonical)))
-        try:
-            if p_canonical.exists():
-                data = json.loads(p_canonical.read_text(encoding="utf-8"))
-                log.info("Scan file read: signals=%d keys=%s", len(data.get("signals", [])), list(data.keys())[:6])
-                ts = data.get("last_scan_ts") or data.get("last_updated")
-                if ts:
-                    if isinstance(ts, (int, float)):
-                        last_scan_ts = int(ts)
-                    elif isinstance(ts, str):
-                        try:
-                            last_scan_ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                        except Exception:
-                            pass
-            else:
-                cwd_path = Path("paperclip_pending_signals.json").resolve()
-                log.info("Canonical file missing at %s, cwd path: %s", p_canonical, cwd_path)
-                if cwd_path.exists() and cwd_path != p_canonical:
-                    log.info("Found file at cwd path instead - path mismatch!")
-        except Exception as e:
-            log.info("Scan file read error: %s", e)
+
+        # ── Get last scan time ──
+        last_scan_ts = get_last_scan_ts()
+        log.info("Scan handler: memory_signals=%d last_scan_ts=%s", len(pb._signal_store), int(last_scan_ts))
         mins = "—"
         if last_scan_ts:
-            delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
+            delta = int(datetime.now(timezone.utc).timestamp()) - int(last_scan_ts)
             mins = f"{delta // 60}min ago" if delta >= 60 else "<1min ago"
 
+        # ── Get signals: memory → file ──
         signals = get_pending_signals()
-        if not signals:
-            cwd_path = Path("paperclip_pending_signals.json").resolve()
-            for try_path in [p_canonical, cwd_path]:
-                if try_path.exists():
-                    try:
-                        data = json.loads(try_path.read_text(encoding="utf-8"))
-                        signals = data.get("signals", []) if isinstance(data, dict) else []
-                        if signals:
-                            log.info("Fallback read from %s: %d signals", try_path, len(signals))
-                        break
-                    except Exception as e:
-                        log.info("Fallback read error %s: %s", try_path, e)
+        log.info("Scan handler: %d signals found", len(signals))
         n_assets = _get_market_count()
         n_signals = len(signals)
 
+        signal_status = "🟢" if n_signals > 0 else "🔴"
         header = (
             f"🔍 <b>MARKET SCANNER</b>\n"
             f"{LINE}\n"
-            f"📡 Assets suivis   : {n_assets}\n"
-            f"🟢 Signaux actifs  : {n_signals}\n"
-            f"⚡ Min Edge requis : {threshold}%\n"
-            f"🕐 Dernier scan    : {mins}\n"
+            f"{GOLD} Marchés suivis  <b>{n_assets:,}</b>\n"
+            f"{GOLD} Signaux actifs  {signal_status} <b>{n_signals}</b>\n"
+            f"{GOLD} Min edge requis <b>{threshold}%</b>\n"
+            f"{GOLD} Dernier scan    <code>{mins}</code>\n"
             f"{LINE}\n"
         )
         if not signals:
             return (
                 header
-                + f"🔍 Scanner actif — {n_assets} marchés surveillés\n"
-                + f"Aucun signal ≥{threshold}% pour l'instant\n"
-                + f"Prochain scan dans 30s\n\n{LINE}"
+                + f"<i>Scanner actif — {n_assets:,} marchés surveillés</i>\n"
+                + f"<i>Aucun signal ≥{threshold}% détecté</i>\n"
+                + f"<i>Prochain scan dans ~30s</i>\n\n{LINE}"
             )
 
-        lines = [header + "TOP SIGNALS :\n"]
-        mt_map = {"binary": "BINARY", "multi_outcome": "MULTI", "scalar": "SCALAR"}
-        for s in signals[:5]:
-            q = (s.get("question") or str(s.get("market_id", "")))[:40]
-            mt = mt_map.get(str(s.get("market_type", "binary")).lower(), "BINARY")
+        mt_map = {"binary": "BIN", "multi_outcome": "MULTI", "scalar": "SCAL"}
+        lines = [header + f"<b>TOP SIGNALS ({n_signals})</b>\n{LINE}"]
+        for idx, s in enumerate(signals[:5], 1):
+            q = (s.get("question") or str(s.get("market_id", "")))[:45]
+            mt = mt_map.get(str(s.get("market_type", "binary")).lower(), "BIN")
             rec = s.get("recommended_outcome") or s.get("side", "?")
             price = float(s.get("polymarket_price") or s.get("price") or 0.5)
             edge = float(s.get("edge_pct", 0))
-            emoji = "⚡" if s.get("signal_strength") == "STRONG_BUY" else "🟢"
-            lines.append(f"{emoji} [{mt}] {q}\n→ {rec} @ ${price:.2f} | edge: {edge:.1f}%")
+            kelly = float(s.get("kelly_fraction", 0))
+            conf = float(s.get("confidence", 0))
+            strength = s.get("signal_strength", "BUY")
+            strength_icon = "⚡" if strength == "STRONG_BUY" else "▲"
+            lines.append(
+                f"\n{strength_icon} <b>#{idx} {rec}</b>  <code>[{mt}]</code>\n"
+                f"<i>{q}</i>\n"
+                f"   Prix: <code>${price:.3f}</code>  Edge: <b>{edge:.1f}%</b>\n"
+                f"   Kelly: <code>{kelly:.1%}</code>  Confiance: <code>{conf:.0%}</code>"
+            )
         lines.append(f"\n{LINE}")
         return "\n".join(lines)
     except Exception as e:
         log.exception("Scan failed: %s", e)
-        return f"🔍 <b>MARKET SCANNER</b>\n{LINE}\n❌ Erreur: {e}"
+        return f"🔍 <b>MARKET SCANNER</b>\n{LINE}\n❌ <b>Erreur</b>: <code>{e}</code>"
 
 
 async def _get_portfolio_text() -> str:
@@ -324,17 +316,18 @@ async def _get_portfolio_text() -> str:
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
 
         pnl_sign = "+" if pnl_today >= 0 else ""
+        pnl_icon = "📈" if pnl_today >= 0 else "📉"
         return (
             f"{header}"
-            f"💰 Balance      ${balance:,.2f} USDC\n"
-            f"📈 P&amp;L Today    {pnl_sign}${pnl_today:,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
-            f"🎯 Positions    {len(positions)} ouvertes\n"
-            f"✅ Win Rate     {win_rate:.0f}% ({wins} trades)\n"
+            f"{GOLD} Balance    <b>${balance:,.2f} USDC</b>\n"
+            f"{GOLD} P&amp;L Today  {pnl_icon} <b>{pnl_sign}${pnl_today:,.2f}</b> <code>({pnl_sign}{pnl_pct:.1f}%)</code>\n"
+            f"{GOLD} Positions  <b>{len(positions)}</b> ouvertes\n"
+            f"{GOLD} Win Rate   <b>{win_rate:.0f}%</b> <code>({wins}/{total_closed} trades)</code>\n"
             f"{LINE}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
-        return f"{header}❌ Erreur: {e}"
+        return f"{header}❌ <b>Erreur</b>: <code>{e}</code>"
 
 
 async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
@@ -726,16 +719,36 @@ def _scan_fallback() -> str:
     """Fallback when scan fails — never leave user with nothing."""
     n = _get_market_count()
     return (
-        f"🔍 <b>SCANNER</b>\n{LINE}\n"
-        f"🔍 Scanner actif — {n} marchés surveillés\n"
-        f"Aucun signal ≥5% pour l'instant\n"
-        f"Prochain scan dans 30s\n\n{LINE}"
+        f"🔍 <b>MARKET SCANNER</b>\n{LINE}\n"
+        f"{GOLD} Marchés  <b>{n:,} surveillés</b>\n"
+        f"{GOLD} Signaux  <b>0</b> détectés\n"
+        f"{LINE}\n"
+        f"<i>Scanner actif — résultats dans ~30s</i>\n{LINE}"
     )
 
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await _ack_then_reply(update, _get_scan_text, _scan_fallback(), _scan_keyboard())
+        # Send signal card for top signal if available
+        try:
+            from paperclip_bridge import get_pending_signals
+            from monitoring.signal_card_generator import generate_signal_card_safe
+            sigs = get_pending_signals()
+            if sigs:
+                top = sigs[0]
+                png = generate_signal_card_safe(top)
+                if png and update.message:
+                    import io
+                    q = (top.get("question") or "")[:60]
+                    edge = float(top.get("edge_pct", 0))
+                    await update.message.reply_photo(
+                        photo=io.BytesIO(png),
+                        caption=f"▲ <b>TOP SIGNAL</b>\n<i>{q}</i>\nEdge: <b>{edge:.1f}%</b>",
+                        parse_mode="HTML",
+                    )
+        except Exception as card_err:
+            log.debug("Signal card send: %s", card_err)
     except Exception as e:
         log.exception("cmd_scan: %s", e)
         await _safe_reply(update, _scan_fallback(), _scan_keyboard())
@@ -1445,8 +1458,13 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
+    # Wait for any overlapping Railway deployment to terminate (RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0 helps)
+    overlap_secs = int(os.getenv("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS", "3"))
+    if overlap_secs > 0:
+        log.info("Waiting %ds for overlap termination before starting polling", overlap_secs)
+        await asyncio.sleep(overlap_secs)
     await close_telegram_session(token)
-    await asyncio.sleep(3)  # let old instance fully terminate during Railway deploy
+    await asyncio.sleep(2)  # ensure webhook cleared
 
     app = build_application(token)
     try:

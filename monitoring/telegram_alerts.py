@@ -224,6 +224,62 @@ async def send_alpha_stream(agent_name: str, analysis: str, market_context: str 
     return await send_telegram_message(msg)
 
 
+async def send_photo_bytes(photo_bytes: bytes, caption: str = "", chat_id: str | None = None) -> bool:
+    """Send PNG image bytes via Telegram send_photo API."""
+    if not _is_enabled():
+        return False
+    t = SETTINGS["telegram"]
+    token = getattr(t, "bot_token", None)
+    cid = chat_id or getattr(t, "chat_id", None)
+    if not token or not cid:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                url,
+                data={"chat_id": cid, "caption": caption[:1024], "parse_mode": "HTML"},
+                files={"photo": ("signal_card.png", photo_bytes, "image/png")},
+            )
+            if r.status_code != 200:
+                log.warning("send_photo failed: %s %s", r.status_code, r.text[:200])
+                return False
+            return True
+    except Exception as e:
+        log.warning("send_photo error: %s", e)
+        return False
+
+
+async def send_signal_card(signal: dict, chat_id: str | None = None) -> bool:
+    """
+    Generate and send a premium signal card image via Telegram.
+    Falls back to text message if image generation fails.
+    """
+    try:
+        from monitoring.signal_card_generator import generate_signal_card_safe
+        png = generate_signal_card_safe(signal)
+        if png:
+            q = (signal.get("question") or signal.get("market_id", "?"))[:80]
+            edge = float(signal.get("edge_pct", 0))
+            strength = signal.get("signal_strength", "BUY")
+            icon = "⚡" if strength == "STRONG_BUY" else "▲"
+            caption = (
+                f"{icon} <b>{strength}</b>\n"
+                f"<i>{q}</i>\n"
+                f"Edge: <b>{edge:.1f}%</b>"
+            )
+            return await send_photo_bytes(png, caption, chat_id)
+    except Exception as e:
+        log.warning("send_signal_card failed: %s", e)
+    # Fallback to text
+    edge = float(signal.get("edge_pct", 0))
+    q = (signal.get("question") or "")[:60]
+    rec = signal.get("recommended_outcome") or signal.get("side", "?")
+    msg = f"⚡ <b>SIGNAL DÉTECTÉ</b>\n{q}\n{rec} | Edge: {edge:.1f}%"
+    return await send_telegram_message(msg, chat_id)
+
+
 async def alert_anti_sybil(details: str) -> bool:
     """Alerte manipulation : Mirror Trading détecté par Whale Tracker."""
     msg = (

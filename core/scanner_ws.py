@@ -105,29 +105,31 @@ def _signal_to_entry(sig: EdgeSignal) -> dict:
 
 
 def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = None) -> None:
-    """Write last_scan_ts, market_count, and signals to paperclip_pending_signals.json. Same file/key as telegram."""
+    """Update market_count/scan_ts in paperclip_bridge memory + file. Route all signals through on_signal."""
     try:
-        from paperclip_bridge import PENDING_SIGNALS_FILE, PENDING_SIGNALS_PATH
-        p = PENDING_SIGNALS_FILE
-        logger.info("Writing signals to: %s", PENDING_SIGNALS_PATH)
-        ts = time.time()
-        data: dict = {"last_scan_ts": ts, "market_count": market_count, "signals": [], "count": 0}
-        if p.exists():
-            with open(p, encoding="utf-8") as f:
-                existing = json.load(f)
-            if isinstance(existing, dict):
-                data["signals"] = list(existing.get("signals", []))
+        import paperclip_bridge as pb
+        pb._market_count = market_count
+        pb._last_scan_ts = time.time()
+        logger.info("Scanner: market_count=%d | memory signals=%d", market_count, len(pb._signal_store))
+        # New signals: route through on_signal for dedup + memory + file update
         if new_signals:
             for sig in new_signals:
-                entry = _signal_to_entry(sig)
-                if not any(e.get("market_id") == entry["market_id"] and e.get("side") == entry["side"] for e in data["signals"]):
-                    data["signals"].append(entry)
-                    logger.info("SIGNAL STORED: %s edge=%.2f%%", entry.get("question", "")[:40], entry["edge_pct"])
-            data["signals"] = data["signals"][-50:]
-        data["count"] = len(data["signals"])
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        logger.info("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
+                pb.on_signal(sig)
+        # Persist market_count update to file
+        from paperclip_bridge import PENDING_SIGNALS_FILE
+        p = PENDING_SIGNALS_FILE
+        try:
+            data: dict = {
+                "last_scan_ts": pb._last_scan_ts,
+                "market_count": market_count,
+                "signals": list(pb._signal_store),
+                "count": len(pb._signal_store),
+            }
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            logger.info("File updated: %d signals, market_count=%d", len(pb._signal_store), market_count)
+        except Exception as fe:
+            logger.warning("File write failed: %s", fe)
     except Exception as e:
         logger.warning("_write_scan_ts failed: %s", e)
 

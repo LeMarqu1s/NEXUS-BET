@@ -1,10 +1,36 @@
 import asyncio
 import logging
+import os
+import re
 import time
 from dotenv import load_dotenv
 load_dotenv()
 
+
+class _ApiKeyMaskFilter(logging.Filter):
+    """Masks sensitive API keys in all log records."""
+    _ODDS_KEY = os.getenv("ODDS_API_KEY", "")
+    _PATTERNS = [
+        re.compile(r"apiKey=[^&\s\"']+", re.IGNORECASE),
+        re.compile(r"api_key=[^&\s\"']+", re.IGNORECASE),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        masked = msg
+        for pat in self._PATTERNS:
+            masked = pat.sub("apiKey=******", masked)
+        if self._ODDS_KEY and len(self._ODDS_KEY) > 4 and self._ODDS_KEY in masked:
+            masked = masked.replace(self._ODDS_KEY, "******")
+        if masked != msg:
+            record.msg = masked
+            record.args = ()
+        return True
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s - %(message)s")
+_mask_filter = _ApiKeyMaskFilter()
+logging.root.addFilter(_mask_filter)
 log = logging.getLogger("NEXUS")
 
 
