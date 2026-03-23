@@ -102,7 +102,7 @@ def load_settings() -> dict:
     )
     supabase = SupabaseSettings(
         url=_get_env("SUPABASE_URL"),
-        anon_key=_get_env("SUPABASE_ANON_KEY"),
+        anon_key=_get_env("SUPABASE_ANON_KEY") or _get_env("SUPABASE_SERVICE_ROLE_KEY"),
         service_role_key=_get_env("SUPABASE_SERVICE_ROLE_KEY"),
     )
     anthropic = AnthropicSettings(
