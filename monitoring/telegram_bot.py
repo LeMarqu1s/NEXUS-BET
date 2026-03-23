@@ -41,7 +41,8 @@ if _env.exists():
             if k and v:
                 os.environ.setdefault(k, v)
 
-LINE = "━━━━━━━━━━━━━━━━━━━━━"
+L = "━━━━━━━━━━━━━━━"
+LINE = L  # alias kept for compat
 
 
 # ══════════════════════════════════════════════
@@ -51,46 +52,43 @@ LINE = "━━━━━━━━━━━━━━━━━━━━━"
 def _main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("💼 Portfolio", callback_data="btn_portfolio"),
-            InlineKeyboardButton("🔍 Scanner", callback_data="btn_scan"),
+            InlineKeyboardButton("📡 SCAN", callback_data="btn_scan"),
+            InlineKeyboardButton("💰 PORTFOLIO", callback_data="btn_portfolio"),
         ],
         [
-            InlineKeyboardButton("🤖 AI Agents", callback_data="btn_agents"),
-            InlineKeyboardButton("🐳 Whales", callback_data="btn_whales"),
+            InlineKeyboardButton("🧠 AGENTS", callback_data="btn_agents"),
+            InlineKeyboardButton("🐋 WHALES", callback_data="btn_whales"),
         ],
         [
-            InlineKeyboardButton("📈 BTC", callback_data="btn_btc"),
-            InlineKeyboardButton("🤝 Referral", callback_data="btn_referral"),
+            InlineKeyboardButton("👥 REFERRAL", callback_data="btn_referral"),
+            InlineKeyboardButton("⚙️ SETTINGS", callback_data="btn_settings"),
         ],
-        [InlineKeyboardButton("⚙️ Settings", callback_data="btn_settings")],
     ])
 
 
 def _back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_back")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("← MENU", callback_data="menu_back")]])
 
 
 def _portfolio_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📋 Positions", callback_data="portfolio_positions"),
-            InlineKeyboardButton("📜 Historique", callback_data="portfolio_history"),
+            InlineKeyboardButton("📋 POSITIONS", callback_data="portfolio_positions"),
+            InlineKeyboardButton("📜 HISTORIQUE", callback_data="portfolio_history"),
         ],
-        [InlineKeyboardButton("🔙 Menu", callback_data="menu_back")],
+        [InlineKeyboardButton("← MENU", callback_data="menu_back")],
     ])
 
 
 def _positions_keyboard() -> InlineKeyboardMarkup:
-    """Clavier sous Portfolio pour revenir au menu Portfolio."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Portfolio", callback_data="btn_portfolio")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("← PORTFOLIO", callback_data="btn_portfolio")]])
 
 
 def _exit_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Boutons Confirmer / Annuler pour exit d'une position."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Confirmer", callback_data="exit_confirm"),
-            InlineKeyboardButton("❌ Annuler", callback_data="exit_cancel"),
+            InlineKeyboardButton("✅ CONFIRMER", callback_data="exit_confirm"),
+            InlineKeyboardButton("✕ ANNULER", callback_data="exit_cancel"),
         ],
     ])
 
@@ -109,8 +107,8 @@ def _wallet_confirm_keyboard(address: str) -> InlineKeyboardMarkup:
 def _scan_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="btn_scan"),
-            InlineKeyboardButton("🔙 Menu", callback_data="menu_back"),
+            InlineKeyboardButton("⟳ REFRESH", callback_data="btn_scan"),
+            InlineKeyboardButton("← MENU", callback_data="menu_back"),
         ],
     ])
 
@@ -122,50 +120,45 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
         copy_on = get_copy_trade_enabled()
     except Exception:
         pass
-    copy_label = "🔁 Copy Wallet : ON ✅" if copy_on else "🔁 Copy Wallet : OFF ❌"
+    copy_label = "COPY ON ✅" if copy_on else "COPY OFF ✕"
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 Thresholds", callback_data="settings_thresholds"),
-            InlineKeyboardButton("💰 Capital", callback_data="settings_capital"),
+            InlineKeyboardButton("THRESHOLDS", callback_data="settings_thresholds"),
+            InlineKeyboardButton("CAPITAL", callback_data="settings_capital"),
         ],
         [
-            InlineKeyboardButton("🔁 Simulation", callback_data="settings_toggle_sim"),
-            InlineKeyboardButton("🤖 Auto-Trade", callback_data="settings_autotrade"),
+            InlineKeyboardButton("SIMULATION", callback_data="settings_toggle_sim"),
+            InlineKeyboardButton("AUTO-TRADE", callback_data="settings_autotrade"),
         ],
         [InlineKeyboardButton(copy_label, callback_data="settings_toggle_copy")],
-        [InlineKeyboardButton("⚙️ Avancé", callback_data="settings_advanced")],
-        [InlineKeyboardButton("🔙 Menu", callback_data="menu_back")],
+        [InlineKeyboardButton("AVANCÉ", callback_data="settings_advanced")],
+        [InlineKeyboardButton("← MENU", callback_data="menu_back")],
     ])
 
 
 def _settings_autotrade_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Toggle ON/OFF", callback_data="settings_autotrade_toggle")],
-        [InlineKeyboardButton("Max positions", callback_data="settings_max_positions")],
-        [InlineKeyboardButton("Drawdown limit %", callback_data="settings_drawdown")],
-        [InlineKeyboardButton("Confirm BUY (yes/no)", callback_data="settings_confirm_buy")],
-        [InlineKeyboardButton("🔙 Settings", callback_data="btn_settings")],
+        [InlineKeyboardButton("ON / OFF", callback_data="settings_autotrade_toggle")],
+        [InlineKeyboardButton("MAX POSITIONS", callback_data="settings_max_positions")],
+        [InlineKeyboardButton("DRAWDOWN LIMIT %", callback_data="settings_drawdown")],
+        [InlineKeyboardButton("CONFIRM BUY", callback_data="settings_confirm_buy")],
+        [InlineKeyboardButton("← SETTINGS", callback_data="btn_settings")],
     ])
 
 
 def _settings_advanced_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Categories blacklist", callback_data="settings_categories")],
-        [InlineKeyboardButton("Min/Max days resolution", callback_data="settings_days_resolution")],
-        [InlineKeyboardButton("Keywords blacklist", callback_data="settings_keywords")],
-        [InlineKeyboardButton("Reinvest %", callback_data="settings_reinvest")],
-        [InlineKeyboardButton("🔙 Settings", callback_data="btn_settings")],
+        [InlineKeyboardButton("BLACKLIST CATÉGORIES", callback_data="settings_categories")],
+        [InlineKeyboardButton("JOURS RÉSOLUTION", callback_data="settings_days_resolution")],
+        [InlineKeyboardButton("BLACKLIST MOTS-CLÉS", callback_data="settings_keywords")],
+        [InlineKeyboardButton("RÉINVESTISSEMENT %", callback_data="settings_reinvest")],
+        [InlineKeyboardButton("← SETTINGS", callback_data="btn_settings")],
     ])
 
 
 # ══════════════════════════════════════════════
-# TEXT GENERATORS — Pro Terminal Style
+# TEXT GENERATORS — Premium HTML Style
 # ══════════════════════════════════════════════
-
-def _status_line() -> str:
-    sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-    return "🟡 SIMULATION" if sim else "🟢 LIVE"
-
 
 def _get_capital() -> float:
     try:
@@ -189,12 +182,10 @@ def _get_market_count() -> int:
 
 
 async def _get_balance() -> float:
-    """Balance USDC du portefeuille Polymarket."""
     relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS")
     if not relayer_addr:
         return _get_capital()
     try:
-        import httpx
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             r = await client.get(f"https://data-api.polymarket.com/value?user={relayer_addr}")
             if r.status_code == 200:
@@ -208,17 +199,44 @@ async def _get_balance() -> float:
     return _get_capital()
 
 
+def _conf_label(confidence: float) -> str:
+    if confidence >= 0.80:
+        return "HIGH"
+    if confidence >= 0.60:
+        return "MED"
+    return "LOW"
+
+
+def _detect_category(question: str) -> str:
+    q = question.lower()
+    if any(k in q for k in ("nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball",
+                             "baseball", "hockey", "tennis", "golf", "ufc", "sport", "league",
+                             "championship", "super bowl", "world cup", "playoff")):
+        return "SPORT"
+    if any(k in q for k in ("trump", "biden", "election", "president", "senate", "congress",
+                             "democrat", "republican", "vote", "political", "harris", "governor")):
+        return "POLITICS"
+    if any(k in q for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana",
+                             "bnb", "xrp", "doge", "token", "blockchain", "defi", "nft")):
+        return "CRYPTO"
+    if any(k in q for k in ("fed", "rate", "gdp", "inflation", "recession", "cpi", "fomc",
+                             "economy", "macro", "interest", "powell")):
+        return "MACRO"
+    return "MARKET"
+
+
 async def _get_start_text() -> str:
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-    mode = "LIVE" if not sim else "SIM"
+    mode = "SIM" if sim else "LIVE"
+    dot = "🔵" if sim else "🟢"
     n = _get_market_count()
     balance = await _get_balance()
     return (
-        f"⚡ <b>NEXUS CAPITAL</b>\n"
+        f"<b>⚡ NEXUS BET</b>\n"
         f"<i>Prediction Market Intelligence</i>\n"
-        f"{LINE}\n"
-        f"● {mode}  📡 {n} marchés  💰 ${balance:,.2f}\n"
-        f"{LINE}"
+        f"{L}\n"
+        f"{dot} {mode} · {n} marchés · ${balance:,.2f}\n"
+        f"{L}"
     )
 
 
@@ -230,84 +248,74 @@ async def _get_scan_text() -> str:
         threshold = getattr(settings, "MIN_EDGE_THRESHOLD", 5.0) or 5.0
         last_scan_ts = 0
         p_canonical = Path(PENDING_SIGNALS_PATH)
-        log.info("Scan handler reading from: %s", os.path.abspath(str(p_canonical)))
         try:
             if p_canonical.exists():
                 data = json.loads(p_canonical.read_text(encoding="utf-8"))
-                log.info("Scan file read: signals=%d keys=%s", len(data.get("signals", [])), list(data.keys())[:6])
                 ts = data.get("last_scan_ts") or data.get("last_updated")
                 if ts:
-                    if isinstance(ts, (int, float)):
-                        last_scan_ts = int(ts)
-                    elif isinstance(ts, str):
-                        try:
-                            last_scan_ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
-                        except Exception:
-                            pass
-            else:
-                cwd_path = Path("paperclip_pending_signals.json").resolve()
-                log.info("Canonical file missing at %s, cwd path: %s", p_canonical, cwd_path)
-                if cwd_path.exists() and cwd_path != p_canonical:
-                    log.info("Found file at cwd path instead - path mismatch!")
-        except Exception as e:
-            log.info("Scan file read error: %s", e)
+                    last_scan_ts = int(ts) if isinstance(ts, (int, float)) else 0
+        except Exception:
+            pass
         mins = "—"
         if last_scan_ts:
             delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
-            mins = f"{delta // 60}min ago" if delta >= 60 else "<1min ago"
+            mins = f"{delta // 60}m ago" if delta >= 60 else "&lt;1m ago"
 
         signals = get_pending_signals()
         if not signals:
-            cwd_path = Path("paperclip_pending_signals.json").resolve()
-            for try_path in [p_canonical, cwd_path]:
+            for try_path in [p_canonical, Path("paperclip_pending_signals.json").resolve()]:
                 if try_path.exists():
                     try:
-                        data = json.loads(try_path.read_text(encoding="utf-8"))
-                        signals = data.get("signals", []) if isinstance(data, dict) else []
+                        d = json.loads(try_path.read_text(encoding="utf-8"))
+                        signals = d.get("signals", []) if isinstance(d, dict) else []
                         if signals:
-                            log.info("Fallback read from %s: %d signals", try_path, len(signals))
-                        break
-                    except Exception as e:
-                        log.info("Fallback read error %s: %s", try_path, e)
+                            break
+                    except Exception:
+                        pass
+
         n_assets = _get_market_count()
         n_signals = len(signals)
 
-        header = (
-            f"🔍 <b>MARKET SCANNER</b>\n"
-            f"{LINE}\n"
-            f"📡 Assets suivis   : {n_assets}\n"
-            f"🟢 Signaux actifs  : {n_signals}\n"
-            f"⚡ Min Edge requis : {threshold}%\n"
-            f"🕐 Dernier scan    : {mins}\n"
-            f"{LINE}\n"
-        )
         if not signals:
             return (
-                header
-                + f"🔍 Scanner actif — {n_assets} marchés surveillés\n"
-                + f"Aucun signal ≥{threshold}% pour l'instant\n"
-                + f"Prochain scan dans 30s\n\n{LINE}"
+                f"<b>📡 MARKET SCANNER</b>\n{L}\n"
+                f"<code>MARCHÉS   {n_assets}\n"
+                f"SIGNAUX   0\n"
+                f"EDGE MIN  {threshold}%\n"
+                f"SCAN      {mins}</code>\n"
+                f"{L}\n"
+                f"<i>Aucun signal ≥{threshold}% · prochain scan dans 30s</i>"
             )
 
-        lines = [header + "TOP SIGNALS :\n"]
-        mt_map = {"binary": "BINARY", "multi_outcome": "MULTI", "scalar": "SCALAR"}
+        lines = [
+            f"<b>📡 MARKET SCANNER</b>\n{L}\n"
+            f"<code>MARCHÉS   {n_assets}\n"
+            f"SIGNAUX   {n_signals}\n"
+            f"EDGE MIN  {threshold}%\n"
+            f"SCAN      {mins}</code>\n"
+            f"{L}"
+        ]
         for s in signals[:5]:
-            q = (s.get("question") or str(s.get("market_id", "")))[:40]
-            mt = mt_map.get(str(s.get("market_type", "binary")).lower(), "BINARY")
-            rec = s.get("recommended_outcome") or s.get("side", "?")
-            price = float(s.get("polymarket_price") or s.get("price") or 0.5)
+            q = (s.get("question") or str(s.get("market_id", "")))[:42]
+            side = s.get("recommended_outcome") or s.get("side", "?")
+            price = float(s.get("polymarket_price") or 0.5)
             edge = float(s.get("edge_pct", 0))
-            emoji = "⚡" if s.get("signal_strength") == "STRONG_BUY" else "🟢"
-            lines.append(f"{emoji} [{mt}] {q}\n→ {rec} @ ${price:.2f} | edge: {edge:.1f}%")
-        lines.append(f"\n{LINE}")
+            conf = float(s.get("confidence", 0))
+            tag = "⚡ STRONG BUY" if s.get("signal_strength") == "STRONG_BUY" else "🟢 BUY"
+            cat = _detect_category(q)
+            lines.append(
+                f"\n{tag} · {cat}\n"
+                f"<b>{q}</b>\n"
+                f"<code>{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}</code>"
+            )
+        lines.append(f"\n{L}")
         return "\n".join(lines)
     except Exception as e:
         log.exception("Scan failed: %s", e)
-        return f"🔍 <b>MARKET SCANNER</b>\n{LINE}\n❌ Erreur: {e}"
+        return f"<b>📡 MARKET SCANNER</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 async def _get_portfolio_text() -> str:
-    header = f"💼 <b>PORTFOLIO</b>\n{LINE}\n"
     try:
         balance = await _get_balance()
         from monitoring.trade_logger import trade_logger
@@ -318,23 +326,23 @@ async def _get_portfolio_text() -> str:
         pnl_today = sum(float(t.get("pnl") or 0) for t in trades if str(t.get("created_at", ""))[:10] == today)
         cap = _get_capital() or 1
         pnl_pct = (pnl_today / cap * 100) if cap > 0 else 0
-
         wins = sum(1 for t in trades if float(t.get("pnl") or 0) > 0)
         total_closed = sum(1 for t in trades if t.get("status") in ("FILLED", "CLOSED"))
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
-
         pnl_sign = "+" if pnl_today >= 0 else ""
+        pnl_icon = "▲" if pnl_today >= 0 else "▼"
+
         return (
-            f"{header}"
-            f"💰 Balance      ${balance:,.2f} USDC\n"
-            f"📈 P&amp;L Today    {pnl_sign}${pnl_today:,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
-            f"🎯 Positions    {len(positions)} ouvertes\n"
-            f"✅ Win Rate     {win_rate:.0f}% ({wins} trades)\n"
-            f"{LINE}"
+            f"<b>💰 PORTFOLIO</b>\n{L}\n"
+            f"<code>BALANCE   ${balance:,.2f} USDC\n"
+            f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
+            f"POSITIONS {len(positions)} ouvertes\n"
+            f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
+            f"{L}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
-        return f"{header}❌ Erreur: {e}"
+        return f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
@@ -376,15 +384,17 @@ async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
 
 async def _get_positions_detail(context: ContextTypes.DEFAULT_TYPE | None = None
                                 ) -> tuple[str, InlineKeyboardMarkup, list[dict]]:
-    """Retourne (texte, clavier, positions_list) pour le menu Positions."""
     try:
         from monitoring.trade_logger import trade_logger
         from data.polymarket_client import PolymarketClient
         positions = trade_logger.get_positions()
         if not positions:
-            return f"📋 <b>POSITIONS OUVERTES</b>\n{LINE}\nAucune position ouverte.\n{LINE}", _positions_keyboard(), []
+            return (
+                f"<b>📋 POSITIONS</b>\n{L}\n<i>Aucune position ouverte.</i>\n{L}",
+                _positions_keyboard(), []
+            )
 
-        lines = [f"📋 <b>POSITIONS OUVERTES</b>\n{LINE}\n"]
+        lines = [f"<b>📋 POSITIONS OUVERTES</b>\n{L}\n"]
         pos_list: list[dict] = []
         pm = PolymarketClient()
         for p in positions[:10]:
@@ -396,27 +406,25 @@ async def _get_positions_detail(context: ContextTypes.DEFAULT_TYPE | None = None
             current_price = await pm.get_mid_price(mid, outcome) if mid else None
             current = (current_price * size) if current_price else (entry * size)
             pnl_pct = ((current - entry * size) / (entry * size) * 100) if entry > 0 and size > 0 else 0
-            pnl_sign = "+" if pnl_pct >= 0 else ""
-            q_show = f"{question}..." if len(question) >= 45 else question
+            pnl_icon = "▲" if pnl_pct >= 0 else "▼"
+            q_show = question[:42]
             lines.append(
-                f"🎯 {q_show}\n"
-                f"Side: {outcome} | Entrée: ${entry * size:,.2f} | Size: ${size * entry:,.2f}\n"
-                f"Valeur: ${current:,.2f} | P&amp;L: {pnl_sign}{pnl_pct:.1f}%\n"
-                f"Résolution: dans {days}j"
+                f"<b>{q_show}</b>\n"
+                f"<code>{outcome:<4} ${entry * size:,.2f} → ${current:,.2f}  {pnl_icon}{abs(pnl_pct):.1f}%  J-{days}</code>"
             )
             pos_list.append({"market_id": mid, "outcome": outcome, "size": size, "avg_price": entry, "question": question})
         await pm.close()
-        lines.append(f"\n{LINE}")
+        lines.append(f"\n{L}")
         kb = InlineKeyboardMarkup([
-            *[[InlineKeyboardButton("🔴 Exit", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
-            [InlineKeyboardButton("🔙 Portfolio", callback_data="btn_portfolio")],
+            *[[InlineKeyboardButton(f"✕ EXIT #{i+1}", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
+            [InlineKeyboardButton("← PORTFOLIO", callback_data="btn_portfolio")],
         ])
         if context:
             context.user_data["positions_list"] = pos_list
         return "\n".join(lines), kb, pos_list
     except Exception as e:
         log.exception("Positions failed: %s", e)
-        return f"📋 <b>POSITIONS OUVERTES</b>\n{LINE}\n❌ {e}", _positions_keyboard(), []
+        return f"<b>📋 POSITIONS</b>\n{L}\n<code>ERREUR — {e}</code>", _positions_keyboard(), []
 
 
 async def _get_history_text() -> str:
@@ -424,138 +432,111 @@ async def _get_history_text() -> str:
         from monitoring.trade_logger import trade_logger
         trades = trade_logger.get_recent_trades(limit=10)
         if not trades:
-            return f"📜 <b>HISTORIQUE</b>\n{LINE}\nAucun trade enregistré.\n{LINE}"
-        lines = [f"📜 <b>HISTORIQUE</b> (derniers {len(trades)})\n{LINE}\n"]
+            return f"<b>📜 HISTORIQUE</b>\n{L}\n<i>Aucun trade enregistré.</i>\n{L}"
+        lines = [f"<b>📜 HISTORIQUE</b> · {len(trades)} trades\n{L}\n"]
         for t in trades:
             pnl = float(t.get("pnl") or 0)
-            icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+            icon = "▲" if pnl > 0 else "▼" if pnl < 0 else "·"
             side = t.get("outcome", "?")
-            lines.append(f"{icon} {side} │ PnL ${pnl:+,.2f} │ {str(t.get('created_at',''))[:10]}")
-        lines.append(f"\n{LINE}")
+            date = str(t.get("created_at", ""))[:10]
+            lines.append(f"<code>{icon} {side:<4} ${pnl:+,.2f}   {date}</code>")
+        lines.append(f"\n{L}")
         return "\n".join(lines)
     except Exception as e:
-        return f"📜 <b>HISTORIQUE</b>\n{LINE}\n❌ {e}"
+        return f"<b>📜 HISTORIQUE</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 async def _get_agents_text() -> str:
-    header = f"🤖 <b>AI AGENTS — SWARM NEXUS</b>\n{LINE}\n"
     try:
         p = Path(__file__).resolve().parent.parent / "ai_debates_log.json"
         if not p.exists():
             return (
-                f"{header}"
-                f"⏳ En veille\n"
-                f"Activation automatique sur edge ≥15%\n"
-                f"{LINE}"
+                f"<b>🧠 AI SWARM · NEXUS</b>\n{L}\n"
+                f"<code>STATUS    VEILLE\n"
+                f"TRIGGER   EDGE ≥ 15%\n"
+                f"AGENTS    20</code>\n"
+                f"{L}\n"
+                f"<i>Le swarm s'active automatiquement sur signal fort.</i>"
             )
         data = json.loads(p.read_text(encoding="utf-8"))
         latest = data.get("latest_swarm", {})
         debates = data.get("debates", [])
 
-        if not latest and not debates:
-            return (
-                f"{header}"
-                f"⏳ En veille\n"
-                f"Activation automatique sur edge ≥15%\n"
-                f"{LINE}"
-            )
-
-        lines = [header]
-        if debates:
-            role_emoji = {"Quant Analyst": "📊", "Risk Manager": "⚠️", "Head Analyst": "🎯"}
-            for d in debates[-3:]:
-                role = str(d.get("role") or d.get("agent", "Agent"))[:20]
-                verdict = str(d.get("message") or d.get("content", d.get("verdict", "—")))[:80]
-                emoji = role_emoji.get(role, "💬")
-                lines.append(f"{emoji} {role}   → {verdict}")
-        else:
-            for r in ["Quant Analyst", "Risk Manager", "Head Analyst"]:
-                verdict = str(latest.get("verdict", "—"))[:60]
-                lines.append(f"📊 {r}   → {verdict}")
         approved = latest.get("approved", False)
-        consensus = "APPROVED ✅" if approved else "REJECTED ❌"
-        lines.append(f"\nConsensus : {consensus}")
-        lines.append(f"\n{LINE}")
-        return "\n".join(lines)
-    except Exception as e:
-        return f"{header}❌ {e}"
+        pct_yes = latest.get("pct_yes", 0)
+        market_id = (latest.get("market_id") or "—")[:20]
+        verdict_icon = "✅ APPROVED" if approved else "❌ REJECTED"
 
-
-async def _get_btc_text() -> str:
-    header = f"📈 <b>BTC / CRYPTO MARKETS</b>\n{LINE}\n"
-    try:
-        from data.polymarket_client import PolymarketClient
-        pm = PolymarketClient()
-        markets = await pm.get_markets(limit=100)
-        await pm.close()
-        btc = [
-            m for m in markets
-            if any(kw in (m.get("question") or "").lower() for kw in ("btc", "bitcoin", "crypto", "ethereum", "eth"))
+        lines = [
+            f"<b>🧠 AI SWARM · NEXUS</b>\n{L}\n"
+            f"<code>CONSENSUS  {verdict_icon}\n"
+            f"SCORE      {pct_yes:.0f}% YES\n"
+            f"MARCHÉ     {market_id}</code>\n"
+            f"{L}"
         ]
-        if not btc:
-            return f"{header}Aucun marché crypto actif.\n{LINE}"
-        lines = [f"{header}"]
-        for m in btc[:8]:
-            q = (m.get("question") or "")[:50]
-            prices = m.get("outcomePrices") or "[]"
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except Exception:
-                    prices = []
-            yes_p = float(prices[0]) * 100 if isinstance(prices, list) and prices else 0
-            lines.append(f"▸ <b>{yes_p:.0f}%</b> YES │ <i>{q}</i>")
-        if len(btc) > 8:
-            lines.append(f"\n+{len(btc)-8} autres marchés")
-        lines.append(f"\n{LINE}")
+
+        role_map = {"Quant Analyst": "📊", "Risk Manager": "⚠️", "Head Analyst": "🎯"}
+        shown = debates[-4:] if debates else []
+        for d in shown:
+            role = str(d.get("role") or d.get("agent", "Agent"))[:22]
+            vote = str(d.get("vote", "")).upper()
+            content = str(d.get("message") or d.get("content", "—"))[:70]
+            emoji = role_map.get(role, "💬")
+            vote_tag = " ✅" if vote == "YES" else " ❌" if vote == "NO" else ""
+            lines.append(f"\n{emoji} <b>{role}</b>{vote_tag}\n<i>{content}</i>")
+
+        lines.append(f"\n{L}")
         return "\n".join(lines)
     except Exception as e:
-        return f"{header}❌ {e}"
+        return f"<b>🧠 AI SWARM</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 async def _get_whales_text() -> str:
-    header = f"🐳 <b>WHALE TRACKER</b>\n{LINE}\n"
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-            r = await client.get("https://data-api.polymarket.com/trades", params={"size": 20})
-            if r.status_code != 200:
-                return f"{header}❌ API indisponible\n{LINE}"
-            trades = r.json()
+            r = await client.get("https://data-api.polymarket.com/trades", params={"size": 30})
+        if r.status_code != 200:
+            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>API INDISPONIBLE</code>"
+        trades = r.json()
         if not isinstance(trades, list):
-            return f"{header}Aucun trade récent.\n{LINE}"
+            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade récent.</i>"
+
         whales = []
         for t in trades:
             size = float(t.get("size") or 0)
             price = float(t.get("price") or 0)
-            amount_usd = size * price
-            if amount_usd >= 1000:
+            amt = size * price
+            if amt >= 1000:
                 whales.append({
-                    "title": (t.get("title") or t.get("slug", "?"))[:45],
-                    "side": t.get("side", "?"),
-                    "outcome": t.get("outcome", "?"),
-                    "amount": amount_usd,
+                    "title": (t.get("title") or t.get("slug", "?"))[:40],
+                    "side": str(t.get("side", "?")).upper(),
+                    "outcome": str(t.get("outcome", "?")).upper(),
+                    "amount": amt,
                 })
-        whales = whales[:5]
+        whales = sorted(whales, key=lambda x: -x["amount"])[:6]
         if not whales:
-            return f"{header}Aucun trade &gt;$1000 récent.\n{LINE}"
-        lines = [header]
+            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$1 000 récent.</i>\n{L}"
+
+        lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
         for w in whales:
-            lines.append(f"▸ <b>${w['amount']:,.0f}</b> {w['side']} {w['outcome']}\n  <i>{w['title']}</i>")
-        lines.append(f"\n{LINE}")
+            lines.append(
+                f"<b>${w['amount']:,.0f}</b>  {w['outcome']}\n"
+                f"<code>{w['title']}</code>"
+            )
+        lines.append(f"\n{L}")
         return "\n".join(lines)
     except Exception as e:
         log.exception("Whales failed: %s", e)
-        return f"{header}❌ {e}\n{LINE}"
+        return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Fiche Market Object pour /market <slug_ou_question>. Cache 60s, timeout 5s."""
     if not query or not query.strip():
         return (
-            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
-            f"Usage: /market &lt;slug ou question&gt;\n"
-            f"Ex: /market trump-election\n"
-            f"Ex: /market fed-decision-october\n{LINE}",
+            f"<b>🎯 MARKET INTEL</b>\n{L}\n"
+            f"<code>Usage: /market &lt;slug ou question&gt;\n"
+            f"Ex:    /market trump-election\n"
+            f"Ex:    /market fed-decision-october</code>\n{L}",
             _back_keyboard(),
         )
     query = query.strip()
@@ -573,8 +554,8 @@ async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
                 r2 = await client.get(f"{api_url}/api/market/search", params={"q": query})
                 if r2.status_code != 200:
                     return (
-                        f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
-                        f"❌ Marché non trouvé: {query[:40]}\n{LINE}",
+                        f"<b>🎯 MARKET INTEL</b>\n{L}\n"
+                        f"<code>NOT FOUND — {query[:40]}</code>\n{L}",
                         _back_keyboard(),
                     )
                 m = r2.json()
@@ -583,14 +564,12 @@ async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
     except Exception as e:
         log.exception("Market fetch: %s", e)
         return (
-            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
-            f"❌ Erreur API: {e}\n{LINE}",
+            f"<b>🎯 MARKET INTEL</b>\n{L}\n<code>ERREUR — {e}</code>\n{L}",
             _back_keyboard(),
         )
     if not m or m.get("error"):
         return (
-            f"🎯 <b>MARKET INTELLIGENCE</b>\n{LINE}\n"
-            f"❌ Marché non trouvé\n{LINE}",
+            f"<b>🎯 MARKET INTEL</b>\n{L}\n<code>NOT FOUND</code>\n{L}",
             _back_keyboard(),
         )
     _market_cache[cache_key] = (m, now)
@@ -602,34 +581,37 @@ async def _get_market_text(query: str) -> tuple[str, InlineKeyboardMarkup]:
 
 def _format_market_text(m: dict) -> tuple[str, InlineKeyboardMarkup]:
     yes_pct = int((m.get("yes_price") or 0.5) * 100)
-    no_pct = int((m.get("no_price") or 0.5) * 100)
-    vol = (m.get("volume_24h") or 0)
+    no_pct = 100 - yes_pct
+    vol = m.get("volume_24h") or 0
     whale = m.get("whale_activity") or {}
-    smart = m.get("smart_money_signal", "neutral")
-    smart_emoji = "🟢" if smart == "bullish" else "🔴" if smart == "bearish" else "⚪"
+    smart = str(m.get("smart_money_signal", "neutral")).upper()
     edge = m.get("nexus_edge")
     score = m.get("nexus_score")
     edge_str = f"{edge:.1f}%" if edge is not None else "—"
     score_str = f"{score:.0f}/100" if score is not None else "—"
+    question = (m.get("question") or "")[:72]
+    cat = _detect_category(question)
     poly_slug = m.get("slug") or ""
     cid = m.get("market_id", "")
-    if poly_slug and not str(poly_slug).startswith("0x"):
-        poly_url = f"https://polymarket.com/event/{poly_slug}"
-    else:
-        poly_url = f"https://polymarket.com/market/{cid}" if cid else "https://polymarket.com"
+    poly_url = (
+        f"https://polymarket.com/event/{poly_slug}"
+        if poly_slug and not str(poly_slug).startswith("0x")
+        else f"https://polymarket.com/market/{cid}" if cid else "https://polymarket.com"
+    )
     text = (
-        f"🎯 <b>MARKET INTELLIGENCE</b>\n"
-        f"{LINE}\n"
-        f"{(m.get('question') or '')[:80]}\n"
-        f"YES: {yes_pct}% | NO: {no_pct}\n"
-        f"Volume 24h: ${vol:,.0f}\n"
-        f"Smart money: {smart_emoji} {smart.upper()} ({whale.get('large_trades_count', 0)} gros trades)\n"
-        f"Edge Nexus: {edge_str} | Score: {score_str}\n"
-        f"{LINE}"
+        f"<b>🎯 MARKET INTEL · {cat}</b>\n{L}\n"
+        f"<b>{question}</b>\n"
+        f"<code>YES     {yes_pct}%\n"
+        f"NO      {no_pct}%\n"
+        f"VOL 24H ${vol:,.0f}\n"
+        f"SMART $ {smart} ({whale.get('large_trades_count', 0)} trades)\n"
+        f"EDGE    {edge_str}\n"
+        f"SCORE   {score_str}</code>\n"
+        f"{L}"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 Voir sur Polymarket", url=poly_url)],
-        [InlineKeyboardButton("🔙 Menu", callback_data="menu_back")],
+        [InlineKeyboardButton("↗ POLYMARKET", url=poly_url)],
+        [InlineKeyboardButton("← MENU", callback_data="menu_back")],
     ])
     return text, kb
 
@@ -650,18 +632,17 @@ def _get_settings_text() -> str:
         drawdown = os.getenv("AUTO_TRADE_DAILY_DRAWDOWN_LIMIT", "20")
         confirm = os.getenv("AUTO_TRADE_CONFIRM_BUY", "true").lower() in ("true", "1", "yes")
         return (
-            f"⚙️ <b>SETTINGS</b>\n"
-            f"{LINE}\n"
-            f"💰 Capital      <b>${cap:,.0f}</b>\n"
-            f"🔁 Simulation   <b>{'ON' if sim else 'OFF'}</b>\n"
-            f"🤖 Auto-Trade   <b>{'ON' if at else 'OFF'}</b>\n"
-            f"📊 Max Pos      <b>{max_pos}</b> │ Drawdown <b>{drawdown}%</b>\n"
-            f"✅ Confirm BUY  <b>{'YES' if confirm else 'NO'}</b>\n"
-            f"📐 Kelly        <b>{kelly:.1f}%</b> │ Edge min <b>{min_edge:.1f}%</b>\n"
-            f"{LINE}"
+            f"<b>⚙️ SETTINGS</b>\n{L}\n"
+            f"<code>CAPITAL     ${cap:,.0f}\n"
+            f"SIMULATION  {'ON' if sim else 'OFF'}\n"
+            f"AUTO-TRADE  {'ON' if at else 'OFF'}\n"
+            f"MAX POS     {max_pos}  DRAWDOWN {drawdown}%\n"
+            f"CONFIRM BUY {'YES' if confirm else 'NO'}\n"
+            f"KELLY       {kelly:.1f}%  EDGE MIN {min_edge:.1f}%</code>\n"
+            f"{L}"
         )
     except Exception as e:
-        return f"⚙️ <b>SETTINGS</b>\n{LINE}\n❌ {e}"
+        return f"<b>⚙️ SETTINGS</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
 # ══════════════════════════════════════════════
@@ -683,7 +664,7 @@ async def _ack_then_reply(update: Update, get_content, fallback: str, default_kb
         reply_markup = default_kb
     except Exception as e:
         log.exception("Handler error: %s", e)
-        content = f"{fallback}\n\n⚠️ Délai ou erreur — réessayez."
+        content = fallback
         reply_markup = default_kb
     if ack:
         try:
@@ -703,33 +684,72 @@ async def _safe_reply(update: Update, text: str, reply_markup=None, parse_mode="
         log.debug("safe_reply: %s", e)
 
 
+async def _register_referred_user(chat_id: str, ref_code: str) -> None:
+    """Enregistre un nouvel utilisateur avec son parrain dans Supabase."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            # Find referrer
+            r = await client.get(
+                f"{url}/rest/v1/users",
+                params={"referral_code": f"eq.{ref_code}", "select": "id"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            referrer_id = r.json()[0]["id"] if r.status_code == 200 and r.json() else None
+            # Upsert new user with referred_by
+            payload: dict = {"telegram_chat_id": chat_id, "is_active": False, "plan": "free"}
+            if referrer_id:
+                payload["referred_by"] = referrer_id
+            await client.post(
+                f"{url}/rest/v1/users",
+                headers={**headers, "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                json=payload,
+            )
+            # Increment referrer's referred_count
+            if referrer_id:
+                await client.post(
+                    f"{url}/rest/v1/rpc/increment_referred_count",
+                    headers=headers,
+                    json={"user_id": referrer_id},
+                )
+    except Exception as e:
+        log.debug("_register_referred_user: %s", e)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reset user state + clear pending callbacks on /start."""
+    """Reset user state + clear pending callbacks on /start. Handles deep-link referral."""
     try:
         context.user_data.clear()
+        # Handle deep-link: /start ref_XXXXXXXX
+        args = context.args or []
+        if args and str(args[0]).startswith("ref_"):
+            ref_code = str(args[0])[4:].upper()
+            chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+            asyncio.create_task(_register_referred_user(chat_id, ref_code))
         text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
     except Exception as e:
         log.exception("cmd_start: %s", e)
-        await _safe_reply(update, f"⚡ <b>NEXUS</b>\n{LINE}\nChargement… Réessayez.", _main_keyboard())
+        await _safe_reply(update, f"<b>⚡ NEXUS BET</b>\n{L}\n<code>CHARGEMENT...</code>", _main_keyboard())
 
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await _ack_then_reply(update, _get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", _portfolio_keyboard())
+        await _ack_then_reply(update, _get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", _portfolio_keyboard())
     except Exception as e:
         log.exception("cmd_portfolio: %s", e)
-        await _safe_reply(update, f"💼 <b>PORTFOLIO</b>\n{LINE}\nErreur. Réessayez.", _portfolio_keyboard())
+        await _safe_reply(update, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — réessayez</code>", _portfolio_keyboard())
 
 
 def _scan_fallback() -> str:
-    """Fallback when scan fails — never leave user with nothing."""
     n = _get_market_count()
     return (
-        f"🔍 <b>SCANNER</b>\n{LINE}\n"
-        f"🔍 Scanner actif — {n} marchés surveillés\n"
-        f"Aucun signal ≥5% pour l'instant\n"
-        f"Prochain scan dans 30s\n\n{LINE}"
+        f"<b>📡 MARKET SCANNER</b>\n{L}\n"
+        f"<code>MARCHÉS   {n}\nSIGNAUX   0\nSTATUS    EN ATTENTE</code>\n{L}"
     )
 
 
@@ -743,26 +763,76 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await _ack_then_reply(update, _get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+        await _ack_then_reply(update, _get_agents_text, f"<b>🧠 AI SWARM</b>\n{L}\n<code>CHARGEMENT...</code>", _back_keyboard())
     except Exception as e:
         log.exception("cmd_agents: %s", e)
-        await _safe_reply(update, f"🤖 <b>AI AGENTS</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
+        await _safe_reply(update, f"<b>🧠 AI SWARM</b>\n{L}\n<code>ERREUR — réessayez</code>", _back_keyboard())
 
 
 async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await _ack_then_reply(update, _get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", _back_keyboard())
+        await _ack_then_reply(update, _get_whales_text, f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>CHARGEMENT...</code>", _back_keyboard())
     except Exception as e:
         log.exception("cmd_whales: %s", e)
-        await _safe_reply(update, f"🐳 <b>WHALES</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
+        await _safe_reply(update, f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>ERREUR — réessayez</code>", _back_keyboard())
+
+
+async def _get_referral_text(chat_id: str, bot_username: str = "") -> str:
+    """Récupère ou génère le code referral de l'utilisateur."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    code = ""
+    referred_count = 0
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+                r = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={"telegram_chat_id": f"eq.{chat_id}", "select": "referral_code,referred_count"},
+                    headers=headers,
+                )
+                if r.status_code == 200 and r.json():
+                    row = r.json()[0]
+                    code = row.get("referral_code") or ""
+                    referred_count = int(row.get("referred_count") or 0)
+                if not code:
+                    import uuid as _uuid
+                    code = _uuid.uuid4().hex[:8].upper()
+                    await client.patch(
+                        f"{url}/rest/v1/users",
+                        params={"telegram_chat_id": f"eq.{chat_id}"},
+                        headers={**headers, "Content-Type": "application/json", "Prefer": "return=minimal"},
+                        json={"referral_code": code},
+                    )
+        except Exception as e:
+            log.debug("referral fetch: %s", e)
+    if not code:
+        import hashlib as _hl
+        code = _hl.md5(chat_id.encode()).hexdigest()[:8].upper()
+    bot_name = bot_username or os.getenv("TELEGRAM_BOT_USERNAME", "NexusCapitalBot")
+    ref_link = f"https://t.me/{bot_name}?start=ref_{code}"
+    return (
+        f"🤝 <b>REFERRAL</b>\n{LINE}\n"
+        f"Ton code : <code>{code}</code>\n\n"
+        f"👥 Filleuls actifs : <b>{referred_count}</b>\n\n"
+        f"🔗 Lien :\n<code>{ref_link}</code>\n\n"
+        f"<i>Partage ce lien — chaque abonné via ton lien te rapporte une commission.</i>\n{LINE}"
+    )
 
 
 async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        f"🤝 <b>REFERRAL</b>\n{LINE}\n<i>Programme de parrainage à venir.</i>\n{LINE}",
-        parse_mode="HTML",
-        reply_markup=_back_keyboard(),
-    )
+    chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+    bot_username = ""
+    try:
+        bot_username = (await context.bot.get_me()).username or ""
+    except Exception:
+        pass
+    try:
+        text = await asyncio.wait_for(_get_referral_text(chat_id, bot_username), timeout=6.0)
+    except Exception:
+        text = f"<b>👥 REFERRAL</b>\n{L}\n<code>ERREUR — réessayez</code>"
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_back_keyboard())
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -890,17 +960,16 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if not is_active:
         text = (
-            f"🔐 <b>ACCÈS DASHBOARD</b>\n{LINE}\n"
-            f"Votre lien :\n<code>{link}</code>\n\n"
-            f"⚠️ <b>Accès restreint</b>\n"
-            f"Votre compte n'est pas encore actif.\n"
-            f"S'abonnez pour débloquer le dashboard complet.\n{LINE}"
+            f"<b>🔐 ACCÈS DASHBOARD</b>\n{L}\n"
+            f"<code>{link}</code>\n\n"
+            f"<b>⚠️ COMPTE NON ACTIF</b>\n"
+            f"<i>Contacte l'admin ou utilise un lien referral pour activer ton accès.</i>\n{L}"
         )
     else:
         text = (
-            f"🔐 <b>Votre dashboard privé</b>\n{LINE}\n"
-            f"{link}\n\n"
-            f"<i>Ce lien est personnel — ne le partagez pas.</i>\n{LINE}"
+            f"<b>🔐 DASHBOARD PRIVÉ</b>\n{L}\n"
+            f"<code>{link}</code>\n\n"
+            f"<i>Lien personnel — ne pas partager.</i>\n{L}"
         )
     kb = _back_keyboard()
     if ack:
@@ -912,21 +981,199 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
+async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin only: /activate <chat_id> [plan] — active un utilisateur dans Supabase."""
+    caller = update.effective_user.id if update.effective_user else 0
+    if not _is_admin(caller):
+        await _safe_reply(update, "⛔ Réservé aux admins.")
+        return
+    args = context.args or []
+    if not args:
+        await _safe_reply(update, "Usage: /activate <chat_id> [free|premium|pro]")
+        return
+    target_chat_id = args[0].strip()
+    plan = args[1].strip() if len(args) > 1 else "premium"
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        await _safe_reply(update, "❌ Supabase non configuré.")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            headers = {
+                "apikey": key, "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
+            }
+            # Check if user already exists
+            r_check = await client.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{target_chat_id}", "select": "id"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            user_exists = r_check.status_code == 200 and bool(r_check.json())
+            if user_exists:
+                # PATCH existing user — no access_token change
+                r = await client.patch(
+                    f"{url}/rest/v1/users",
+                    params={"telegram_chat_id": f"eq.{target_chat_id}"},
+                    headers=headers,
+                    json={"is_active": True, "plan": plan},
+                )
+            else:
+                # INSERT new user — access_token NOT NULL required
+                r = await client.post(
+                    f"{url}/rest/v1/users",
+                    headers=headers,
+                    json={
+                        "telegram_chat_id": target_chat_id,
+                        "access_token": uuid.uuid4().hex[:8].lower(),
+                        "is_active": True,
+                        "plan": plan,
+                    },
+                )
+            ok = r.status_code in (200, 201, 204)
+        if ok:
+            await _safe_reply(update, f"✅ Utilisateur <code>{target_chat_id}</code> activé (plan: {plan})")
+            # Notify the user
+            try:
+                from config.settings import SETTINGS as _SETTINGS
+                t_cfg = _SETTINGS.get("telegram")
+                token = getattr(t_cfg, "bot_token", None) or os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+                if token:
+                    async with httpx.AsyncClient(timeout=5.0) as c:
+                        await c.post(
+                            f"https://api.telegram.org/bot{token}/sendMessage",
+                            json={
+                                "chat_id": target_chat_id,
+                                "text": (
+                                    f"✅ <b>Accès activé !</b>\n{LINE}\n"
+                                    f"Ton abonnement <b>{plan.upper()}</b> est actif.\n"
+                                    f"Utilise /start pour accéder à tous les signaux.\n{LINE}"
+                                ),
+                                "parse_mode": "HTML",
+                            },
+                        )
+            except Exception:
+                pass
+        else:
+            await _safe_reply(update, f"<b>❌ ERREUR ACTIVATION</b>\n{L}\n<code>{r.status_code}</code>")
+    except Exception as e:
+        log.exception("cmd_activate: %s", e)
+        await _safe_reply(update, f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>")
+
+
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Génère un token d'accès dashboard et envoie le lien à l'utilisateur."""
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    if not chat_id:
+        return
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-terminal.vercel.app")
+
+    if not url or not key:
+        await _safe_reply(update, f"<b>📊 DASHBOARD</b>\n{L}\n<i>Supabase non configuré.</i>")
+        return
+
+    try:
+        token = uuid.uuid4().hex[:16]
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            headers = {
+                "apikey": key, "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
+            }
+            # Check user is active
+            r = await client.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "is_active,plan"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            rows = r.json() if r.status_code == 200 else []
+            if not rows or not rows[0].get("is_active"):
+                await _safe_reply(
+                    update,
+                    f"<b>📊 DASHBOARD</b>\n{L}\n"
+                    "⛔ Ton abonnement n'est pas actif.\n"
+                    "Contacte l'admin pour activer ton accès.",
+                )
+                return
+            # Store dashboard_token
+            await client.patch(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}"},
+                headers=headers,
+                json={"dashboard_token": token},
+            )
+        link = f"{dashboard_url}?token={token}"
+        plan = rows[0].get("plan", "premium").upper()
+        msg = (
+            f"<b>📊 DASHBOARD NEXUS</b>\n{L}\n"
+            f"Plan <b>{plan}</b> · Lien valide 30 jours\n\n"
+            f"<code>{link}</code>\n\n"
+            f"{L}\n"
+            f"<i>Ne partage pas ce lien — il est lié à ton compte.</i>"
+        )
+        await _safe_reply(update, msg)
+    except Exception as e:
+        log.warning("cmd_dashboard: %s", e)
+        await _safe_reply(update, f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>")
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Status du système : scanner, signaux, abonnés."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+
+    signals_today = 0
+    last_signal = "—"
+    active_users = 0
+
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                h = {"apikey": key, "Authorization": f"Bearer {key}"}
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                r1 = await client.get(
+                    f"{url}/rest/v1/signals",
+                    params={"created_at": f"gte.{today}T00:00:00Z", "select": "id,created_at", "order": "created_at.desc"},
+                    headers=h,
+                )
+                if r1.status_code == 200:
+                    rows = r1.json()
+                    signals_today = len(rows) if isinstance(rows, list) else 0
+                    if rows:
+                        last_signal = rows[0].get("created_at", "")[:16].replace("T", " ")
+
+                r2 = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={"is_active": "eq.true", "select": "id"},
+                    headers=h,
+                )
+                if r2.status_code == 200:
+                    active_users = len(r2.json()) if isinstance(r2.json(), list) else 0
+        except Exception:
+            pass
+
+    n_markets = _get_market_count()
+    msg = (
+        f"<b>⚡ NEXUS STATUS</b>\n{L}\n"
+        f"<code>SCANNER  {'🟢 UP' if n_markets > 0 else '🔴 DOWN'}\n"
+        f"MARCHÉS  {n_markets}\n"
+        f"SIGNAUX  {signals_today} aujourd'hui\n"
+        f"DERNIER  {last_signal}\n"
+        f"ABONNÉS  {active_users} actifs</code>\n{L}"
+    )
+    await _safe_reply(update, msg)
+
+
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """PASTE & MONITOR : intercepte une adresse 0x collée par l'utilisateur."""
     text = (update.message.text or "").strip()
     m = POLYGON_ADDRESS_PATTERN.match(text)
     if not m:
         return
     addr = m.group(0)
-    msg = (
-        f"🐳 <b>WALLET DÉTECTÉ</b>\n"
-        f"{LINE}\n"
-        f"<code>{addr}</code>\n"
-        f"{LINE}"
-    )
     await update.message.reply_text(
-        msg,
+        f"<b>🐋 WALLET DÉTECTÉ</b>\n{L}\n<code>{addr}</code>\n{L}",
         parse_mode="HTML",
         reply_markup=_wallet_confirm_keyboard(addr),
     )
@@ -959,7 +1206,7 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             ok = False
         context.user_data.pop("awaiting", None)
-        status = "✅ Seuils mis à jour" if ok else "❌ Format: min_edge min_ev volume liquidity"
+        status = "<b>✅ SEUILS MIS À JOUR</b>" if ok else "<b>❌ FORMAT INVALIDE</b>\n<code>min_edge min_ev volume liquidity</code>"
         await update.message.reply_text(f"{status}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_keyboard())
         return
 
@@ -970,7 +1217,8 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         except (ValueError, TypeError):
             ok = False
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_keyboard())
+        status = "<b>✅ CAPITAL MIS À JOUR</b>" if ok else "<b>❌ VALEUR INVALIDE</b>"
+        await update.message.reply_text(f"{status}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_keyboard())
         return
 
     if awaiting == "max_positions":
@@ -980,7 +1228,8 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         except (ValueError, TypeError):
             ok = False
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
+        status = "<b>✅ MIS À JOUR</b>" if ok else "<b>❌ VALEUR INVALIDE</b>"
+        await update.message.reply_text(f"{status}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
         return
 
     if awaiting == "drawdown":
@@ -990,7 +1239,7 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         except (ValueError, TypeError):
             ok = False
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
+        await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_autotrade_keyboard())
         return
 
     if awaiting == "categories":
@@ -999,7 +1248,7 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         filtered = [p for p in parts if p in valid]
         ok = set_env_value("AUTO_TRADE_CATEGORIES_BLACKLIST", ",".join(filtered))
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
     if awaiting == "days_resolution":
@@ -1013,7 +1262,7 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             ok = False
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
     if awaiting == "reinvest":
@@ -1023,14 +1272,14 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         except (ValueError, TypeError):
             ok = False
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
     if awaiting == "keywords":
         parts = [x.strip().lower() for x in text.split(",") if x.strip()]
         ok = set_env_value("AUTO_TRADE_KEYWORDS_BLACKLIST", ",".join(parts))
         context.user_data.pop("awaiting", None)
-        await update.message.reply_text(f"{'✅' if ok else '❌'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
 
@@ -1066,63 +1315,101 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
         except Exception:
-            text = f"⚡ <b>NEXUS</b>\n{LINE}\nChargement... Réessayez."
+            text = f"<b>⚡ NEXUS BET</b>\n{L}\n<code>CHARGEMENT...</code>"
         await edit(text, _main_keyboard())
         return
 
     if data == "btn_scan":
-        await edit(f"🔍 <b>SCANNING...</b>\n{LINE}", None)
+        await edit(f"<b>📡 SCANNING...</b>\n{L}", None)
         text = await _safe_get(_get_scan_text, _scan_fallback(), None)()
         await edit(text, _scan_keyboard())
         return
 
     if data == "btn_portfolio":
-        await edit(f"💼 <b>LOADING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_portfolio_text, f"💼 <b>PORTFOLIO</b>\n{LINE}\nDonnées en cours...", None)()
+        await edit(f"<b>💰 LOADING...</b>\n{L}", None)
+        text = await _safe_get(_get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _portfolio_keyboard())
         return
 
     if data == "portfolio_positions":
-        await edit(f"📋 <b>LOADING...</b>\n{LINE}", None)
+        await edit(f"<b>📋 LOADING...</b>\n{L}", None)
         try:
             text, kb, _ = await asyncio.wait_for(_get_positions_detail(context), timeout=HANDLER_TIMEOUT)
         except (asyncio.TimeoutError, Exception):
-            text = f"📋 <b>POSITIONS</b>\n{LINE}\nDonnées en cours..."
+            text = f"<b>📋 POSITIONS</b>\n{L}\n<code>CHARGEMENT...</code>"
             kb = _positions_keyboard()
         await edit(text, kb)
         return
 
     if data == "portfolio_history":
-        await edit(f"📜 <b>LOADING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_history_text, f"📜 <b>HISTORIQUE</b>\n{LINE}\nDonnées en cours...", None)()
+        await edit(f"<b>📜 LOADING...</b>\n{L}", None)
+        text = await _safe_get(_get_history_text, f"<b>📜 HISTORIQUE</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _portfolio_keyboard())
         return
 
     if data == "btn_agents":
-        await edit(f"🤖 <b>LOADING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_agents_text, f"🤖 <b>AI AGENTS</b>\n{LINE}\nDonnées en cours...", None)()
-        await edit(text, _back_keyboard())
-        return
-
-    if data == "btn_btc":
-        await edit(f"📈 <b>LOADING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_btc_text, f"📈 <b>BTC</b>\n{LINE}\nDonnées en cours...", None)()
+        await edit(f"<b>🧠 LOADING...</b>\n{L}", None)
+        text = await _safe_get(_get_agents_text, f"<b>🧠 AI SWARM</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _back_keyboard())
         return
 
     if data == "btn_whales":
-        await edit(f"🐳 <b>LOADING...</b>\n{LINE}", None)
-        text = await _safe_get(_get_whales_text, f"🐳 <b>WHALES</b>\n{LINE}\nDonnées en cours...", None)()
+        await edit(f"<b>🐋 LOADING...</b>\n{L}", None)
+        text = await _safe_get(_get_whales_text, f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _back_keyboard())
         return
 
     if data == "btn_referral":
-        await edit(f"🤝 <b>REFERRAL</b>\n{LINE}\n<i>Programme de parrainage à venir.</i>\n{LINE}", _back_keyboard())
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        bot_username = ""
+        try:
+            bot_username = (await context.bot.get_me()).username or ""
+        except Exception:
+            pass
+        try:
+            text = await asyncio.wait_for(_get_referral_text(chat_id, bot_username), timeout=6.0)
+        except Exception:
+            text = f"<b>👥 REFERRAL</b>\n{L}\n<code>ERREUR — réessayez</code>"
+        await edit(text, _back_keyboard())
+        return
+
+    # ── Signal callbacks: BUY / PASS / Investiguer ──
+    if data.startswith("buy_"):
+        parts = data[4:].split("|", 1)
+        market_id = parts[0] if parts else ""
+        side = parts[1] if len(parts) > 1 else "YES"
+        from config.settings import settings as _s
+        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+        await edit(
+            f"<b>✅ POSITION ENREGISTRÉE</b>\n{L}\n"
+            f"<code>MARCHÉ  {market_id[:38]}\n"
+            f"SIDE    {side}\n"
+            f"CAPITAL ${cap:,.0f}</code>\n{L}\n"
+            f"<i>Active Auto-Trade dans ⚙️ SETTINGS pour l'exécution auto.</i>",
+            _back_keyboard(),
+        )
+        return
+
+    if data.startswith("ignore_"):
+        await edit(f"<b>✕ SIGNAL IGNORÉ</b>\n{L}", _main_keyboard())
+        return
+
+    if data.startswith("inv_"):
+        parts = data[4:].split("|", 1)
+        market_id = parts[0] if parts else ""
+        side = parts[1] if len(parts) > 1 else ""
+        await edit(
+            f"<b>🔍 INVESTIGATION</b>\n{L}\n"
+            f"<code>MARCHÉ  {market_id[:38]}\n"
+            f"SIDE    {side}</code>\n{L}\n"
+            f"<i>Tape /market pour la fiche complète.</i>",
+            _back_keyboard(),
+        )
         return
 
     # ── Paste & Monitor (wallet add/cancel) ──
     if data == "wallet_cancel":
-        await edit("Annulé.")
+        await edit(f"<b>✕ ANNULÉ</b>")
         return
 
     if data.startswith("wallet_add_"):
@@ -1131,19 +1418,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             try:
                 from monitoring.telegram_wealth_manager import add_whale_wallet
                 if add_whale_wallet(addr):
-                    await edit("✅ Wallet ajouté au whale tracker")
+                    await edit(f"<b>✅ WALLET AJOUTÉ</b>\n{L}\n<code>{addr}</code>\n<i>Surveillance active.</i>")
                 else:
-                    await edit("❌ Erreur lors de l'ajout.")
+                    await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>Ajout impossible.</code>")
             except Exception as e:
                 log.exception("wallet_add: %s", e)
-                await edit(f"❌ Erreur: {e}")
+                await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>")
         else:
-            await edit("❌ Adresse invalide.")
+            await edit(f"<b>❌ ADRESSE INVALIDE</b>")
         return
 
     # ── Exit position (confirmation) ──
     if data == "exit_cancel":
-        await edit(f"📋 <b>LOADING...</b>\n{LINE}", None)
+        await edit(f"<b>📋 LOADING...</b>\n{L}", None)
         text, kb, _ = await _get_positions_detail(context)
         await edit(text, kb)
         return
@@ -1158,9 +1445,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if idx < 0 or idx >= len(pos_list):
             return
         pos = pos_list[idx]
-        question = (pos.get("question") or pos.get("market_id") or "?")[:30]
+        question = (pos.get("question") or pos.get("market_id") or "?")[:38]
         await edit(
-            f"Confirmer l'exit de <i>{question}</i> ?",
+            f"<b>✕ CONFIRMER EXIT</b>\n{L}\n<code>{question}</code>\n{L}\n<i>Cette action est irréversible.</i>",
             _exit_confirm_keyboard(),
         )
         context.user_data["exit_pending"] = pos
@@ -1169,9 +1456,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "exit_confirm":
         pos = context.user_data.pop("exit_pending", None)
         if not pos:
-            await edit(f"⏱ Position expirée\n{LINE}", _main_keyboard())
+            await edit(f"<b>⚡ NEXUS BET</b>\n{L}\n<code>POSITION EXPIRÉE</code>", _main_keyboard())
             return
-        await edit(f"⏳ Vente en cours...\n{LINE}", None)
+        await edit(f"<b>⚡ VENTE EN COURS...</b>\n{L}", None)
         try:
             from execution.order_manager import OrderManager, OrderConfig
             om = OrderManager()
@@ -1194,14 +1481,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 trade_logger.update_position(pos["market_id"], pos["outcome"], 0, 0)
                 from monitoring.telegram_alerts import send_telegram_message
                 mkt = (pos.get("question") or pos["market_id"])[:50]
-                await send_telegram_message(f"🔴 EXIT — {mkt} soldé\nOrderID: {order_id}")
+                await send_telegram_message(
+                    f"<b>✕ EXIT EXÉCUTÉ</b>\n{L}\n<code>{mkt}</code>\n<code>ID: {order_id}</code>"
+                )
             finally:
                 await om.client.close()
         except Exception as e:
             log.exception("Exit failed: %s", e)
-            await edit(f"❌ Exit échoué: {e}\n{LINE}", _main_keyboard())
+            await edit(f"<b>❌ EXIT ÉCHOUÉ</b>\n{L}\n<code>{e}</code>", _main_keyboard())
             return
-        await edit(f"🔴 <b>EXIT EXÉCUTÉ</b>\n{LINE}\nPosition soldée.", _main_keyboard())
+        await edit(f"<b>✕ EXIT EXÉCUTÉ</b>\n{L}\n<i>Position soldée.</i>", _main_keyboard())
         return
 
         # ── Settings ──
@@ -1212,17 +1501,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "settings_thresholds":
         context.user_data["awaiting"] = "thresholds"
         await edit(
-            f"📊 <b>THRESHOLDS</b>\n{LINE}\n"
-            "4 valeurs séparées par des espaces :\n"
-            "<code>min_edge min_ev volume liquidity</code>\n\n"
-            "Ex: <code>5.0 20 1000 100</code>",
+            f"<b>⚙️ THRESHOLDS</b>\n{L}\n"
+            f"<code>4 valeurs séparées par espaces :\nmin_edge min_ev volume liquidity\n\nEx: 5.0 20 1000 100</code>",
             _back_keyboard(),
         )
         return
 
     if data == "settings_capital":
         context.user_data["awaiting"] = "capital"
-        await edit(f"💰 <b>CAPITAL</b>\n{LINE}\nEnvoie le montant en USD\nEx: <code>100</code>", _back_keyboard())
+        await edit(f"<b>⚙️ CAPITAL</b>\n{L}\n<code>Montant en USD\nEx: 1000</code>", _back_keyboard())
         return
 
     if data == "settings_toggle_sim":
@@ -1233,7 +1520,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "settings_autotrade":
-        text = _get_settings_text() + "\n<i>STRONG_BUY → exécution immédiate\nBUY → confirmation 30min</i>"
+        text = _get_settings_text() + f"\n<i>STRONG BUY → immédiat · BUY → confirmation 30min</i>"
         await edit(text, _settings_autotrade_keyboard())
         return
 
@@ -1251,12 +1538,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "settings_max_positions":
         context.user_data["awaiting"] = "max_positions"
-        await edit(f"Max positions (1-20)\nEx: <code>3</code>", _settings_autotrade_keyboard())
+        await edit(f"<b>⚙️ MAX POSITIONS</b>\n{L}\n<code>1–20\nEx: 3</code>", _settings_autotrade_keyboard())
         return
 
     if data == "settings_drawdown":
         context.user_data["awaiting"] = "drawdown"
-        await edit(f"Drawdown limit % (1-100)\nEx: <code>20</code>", _settings_autotrade_keyboard())
+        await edit(f"<b>⚙️ DRAWDOWN LIMIT</b>\n{L}\n<code>% (1–100)\nEx: 20</code>", _settings_autotrade_keyboard())
         return
 
     if data == "settings_confirm_buy":
@@ -1283,34 +1570,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         kw = os.getenv("AUTO_TRADE_KEYWORDS_BLACKLIST", "") or "—"
         reinv = os.getenv("AUTO_TRADE_REINVEST_PCT", "0")
         await edit(
-            f"⚙️ <b>ADVANCED</b>\n{LINE}\n"
-            f"🚫 Categories  {cats}\n"
-            f"📅 Days        {min_d}–{max_d}\n"
-            f"🔑 Keywords    {kw}\n"
-            f"♻️ Reinvest    {reinv}%\n"
-            f"{LINE}",
+            f"<b>⚙️ ADVANCED</b>\n{L}\n"
+            f"<code>BLACKLIST  {cats}\n"
+            f"JOURS      {min_d}–{max_d}\n"
+            f"KEYWORDS   {kw}\n"
+            f"REINVEST   {reinv}%</code>\n{L}",
             _settings_advanced_keyboard(),
         )
         return
 
     if data == "settings_categories":
         context.user_data["awaiting"] = "categories"
-        await edit("Catégories à exclure (virgules) :\n<code>sport,politique,crypto,finance,autre</code>", _settings_advanced_keyboard())
+        await edit(f"<b>⚙️ BLACKLIST CATÉGORIES</b>\n{L}\n<code>sport,politique,crypto,finance,autre</code>", _settings_advanced_keyboard())
         return
 
     if data == "settings_days_resolution":
         context.user_data["awaiting"] = "days_resolution"
-        await edit("Min et max jours :\n<code>0 730</code>", _settings_advanced_keyboard())
+        await edit(f"<b>⚙️ JOURS RÉSOLUTION</b>\n{L}\n<code>min max\nEx: 0 730</code>", _settings_advanced_keyboard())
         return
 
     if data == "settings_reinvest":
         context.user_data["awaiting"] = "reinvest"
-        await edit("% de gains à réinvestir (0-100) :\n<code>50</code>", _settings_advanced_keyboard())
+        await edit(f"<b>⚙️ RÉINVESTISSEMENT</b>\n{L}\n<code>% de gains (0-100)\nEx: 50</code>", _settings_advanced_keyboard())
         return
 
     if data == "settings_keywords":
         context.user_data["awaiting"] = "keywords"
-        await edit("Mots-clés à exclure (virgules) :\n<code>war,nuclear</code>", _settings_advanced_keyboard())
+        await edit(f"<b>⚙️ BLACKLIST MOTS-CLÉS</b>\n{L}\n<code>mots séparés par virgules\nEx: war,nuclear</code>", _settings_advanced_keyboard())
         return
 
         # ── Auto-trade confirm/ignore ──
@@ -1319,13 +1605,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         from monitoring.auto_trade import get_pending_confirm, remove_pending_confirm, execute_signal
         sig = get_pending_confirm(sid)
         if not sig:
-            await edit(f"⏱ Expiré (>30min)\n{LINE}")
+            await edit(f"<b>⚡ NEXUS BET</b>\n{L}\n<code>EXPIRÉ — signal &gt;30min</code>")
             return
-        await edit(f"⏳ Exécution...\n{LINE}", None)
+        await edit(f"<b>⚡ EXÉCUTION EN COURS...</b>\n{L}", None)
         order_id = await execute_signal(sig)
         remove_pending_confirm(sid)
         await edit(
-            f"✅ <b>ORDRE EXÉCUTÉ</b>\n{LINE}\nID: <code>{order_id}</code>" if order_id else f"❌ <b>ÉCHEC</b>\n{LINE}",
+            f"<b>✅ ORDRE EXÉCUTÉ</b>\n{L}\n<code>ID: {order_id}</code>" if order_id
+            else f"<b>❌ ÉCHEC EXÉCUTION</b>\n{L}",
             _main_keyboard(),
         )
         return
@@ -1334,18 +1621,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         sid = data.replace("autotrade_ignore_", "")
         from monitoring.auto_trade import remove_pending_confirm
         remove_pending_confirm(sid)
-        await edit(f"❌ Signal ignoré\n{LINE}", _main_keyboard())
+        await edit(f"<b>✕ SIGNAL IGNORÉ</b>\n{L}", _main_keyboard())
         return
 
-        # ── Wealth suggestion: approve / wait ──
+    # ── Wealth suggestion: approve / wait ──
     if data.startswith("approve_"):
         from monitoring.wealth_suggestions import get_suggestion, remove_suggestion
         sid = data.replace("approve_", "")
         sug = get_suggestion(sid)
         if not sug:
-            await edit(f"⏱ Suggestion expirée\n{LINE}")
+            await edit(f"<b>⚡ NEXUS BET</b>\n{L}\n<code>SUGGESTION EXPIRÉE</code>")
             return
-        await edit(f"⏳ Exécution...\n{LINE}", None)
+        await edit(f"<b>⚡ EXÉCUTION EN COURS...</b>\n{L}", None)
         try:
             from defi_yield_manager import execute_flash_withdraw
             from execution.order_manager import OrderManager, OrderConfig
@@ -1359,12 +1646,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             order_id = await om.place_limit_order(cfg)
             remove_suggestion(sid)
             await edit(
-                f"✅ <b>ORDRE EXÉCUTÉ</b>\n{LINE}\nID: <code>{order_id}</code>" if order_id else f"❌ Échec\n{LINE}",
+                f"<b>✅ ORDRE EXÉCUTÉ</b>\n{L}\n<code>ID: {order_id}</code>" if order_id
+                else f"<b>❌ ÉCHEC</b>\n{L}",
                 _main_keyboard(),
             )
         except Exception as e:
             log.exception("Approve error: %s", e)
-            await edit(f"❌ {e}", _main_keyboard())
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>", _main_keyboard())
         return
 
     if data.startswith("wait_"):
@@ -1375,7 +1663,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except ImportError:
             pass
         remove_suggestion(data.replace("wait_", ""))
-        await edit(f"⏸ En attente\n{LINE}", _main_keyboard())
+        await edit(f"<b>⏸ EN ATTENTE</b>\n{L}", _main_keyboard())
         return
 
 
@@ -1421,6 +1709,9 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("exit", cmd_exit))
     app.add_handler(CommandHandler("access", cmd_access))
+    app.add_handler(CommandHandler("activate", cmd_activate))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -1463,6 +1754,7 @@ async def run_forever() -> None:
             BotCommand("referral", "🤝 Mon lien d'affiliation"),
             BotCommand("settings", "⚙️ Configurer le bot"),
             BotCommand("exit", "🔴 Sortir d'une position"),
+            BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")

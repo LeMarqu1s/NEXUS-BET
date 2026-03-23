@@ -219,6 +219,47 @@ class SupabaseClient:
         await asyncio.get_event_loop().run_in_executor(None, _insert)
         return True
 
+    async def log_signal(
+        self,
+        market_id: str,
+        side: str,
+        question: Optional[str] = None,
+        edge_pct: Optional[float] = None,
+        kelly_fraction: Optional[float] = None,
+        confidence: Optional[float] = None,
+        polymarket_price: Optional[float] = None,
+        fair_price: Optional[float] = None,
+        signal_strength: str = "BUY",
+        market_type: str = "binary",
+        reasoning: Optional[str] = None,
+    ) -> bool:
+        """Insert a new signal record."""
+        client = self._get_client()
+        if not client:
+            return False
+
+        def _insert():
+            client.table("signals").insert({
+                "market_id": market_id,
+                "side": side,
+                "question": question,
+                "edge_pct": edge_pct,
+                "kelly_fraction": kelly_fraction,
+                "confidence": confidence,
+                "polymarket_price": polymarket_price,
+                "fair_price": fair_price,
+                "signal_strength": signal_strength,
+                "market_type": market_type,
+                "reasoning": reasoning,
+            }).execute()
+            return True
+
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, _insert)
+            return True
+        except Exception:
+            return False
+
     async def start_bot_run(self) -> Optional[str]:
         """Start a bot run session."""
         client = self._get_client()

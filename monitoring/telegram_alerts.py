@@ -3,6 +3,7 @@ NEXUS BET - Alertes Telegram
 Notifications pour trades, erreurs et signaux.
 """
 import logging
+import os
 from typing import Optional
 
 import httpx
@@ -65,15 +66,16 @@ async def alert_trade(
     price: float,
     reason: str = "",
 ) -> None:
-    """Alerte pour un trade exécuté."""
+    line = "━━━━━━━━━━━━━━━"
     msg = (
-        f"<b>NEXUS BET Trade</b>\n"
-        f"Market: {market[:50]}...\n"
-        f"Outcome: {outcome}\n"
-        f"Side: {side} | Size: {size:.4f} @ {price:.2%}\n"
+        f"<b>✅ TRADE EXÉCUTÉ</b>\n{line}\n"
+        f"<code>MARCHÉ  {market[:40]}\n"
+        f"SIDE    {outcome} {side}\n"
+        f"SIZE    {size:.4f} @ {price:.2%}"
     )
     if reason:
-        msg += f"Reason: {reason}\n"
+        msg += f"\nRAISON  {reason[:30]}"
+    msg += f"</code>\n{line}"
     await send_telegram_message(msg)
 
 
@@ -100,24 +102,30 @@ async def alert_signal(
     kelly_pct: float = 0.0,
     question: str = "",
 ) -> None:
-    """Alerte premium pour un signal de trading détecté (format 🟢 Opportunité | 📊 Edge | 💰 Kelly %)."""
+    line = "━━━━━━━━━━━━━━━"
+    cat = _detect_category(question or market)
+    conf_str = _conf_label(confidence / 100 if confidence > 1 else confidence)
+    q_str = (question or market)[:72]
     msg = (
-        f"🟢 <b>OPPORTUNITÉ</b>\n\n"
-        f"📊 <b>Edge:</b> {edge_pct:.2f}%\n"
-        f"💰 <b>Kelly:</b> {kelly_pct:.2f}%\n"
-        f"📈 <b>Side:</b> {outcome} | Confiance: {confidence:.0f}%\n\n"
-        f"<i>{question[:80] or market[:50]}...</i>"
+        f"<b>⚡ SIGNAL · {cat}</b>\n{line}\n"
+        f"<b>{q_str}</b>\n"
+        f"<code>EDGE    {edge_pct:.1f}%\n"
+        f"KELLY   {kelly_pct:.1f}%\n"
+        f"SIDE    {outcome}\n"
+        f"CONF    {conf_str}</code>\n"
+        f"{line}"
     )
     if debate_summary:
-        msg += f"\n\n💬 {debate_summary[:150]}..."
+        msg += f"\n<i>{debate_summary[:120]}</i>"
     await send_telegram_message(msg, reply_markup=_signal_inline_keyboard(market, outcome))
 
 
 async def alert_error(error: str, context: str = "") -> None:
-    """Alerte pour une erreur critique."""
-    msg = f"<b>NEXUS BET Error</b>\n{error}\n"
+    line = "━━━━━━━━━━━━━━━"
+    msg = f"<b>⚠️ ERREUR SYSTÈME</b>\n{line}\n<code>{error[:200]}"
     if context:
-        msg += f"Context: {context}\n"
+        msg += f"\n{context[:100]}"
+    msg += f"</code>\n{line}"
     await send_telegram_message(msg)
 
 
@@ -143,15 +151,16 @@ async def alert_startup() -> bool:
     except Exception:
         pass
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-    mode = "SIMULATION" if sim else "LIVE"
+    mode = "SIM" if sim else "LIVE"
+    dot = "🔵" if sim else "🟢"
+    line = "━━━━━━━━━━━━━━━"
     msg = (
-        "⚡ <b>NEXUS CAPITAL</b> — ONLINE\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📡 Scanner     {n_assets} assets actifs\n"
-        f"🔄 Mode        {mode}\n"
-        f"💰 Capital     ${capital:,.2f} USDC\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "/start pour accéder au terminal"
+        f"<b>⚡ NEXUS BET — ONLINE</b>\n{line}\n"
+        f"<code>SCANNER  {n_assets} marchés actifs\n"
+        f"MODE     {mode}\n"
+        f"CAPITAL  ${capital:,.2f} USDC</code>\n"
+        f"{line}\n"
+        f"{dot} <i>Tape /start pour accéder au terminal.</i>"
     )
     return await send_telegram_message(msg)
 
@@ -232,3 +241,152 @@ async def alert_anti_sybil(details: str) -> bool:
         f"<i>{details[:300]}</i>"
     )
     return await send_telegram_message(msg)
+
+
+async def _get_active_subscriber_chat_ids() -> list[str]:
+    """Retourne les telegram_chat_id de tous les abonnés actifs (Supabase)."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={
+                        "is_active": "eq.true",
+                        "select": "telegram_chat_id",
+                    },
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    rows = r.json()
+                    ids = [row["telegram_chat_id"] for row in rows if row.get("telegram_chat_id")]
+                    if ids:
+                        return ids
+        except Exception as e:
+            log.debug("_get_active_subscriber_chat_ids: %s", e)
+    # Fallback: env var TELEGRAM_CHAT_ID
+    cid = os.getenv("TELEGRAM_CHAT_ID", "")
+    return [cid] if cid else []
+
+
+def _signal_buy_keyboard(market_id: str, side: str) -> dict:
+    """Boutons [✅ BUY] [❌ PASS] pour le signal pushé aux abonnés."""
+    cb = f"{market_id[:40]}|{side}"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ BUY", "callback_data": f"buy_{cb}"},
+                {"text": "❌ PASS", "callback_data": f"ignore_{cb}"},
+            ]
+        ]
+    }
+
+
+def _conf_label(confidence: float) -> str:
+    if confidence >= 0.80:
+        return "HIGH"
+    if confidence >= 0.60:
+        return "MED"
+    return "LOW"
+
+
+def _detect_category(question: str) -> str:
+    q = question.lower()
+    if any(k in q for k in ("nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball",
+                             "baseball", "hockey", "tennis", "golf", "ufc", "sport", "league",
+                             "championship", "super bowl", "world cup", "playoff")):
+        return "SPORT"
+    if any(k in q for k in ("trump", "biden", "election", "president", "senate", "congress",
+                             "democrat", "republican", "vote", "political", "harris", "governor")):
+        return "POLITICS"
+    if any(k in q for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana",
+                             "bnb", "xrp", "doge", "token", "blockchain", "defi", "nft")):
+        return "CRYPTO"
+    if any(k in q for k in ("fed", "rate", "gdp", "inflation", "recession", "cpi", "fomc",
+                             "economy", "macro", "interest", "powell")):
+        return "MACRO"
+    return "MARKET"
+
+
+async def push_signal_to_subscribers(
+    market_id: str,
+    question: str,
+    side: str,
+    edge_pct: float,
+    confidence: float,
+    kelly_fraction: float,
+    polymarket_price: float,
+    signal_strength: str = "BUY",
+    capital: float = 1000.0,
+) -> int:
+    """
+    Push signal premium à tous les abonnés actifs.
+    Format : titre en gras, code block pour les métriques, boutons CONFIRMER/IGNORER.
+    Returns nombre d'envois réussis.
+    """
+    chat_ids = await _get_active_subscriber_chat_ids()
+    if not chat_ids:
+        return 0
+
+    t = SETTINGS.get("telegram")
+    token = getattr(t, "bot_token", None) if t else None
+    token = token or os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return 0
+
+    # Métriques
+    stake = round(capital * min(kelly_fraction, 0.05), 2)
+    ev = round(edge_pct * confidence, 1)
+    cat = _detect_category(question)
+    strength_label = "STRONG BUY" if signal_strength == "STRONG_BUY" else "BUY"
+    fair_price = round(polymarket_price + (edge_pct / 100), 2)
+    poly_pct = round(polymarket_price * 100)
+    fair_pct = round(fair_price * 100)
+    conf_str = _conf_label(confidence)
+    line = "━━━━━━━━━━━━━━━"
+
+    msg = (
+        f"<b>⚡ {strength_label} · {cat}</b>\n"
+        f"{line}\n"
+        f"<b>{question[:72]}</b>\n"
+        f"<code>EV      +{ev:.1f}%\n"
+        f"EDGE    {edge_pct:.1f}pts\n"
+        f"MISE    ${stake:.2f}\n"
+        f"CONF    {conf_str}</code>\n"
+        f"{line}\n"
+        f"<i>POLY: {poly_pct}% · FAIR: {fair_pct}% · NEXUS BET</i>"
+    )
+
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ CONFIRMER", "callback_data": f"buy_{market_id[:40]}|{side}"},
+                {"text": "✕ IGNORER",   "callback_data": f"ignore_{market_id[:40]}|{side}"},
+            ]
+        ]
+    }
+
+    sent = 0
+    for chat_id in chat_ids:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": msg,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                        "reply_markup": kb,
+                    },
+                )
+                if r.status_code == 200:
+                    sent += 1
+                else:
+                    log.debug("push_signal to %s: %s %s", chat_id, r.status_code, r.text[:80])
+        except Exception as e:
+            log.debug("push_signal to %s failed: %s", chat_id, e)
+
+    log.info("push_signal_to_subscribers: sent to %d/%d subscribers", sent, len(chat_ids))
+    return sent
