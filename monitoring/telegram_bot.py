@@ -1004,20 +1004,34 @@ async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "apikey": key, "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
             }
-            # Upsert user as active
-            r = await client.post(
+            # Check if user already exists
+            r_check = await client.get(
                 f"{url}/rest/v1/users",
-                headers=headers,
-                json={"telegram_chat_id": target_chat_id, "is_active": True, "plan": plan},
+                params={"telegram_chat_id": f"eq.{target_chat_id}", "select": "id"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
             )
+            user_exists = r_check.status_code == 200 and bool(r_check.json())
+            if user_exists:
+                # PATCH existing user — no access_token change
+                r = await client.patch(
+                    f"{url}/rest/v1/users",
+                    params={"telegram_chat_id": f"eq.{target_chat_id}"},
+                    headers=headers,
+                    json={"is_active": True, "plan": plan},
+                )
+            else:
+                # INSERT new user — access_token NOT NULL required
+                r = await client.post(
+                    f"{url}/rest/v1/users",
+                    headers=headers,
+                    json={
+                        "telegram_chat_id": target_chat_id,
+                        "access_token": uuid.uuid4().hex[:8].lower(),
+                        "is_active": True,
+                        "plan": plan,
+                    },
+                )
             ok = r.status_code in (200, 201, 204)
-            # Also PATCH in case user already exists
-            await client.patch(
-                f"{url}/rest/v1/users",
-                params={"telegram_chat_id": f"eq.{target_chat_id}"},
-                headers=headers,
-                json={"is_active": True, "plan": plan},
-            )
         if ok:
             await _safe_reply(update, f"✅ Utilisateur <code>{target_chat_id}</code> activé (plan: {plan})")
             # Notify the user
