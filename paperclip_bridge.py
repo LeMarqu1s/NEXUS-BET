@@ -2,6 +2,7 @@
 NEXUS BET - Pont Paperclip ↔ Python
 Écrit les signaux dans un fichier pour que les agents Paperclip les traitent.
 Le scanner appelle on_signal() → écrit dans paperclip_pending_signals.json.
+Supabase backup: signaux aussi persistés en DB pour survivre aux redéploiements Railway.
 """
 from __future__ import annotations
 
@@ -18,20 +19,88 @@ PENDING_SIGNALS_FILE = _proj_root / "paperclip_pending_signals.json"
 PENDING_SIGNALS_PATH = str(PENDING_SIGNALS_FILE.resolve())
 log = logging.getLogger("nexus.paperclip_bridge")
 
+# ── Supabase persistence (survives Railway redeploys) ──────────────────────────
+_sb_client = None
+_sb_initialized = False
+
+
+def _sb():
+    """Lazy singleton for sync Supabase client; returns None if not configured."""
+    global _sb_client, _sb_initialized
+    if _sb_initialized:
+        return _sb_client
+    _sb_initialized = True
+    try:
+        from config.settings import settings
+        if not (getattr(settings, "SUPABASE_URL", None) and getattr(settings, "SUPABASE_KEY", None)):
+            return None
+        from supabase import create_client
+        _sb_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    except Exception as e:
+        log.debug("Supabase client init failed (non-critical): %s", e)
+    return _sb_client
+
+
+def _sb_upsert_signal(entry: dict[str, Any]) -> None:
+    """Upsert a single signal to Supabase pending_signals table. Never raises."""
+    try:
+        sb = _sb()
+        if sb is None:
+            return
+        import time
+        payload = {**entry, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        sb.table("pending_signals").upsert(payload, on_conflict="market_id,side").execute()
+    except Exception as e:
+        log.debug("_sb_upsert_signal failed (non-critical): %s", e)
+
+
+def _sb_delete_signal(market_id: str, side: str) -> None:
+    """Remove a signal from Supabase pending_signals. Never raises."""
+    try:
+        sb = _sb()
+        if sb is None:
+            return
+        sb.table("pending_signals").delete().eq("market_id", market_id).eq("side", side).execute()
+    except Exception as e:
+        log.debug("_sb_delete_signal failed (non-critical): %s", e)
+
+
+def _sb_fetch_signals() -> list[dict[str, Any]]:
+    """Fetch pending signals from Supabase, ordered by updated_at desc. Returns [] on failure."""
+    try:
+        sb = _sb()
+        if sb is None:
+            return []
+        result = sb.table("pending_signals").select("*").order("updated_at", desc=True).limit(50).execute()
+        rows = result.data or []
+        # Remove Supabase metadata columns
+        clean = []
+        for r in rows:
+            clean.append({k: v for k, v in r.items() if k not in ("id", "created_at", "updated_at")})
+        return clean
+    except Exception as e:
+        log.debug("_sb_fetch_signals failed (non-critical): %s", e)
+        return []
+
 
 def write_scanner_state(market_count: int = 0, token_count: int = 0) -> None:
     """Met à jour market_count pour le dashboard et Telegram (assets trackés)."""
     try:
         data: dict[str, Any] = {"signals": []}
         if PENDING_SIGNALS_FILE.exists():
-            with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {"signals": []}
         n = market_count or token_count
         data["market_count"] = n
         data["last_scan_ts"] = __import__("time").time()
         data["count"] = len(data.get("signals", []))
-        with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
+        tmp = PENDING_SIGNALS_FILE.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        tmp.replace(PENDING_SIGNALS_FILE)
     except Exception as e:
         log.debug("write_scanner_state: %s", e)
 
@@ -83,6 +152,8 @@ def on_signal(sig: EdgeSignal) -> None:
                 json.dump(out, f, indent=2)
             tmp.replace(PENDING_SIGNALS_FILE)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
+            # Persist to Supabase so signal survives Railway redeploys
+            _sb_upsert_signal(entry)
             # Push signal card notification (every signal, card for STRONG_BUY)
             try:
                 import asyncio
@@ -111,37 +182,64 @@ def on_signal(sig: EdgeSignal) -> None:
 
 
 def get_pending_signals() -> list[dict[str, Any]]:
-    """Retourne les signaux en attente (pour les agents Paperclip)."""
-    path = PENDING_SIGNALS_PATH
-    log.info("Reading signals from: %s", path)
-    if not PENDING_SIGNALS_FILE.exists():
-        log.info("File does not exist: %s", path)
-        return []
-    try:
-        with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        signals = data.get("signals", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-        log.info("File contents: count=%d signals=%d", data.get("count", 0) if isinstance(data, dict) else 0, len(signals))
-        return signals
-    except Exception as e:
-        log.info("File read error: %s", e)
-        return []
+    """Retourne les signaux en attente.
+    Lit le fichier local en priorité; si absent/vide, bascule sur Supabase
+    (survie aux redéploiements Railway où le filesystem est éphémère).
+    """
+    # 1. Try local file
+    if PENDING_SIGNALS_FILE.exists():
+        try:
+            with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            signals = data.get("signals", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            if signals:
+                log.info("Signals from local file: %d", len(signals))
+                return signals
+        except Exception as e:
+            log.info("Local file read error: %s", e)
+    else:
+        log.info("Local signal file not found: %s", PENDING_SIGNALS_PATH)
+
+    # 2. Fallback: fetch from Supabase
+    sb_signals = _sb_fetch_signals()
+    if sb_signals:
+        log.info("Signals from Supabase fallback: %d", len(sb_signals))
+        # Re-hydrate local file so next reads are fast
+        try:
+            import time
+            out: dict[str, Any] = {
+                "signals": sb_signals,
+                "count": len(sb_signals),
+                "market_count": 0,
+                "last_scan_ts": time.time(),
+            }
+            tmp = PENDING_SIGNALS_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+            tmp.replace(PENDING_SIGNALS_FILE)
+        except Exception:
+            pass
+    return sb_signals
 
 
 def clear_signal(market_id: str, side: str) -> None:
-    """Retire un signal traité de la file."""
-    if not PENDING_SIGNALS_FILE.exists():
-        return
-    try:
-        with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        signals = data.get("signals", []) if isinstance(data, dict) else []
-        signals = [s for s in signals if not (s.get("market_id") == market_id and s.get("side") == side)]
-        out = {"signals": signals, "count": len(signals)}
-        if isinstance(data, dict):
-            out["market_count"] = data.get("market_count", 0)
-            out["last_scan_ts"] = data.get("last_scan_ts", __import__("time").time())
-        with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(out, f, indent=2)
-    except Exception:
-        pass
+    """Retire un signal traité de la file (local + Supabase)."""
+    # Remove from local file
+    if PENDING_SIGNALS_FILE.exists():
+        try:
+            with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            signals = data.get("signals", []) if isinstance(data, dict) else []
+            signals = [s for s in signals if not (s.get("market_id") == market_id and s.get("side") == side)]
+            out: dict[str, Any] = {"signals": signals, "count": len(signals)}
+            if isinstance(data, dict):
+                out["market_count"] = data.get("market_count", 0)
+                out["last_scan_ts"] = data.get("last_scan_ts", __import__("time").time())
+            tmp = PENDING_SIGNALS_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+            tmp.replace(PENDING_SIGNALS_FILE)
+        except Exception:
+            pass
+    # Remove from Supabase
+    _sb_delete_signal(market_id, side)

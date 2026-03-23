@@ -764,6 +764,19 @@ def _scan_fallback() -> str:
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await _ack_then_reply(update, _get_scan_text, _scan_fallback(), _scan_keyboard())
+        # Send signal card image for the top signal (best edge)
+        try:
+            from paperclip_bridge import get_pending_signals
+            signals = get_pending_signals()
+            if signals and update.effective_chat:
+                top = max(signals, key=lambda s: float(s.get("edge_pct", 0)))
+                token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+                chat_id = str(update.effective_chat.id)
+                if token:
+                    from monitoring.signal_card_generator import send_signal_card
+                    await send_signal_card(top, token, chat_id)
+        except Exception as card_err:
+            log.debug("Signal card send: %s", card_err)
     except Exception as e:
         log.exception("cmd_scan: %s", e)
         await _safe_reply(update, _scan_fallback(), _scan_keyboard())
@@ -1099,9 +1112,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data == "btn_scan":
-        await edit(f"🔍 <b>SCANNING...</b>\n{LINE}", None)
+        await edit(f"🔍 <b>SCANNING...</b>\n<code>{LINE}</code>", None)
         text = await _safe_get(_get_scan_text, _scan_fallback(), None)()
         await edit(text, _scan_keyboard())
+        # Send signal card image for top signal
+        try:
+            from paperclip_bridge import get_pending_signals
+            signals = get_pending_signals()
+            if signals and query.message and query.message.chat:
+                top = max(signals, key=lambda s: float(s.get("edge_pct", 0)))
+                token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+                chat_id = str(query.message.chat.id)
+                if token:
+                    from monitoring.signal_card_generator import send_signal_card
+                    await send_signal_card(top, token, chat_id)
+        except Exception:
+            pass
         return
 
     if data == "btn_portfolio":

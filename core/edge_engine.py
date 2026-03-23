@@ -100,18 +100,57 @@ class EdgeEngine:
         polymarket_price: float | None = None,
     ) -> tuple[float, float] | None:
         """
-        Fair value ONLY from scoring_engine (Odds API). No fake heuristics.
-        - Sport markets: scoring_engine returns real fair value from bookmakers
-        - If scoring_engine unavailable: return None → no signal (honest, no fake edges)
+        Fair value from scoring_engine (Odds API) with binary-arb fallback.
+        1. Try Odds API via scoring_engine → real fair value (confidence 0.80)
+        2. Fallback: binary arb (YES+NO sum < 0.98) → normalized fair value (conf 0.60)
         """
+        # 1. Real fair value from Odds API
         try:
             from core.scoring_engine import NexusScoringEngine
             engine = NexusScoringEngine()
             fair = engine.get_fair_value_for_yes(market)
             if fair is not None and 0.01 < fair < 0.99:
-                return fair, 0.75
+                log.info("ODDS_API fair_value=%.3f for %s", fair, (market.get("question") or "")[:40])
+                return fair, 0.80
         except Exception as e:
             log.debug("scoring_engine fair_value: %s", e)
+
+        # 2. Binary arb fallback: YES+NO outcomePrices don't sum to 1.0
+        return self._model_fair_price_binary_arb(market, polymarket_price)
+
+    def _model_fair_price_binary_arb(
+        self,
+        market: dict[str, Any],
+        polymarket_price: float | None = None,
+    ) -> tuple[float, float] | None:
+        """
+        Fallback: detect when outcomePrices YES+NO sum < 0.98 (market discount).
+        Normalised fair value = price / sum. Only real inefficiency — no fake heuristics.
+        """
+        try:
+            outcomes, prices = self._parse_outcome_prices(market)
+            if len(prices) < 2:
+                return None
+            yes_p = prices[0]
+            no_p = prices[1]
+            total = yes_p + no_p
+            if total <= 0 or total >= 0.98:
+                return None
+            # Determine which side we're evaluating from polymarket_price
+            if polymarket_price is not None:
+                # polymarket_price is YES price here (already normalized in caller)
+                fair = yes_p / total
+            else:
+                fair = yes_p / total
+            if not (0.02 < fair < 0.98):
+                return None
+            # Confidence scales with the size of the discount
+            conf = round(min(0.70, 0.50 + (0.98 - total) * 6), 4)
+            log.info("BINARY_ARB: YES=%.3f NO=%.3f sum=%.3f → fair=%.3f conf=%.2f",
+                     yes_p, no_p, total, fair, conf)
+            return fair, conf
+        except Exception as e:
+            log.debug("binary_arb fallback: %s", e)
         return None
 
     def _model_fair_price_ucl(
@@ -225,14 +264,17 @@ class EdgeEngine:
         question = (market.get("question") or "")[:40]
         log.debug("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
 
-        min_edge = settings.MIN_EDGE_PCT / 100.0
+        # settings.MIN_EDGE_PCT already returns a fraction (e.g. 0.05 for 5%)
+        min_edge = settings.MIN_EDGE_PCT
         if edge_pct < min_edge or conf < min_confidence:
+            log.debug("Signal rejected: edge=%.4f < min=%.4f OR conf=%.2f < %.2f",
+                      edge_pct, min_edge, conf, min_confidence)
             return None
 
         p = fair if side.upper() == "YES" else (1.0 - fair)
         b = (1.0 - polymarket_price) / polymarket_price if polymarket_price > 0 else 1.0
         kelly = self._kelly(p, 1 - p, b)
-        signal_strength = "STRONG_BUY" if edge_pct >= 0.15 and conf >= 0.9 else "BUY"
+        signal_strength = "STRONG_BUY" if edge_pct >= 0.15 and conf >= 0.80 else "BUY"
 
         return EdgeSignal(
             market_id=str(market.get("conditionId", market.get("condition_id", market.get("id", "")))),
@@ -263,11 +305,12 @@ class EdgeEngine:
             return None
 
         sum_prices = sum(prices)
-        if sum_prices >= 0.97:
+        if sum_prices >= 0.99:
             return None
 
         edge_pct = (1.0 - sum_prices)
-        min_edge = settings.MIN_EDGE_PCT / 100.0
+        # settings.MIN_EDGE_PCT already returns a fraction (e.g. 0.05 for 5%)
+        min_edge = settings.MIN_EDGE_PCT
         if edge_pct < min_edge:
             return None
 
@@ -380,7 +423,8 @@ class EdgeEngine:
                 best_fair = fair
                 bin_str = f"{low:.0f}-{high:.0f}"
 
-        min_edge = settings.MIN_EDGE_PCT / 100.0
+        # settings.MIN_EDGE_PCT already returns a fraction (e.g. 0.05 for 5%)
+        min_edge = settings.MIN_EDGE_PCT
         if best_edge < min_edge:
             return None
 

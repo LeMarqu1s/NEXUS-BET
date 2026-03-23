@@ -125,3 +125,26 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
 CREATE INDEX idx_users_access_token ON users(access_token);
+
+-- ============================================
+-- PENDING SIGNALS (persiste entre redéploiements Railway)
+-- ============================================
+CREATE TABLE IF NOT EXISTS pending_signals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    market_id TEXT NOT NULL,
+    token_id TEXT,
+    side TEXT NOT NULL,
+    question TEXT,
+    polymarket_price DECIMAL(8, 6),
+    edge_pct DECIMAL(8, 4),
+    kelly_fraction DECIMAL(8, 6),
+    model TEXT,
+    confidence DECIMAL(6, 4),
+    signal_strength TEXT DEFAULT 'BUY',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(market_id, side)
+);
+
+CREATE INDEX idx_pending_signals_updated_at ON pending_signals(updated_at DESC);
+CREATE INDEX idx_pending_signals_market_id ON pending_signals(market_id);

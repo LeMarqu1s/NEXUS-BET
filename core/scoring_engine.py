@@ -30,42 +30,101 @@ NON_SPORT_KEYWORDS = frozenset((
     "fed", "rate", "inflation", "gdp", "recession",
 ))
 
-# Sports to scan (most active on Polymarket)
+# Stop words ignored when matching team names (too generic)
+_MATCH_STOP_WORDS = frozenset((
+    "the", "a", "an", "to", "win", "wins", "will", "beat", "beats",
+    "vs", "versus", "in", "at", "on", "or", "and", "of", "who",
+    "which", "does", "is", "are", "be", "for", "from", "by",
+))
+
+# Sports to scan (most active on Polymarket) — ordered by Polymarket activity
 SPORTS_TO_SCAN = (
-    "soccer_france_ligue1",
-    "soccer_england_league1",
-    "soccer_uefa_champs_league",
+    "basketball_ncaab",          # March Madness 2026 — très actif en mars
+    "soccer_uefa_champs_league", # UCL knockout phase en mars
     "basketball_nba",
-    "basketball_ncaab",
+    "soccer_france_ligue1",
+    "soccer_england_premier_league",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_england_league1",
     "americanfootball_nfl",
-    "tennis_atp",  # tennis_atp_french_open when in season
     "icehockey_nhl",
+    "tennis_atp",
+    "tennis_wta",
+    "baseball_mlb",
+    "soccer_efl_champ",
 )
 
-# Mots-clés → sport_key (ordre prioritaire, mapped to SPORTS_TO_SCAN)
+# Mots-clés → sport_key (ordre prioritaire — plus spécifique en premier)
 SPORT_KEYWORDS_MAP = (
-    ("ligue 1", "soccer_france_ligue1"),
-    ("ligue1", "soccer_france_ligue1"),
-    ("france", "soccer_france_ligue1"),
-    ("league one", "soccer_england_league1"),
-    ("league1", "soccer_england_league1"),
+    # March Madness (prioritaire en mars)
+    ("march madness", "basketball_ncaab"),
+    ("ncaa tournament", "basketball_ncaab"),
+    ("ncaa", "basketball_ncaab"),
+    ("college basketball", "basketball_ncaab"),
+    ("sweet sixteen", "basketball_ncaab"),
+    ("elite eight", "basketball_ncaab"),
+    ("final four", "basketball_ncaab"),
+    # UCL / UEFA
     ("champions league", "soccer_uefa_champs_league"),
     ("ucl", "soccer_uefa_champs_league"),
-    ("uefa", "soccer_uefa_champs_league"),
+    ("uefa champions", "soccer_uefa_champs_league"),
+    ("europa league", "soccer_uefa_europa_league"),
+    # NFL
+    ("super bowl", "americanfootball_nfl"),
+    ("nfl", "americanfootball_nfl"),
+    # NBA
     ("nba finals", "basketball_nba"),
     ("nba", "basketball_nba"),
     ("lakers", "basketball_nba"),
     ("celtics", "basketball_nba"),
-    ("ncaa", "basketball_ncaab"),
-    ("march madness", "basketball_ncaab"),
-    ("college basketball", "basketball_ncaab"),
-    ("nfl", "americanfootball_nfl"),
-    ("super bowl", "americanfootball_nfl"),
-    ("french open", "tennis_atp"),
-    ("tennis", "tennis_atp"),
-    ("nhl", "icehockey_nhl"),
+    ("warriors", "basketball_nba"),
+    ("bucks", "basketball_nba"),
+    ("heat", "basketball_nba"),
+    # Soccer leagues
+    ("premier league", "soccer_england_premier_league"),
+    ("epl", "soccer_england_premier_league"),
+    ("arsenal", "soccer_england_premier_league"),
+    ("chelsea", "soccer_england_premier_league"),
+    ("liverpool", "soccer_england_premier_league"),
+    ("man city", "soccer_england_premier_league"),
+    ("manchester", "soccer_england_premier_league"),
+    ("tottenham", "soccer_england_premier_league"),
+    ("la liga", "soccer_spain_la_liga"),
+    ("laliga", "soccer_spain_la_liga"),
+    ("real madrid", "soccer_spain_la_liga"),
+    ("barcelona", "soccer_spain_la_liga"),
+    ("atletico", "soccer_spain_la_liga"),
+    ("bundesliga", "soccer_germany_bundesliga"),
+    ("bayern", "soccer_germany_bundesliga"),
+    ("dortmund", "soccer_germany_bundesliga"),
+    ("serie a", "soccer_italy_serie_a"),
+    ("juventus", "soccer_italy_serie_a"),
+    ("inter milan", "soccer_italy_serie_a"),
+    ("ac milan", "soccer_italy_serie_a"),
+    ("ligue 1", "soccer_france_ligue1"),
+    ("ligue1", "soccer_france_ligue1"),
+    ("psg", "soccer_france_ligue1"),
+    ("league one", "soccer_england_league1"),
+    # NHL / Hockey
     ("stanley cup", "icehockey_nhl"),
+    ("nhl", "icehockey_nhl"),
     ("hockey", "icehockey_nhl"),
+    # Tennis
+    ("wimbledon", "tennis_atp"),
+    ("us open tennis", "tennis_atp"),
+    ("french open", "tennis_atp"),
+    ("australian open", "tennis_atp"),
+    ("djokovic", "tennis_atp"),
+    ("alcaraz", "tennis_atp"),
+    ("sinner", "tennis_atp"),
+    ("tennis", "tennis_atp"),
+    # MLB
+    ("world series", "baseball_mlb"),
+    ("mlb", "baseball_mlb"),
+    ("yankees", "baseball_mlb"),
+    ("dodgers", "baseball_mlb"),
 )
 
 ODDS_CACHE_TTL = 300
@@ -249,7 +308,7 @@ class NexusScoringEngine:
     def get_fair_value_for_yes(self, market_data: dict[str, Any]) -> Optional[float]:
         """
         Return fair value (0-1) for YES outcome from Odds API, or None if not available.
-        Matches Polymarket question to Odds API events by team names and dates.
+        Tries primary sport_key first, then iterates over related sports if no match.
         """
         api_key = os.getenv("ODDS_API_KEY", "")
         if not api_key:
@@ -261,22 +320,39 @@ class NexusScoringEngine:
         sport_key = self._match_sport_key_static(q_lower)
         if not sport_key:
             return None
-        try:
-            events = self._get_cached_odds(sport_key, api_key, "h2h")
-            if not events:
-                return None
-            result = self._binary_fair_value_with_match(question, events, market_data)
-            if result is not None:
-                fair, odds_game, outcome_name = result
-                pm_price = self._extract_pm_yes_price(market_data)
-                edge_pct = ((fair - pm_price) / pm_price * 100) if pm_price > 0.01 else 0
-                log.info(
-                    "ODDS MATCH: %s ↔ %s | odds_prob=%.2f | poly_prob=%.2f | edge=%.2f%%",
-                    question[:50], odds_game, fair, pm_price, edge_pct,
-                )
-                return fair
-        except Exception as e:
-            log.debug("get_fair_value_for_yes: %s", _mask_api_key(str(e)))
+
+        # Try primary sport_key, then related alternatives
+        sport_keys_to_try = [sport_key]
+        # Some Polymarket questions could be UCL but keywords match a league too — add fallbacks
+        if "soccer" in sport_key:
+            for alt in ("soccer_uefa_champs_league", "soccer_england_premier_league",
+                        "soccer_spain_la_liga", "soccer_germany_bundesliga"):
+                if alt != sport_key and alt not in sport_keys_to_try:
+                    sport_keys_to_try.append(alt)
+        if "ncaab" in sport_key:
+            sport_keys_to_try.append("basketball_nba")  # sometimes same teams
+
+        pm_price = self._extract_pm_yes_price(market_data)
+        for sk in sport_keys_to_try:
+            try:
+                events = self._get_cached_odds(sk, api_key, "h2h")
+                if not events:
+                    log.debug("Odds API: 0 events for sport=%s", sk)
+                    continue
+                log.debug("Odds API: %d events for sport=%s", len(events), sk)
+                result = self._binary_fair_value_with_match(question, events, market_data)
+                if result is not None:
+                    fair, odds_game, outcome_name = result
+                    edge_pct = ((fair - pm_price) / pm_price * 100) if pm_price > 0.01 else 0
+                    log.info(
+                        "ODDS MATCH [%s]: '%s' ↔ '%s' | fair=%.3f poly=%.3f edge=%+.1f%%",
+                        sk, question[:50], odds_game, fair, pm_price, edge_pct,
+                    )
+                    return fair
+            except Exception as e:
+                log.debug("get_fair_value_for_yes [%s]: %s", sk, _mask_api_key(str(e)))
+
+        log.debug("No odds match found for: %s", question[:60])
         return None
 
     def _score_binary_sport(
@@ -298,57 +374,98 @@ class NexusScoringEngine:
         score = 0.5 + (fair_value - pm_price) * 2
         return round(max(0.0, min(1.0, score)), 4)
 
+    @staticmethod
+    def _normalize_words(text: str) -> set[str]:
+        """Extract meaningful words (len>=3, not stop words) from a text."""
+        import re as _re
+        words = set(_re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
+        return {w for w in words if len(w) >= 3 and w not in _MATCH_STOP_WORDS}
+
     def _binary_fair_value_with_match(
         self, question: str, events: list[dict], market_data: dict[str, Any]
     ) -> Optional[tuple[float, str, str]]:
         """
         Match Polymarket question to Odds API event by team names.
         Return (fair_value, odds_game_str, outcome_name) or None.
-        Fair value = implied probability (1/decimal_odds) averaged across bookmakers.
+        Fair value = implied probability (1/decimal_odds) AVERAGED across ALL bookmakers.
+        Matching:
+        - Require >=1 meaningful word overlap (len>=3, not stop word)
+        - Score = overlap count; pick best-scoring event
+        - Outcome matched by checking if team name words appear in question
         """
-        q_lower = question.lower()
-        q_words = set(w for w in q_lower.replace("?", "").replace(".", "").split() if len(w) > 1)
-        best_event, best_overlap = None, 0
+        q_words = self._normalize_words(question)
+        if not q_words:
+            return None
 
+        best_event, best_overlap = None, 0
         for ev in events:
-            home = (ev.get("home_team") or "").lower()
-            away = (ev.get("away_team") or "").lower()
-            title_words = set(home.split() + away.split())
-            overlap = len(q_words & title_words)
-            if overlap > best_overlap and overlap >= 1:
+            home = (ev.get("home_team") or "")
+            away = (ev.get("away_team") or "")
+            team_words = self._normalize_words(f"{home} {away}")
+            overlap = len(q_words & team_words)
+            if overlap > best_overlap:
                 best_overlap = overlap
                 best_event = ev
 
         if not best_event or best_overlap < 1:
+            log.debug("No event match for: %s (q_words=%s)", question[:50], list(q_words)[:5])
             return None
 
-        odds_list: list[float] = []
-        matched_outcome = None
+        odds_game = f"{best_event.get('home_team', '')} vs {best_event.get('away_team', '')}"
+        log.info("EVENT MATCH: '%s' ↔ '%s' (overlap=%d)", question[:50], odds_game, best_overlap)
+
+        # Find which outcome (home/away/draw) matches the question
+        # Strategy: for each bookmaker, collect implied probs per outcome name,
+        # then average across all bookmakers for the best-matching outcome.
+        outcome_probs: dict[str, list[float]] = {}  # outcome_name → [implied_probs]
         for bm in best_event.get("bookmakers", []):
             for mkt in bm.get("markets", []):
                 if mkt.get("key") != "h2h":
                     continue
                 for outcome in mkt.get("outcomes", []):
-                    name = (outcome.get("name") or "").lower()
-                    name_words = set(name.split())
-                    if len(q_words & name_words) >= 1 or (len(name) > 2 and name in q_lower):
-                        try:
-                            d = float(outcome.get("price", 2.0))
-                            if d > 0:
-                                odds_list.append(1.0 / d)
-                                matched_outcome = outcome.get("name", "")
-                        except (ValueError, TypeError):
-                            pass
-                if odds_list:
-                    break
-            if odds_list:
-                break
+                    name = (outcome.get("name") or "").strip()
+                    try:
+                        d = float(outcome.get("price", 0))
+                        if d > 1.0:  # decimal odds must be > 1
+                            outcome_probs.setdefault(name, []).append(1.0 / d)
+                    except (ValueError, TypeError):
+                        pass
 
-        if not odds_list:
+        if not outcome_probs:
+            log.debug("No bookmaker odds found for: %s", odds_game)
             return None
-        fair = round(sum(odds_list) / len(odds_list), 4)
-        odds_game = f"{best_event.get('home_team','')} vs {best_event.get('away_team','')}"
-        return (fair, odds_game, matched_outcome or "")
+
+        # Find outcome best matching the Polymarket question
+        best_out_name = None
+        best_out_score = -1
+        for out_name in outcome_probs:
+            out_words = self._normalize_words(out_name)
+            score = len(q_words & out_words)
+            # Also accept if the full outcome name is contained in the question (e.g. "Lakers")
+            if out_name.lower() in question.lower():
+                score = max(score, 1)
+            if score > best_out_score:
+                best_out_score = score
+                best_out_name = out_name
+
+        if best_out_name is None or best_out_score < 1:
+            # Fallback: if only 2 outcomes (h2h binary), pick home team
+            names = list(outcome_probs.keys())
+            if len(names) >= 1:
+                home_words = self._normalize_words(best_event.get("home_team", ""))
+                for n in names:
+                    if self._normalize_words(n) & home_words:
+                        best_out_name = n
+                        break
+                if best_out_name is None:
+                    best_out_name = names[0]
+            else:
+                return None
+
+        probs = outcome_probs[best_out_name]
+        fair = round(sum(probs) / len(probs), 4)
+        log.info("OUTCOME MATCH: '%s' → fair=%.3f (n_books=%d)", best_out_name, fair, len(probs))
+        return (fair, odds_game, best_out_name)
 
     def _binary_fair_value(self, question: str, events: list[dict]) -> Optional[float]:
         """Legacy: returns fair value only. Used by _score_binary_sport."""
