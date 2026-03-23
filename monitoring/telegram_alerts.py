@@ -66,15 +66,16 @@ async def alert_trade(
     price: float,
     reason: str = "",
 ) -> None:
-    """Alerte pour un trade exécuté."""
+    line = "━━━━━━━━━━━━━━━"
     msg = (
-        f"<b>NEXUS BET Trade</b>\n"
-        f"Market: {market[:50]}...\n"
-        f"Outcome: {outcome}\n"
-        f"Side: {side} | Size: {size:.4f} @ {price:.2%}\n"
+        f"<b>✅ TRADE EXÉCUTÉ</b>\n{line}\n"
+        f"<code>MARCHÉ  {market[:40]}\n"
+        f"SIDE    {outcome} {side}\n"
+        f"SIZE    {size:.4f} @ {price:.2%}"
     )
     if reason:
-        msg += f"Reason: {reason}\n"
+        msg += f"\nRAISON  {reason[:30]}"
+    msg += f"</code>\n{line}"
     await send_telegram_message(msg)
 
 
@@ -101,24 +102,30 @@ async def alert_signal(
     kelly_pct: float = 0.0,
     question: str = "",
 ) -> None:
-    """Alerte premium pour un signal de trading détecté (format 🟢 Opportunité | 📊 Edge | 💰 Kelly %)."""
+    line = "━━━━━━━━━━━━━━━"
+    cat = _detect_category(question or market)
+    conf_str = _conf_label(confidence / 100 if confidence > 1 else confidence)
+    q_str = (question or market)[:72]
     msg = (
-        f"🟢 <b>OPPORTUNITÉ</b>\n\n"
-        f"📊 <b>Edge:</b> {edge_pct:.2f}%\n"
-        f"💰 <b>Kelly:</b> {kelly_pct:.2f}%\n"
-        f"📈 <b>Side:</b> {outcome} | Confiance: {confidence:.0f}%\n\n"
-        f"<i>{question[:80] or market[:50]}...</i>"
+        f"<b>⚡ SIGNAL · {cat}</b>\n{line}\n"
+        f"<b>{q_str}</b>\n"
+        f"<code>EDGE    {edge_pct:.1f}%\n"
+        f"KELLY   {kelly_pct:.1f}%\n"
+        f"SIDE    {outcome}\n"
+        f"CONF    {conf_str}</code>\n"
+        f"{line}"
     )
     if debate_summary:
-        msg += f"\n\n💬 {debate_summary[:150]}..."
+        msg += f"\n<i>{debate_summary[:120]}</i>"
     await send_telegram_message(msg, reply_markup=_signal_inline_keyboard(market, outcome))
 
 
 async def alert_error(error: str, context: str = "") -> None:
-    """Alerte pour une erreur critique."""
-    msg = f"<b>NEXUS BET Error</b>\n{error}\n"
+    line = "━━━━━━━━━━━━━━━"
+    msg = f"<b>⚠️ ERREUR SYSTÈME</b>\n{line}\n<code>{error[:200]}"
     if context:
-        msg += f"Context: {context}\n"
+        msg += f"\n{context[:100]}"
+    msg += f"</code>\n{line}"
     await send_telegram_message(msg)
 
 
@@ -144,15 +151,16 @@ async def alert_startup() -> bool:
     except Exception:
         pass
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-    mode = "SIMULATION" if sim else "LIVE"
+    mode = "SIM" if sim else "LIVE"
+    dot = "🔵" if sim else "🟢"
+    line = "━━━━━━━━━━━━━━━"
     msg = (
-        "⚡ <b>NEXUS CAPITAL</b> — ONLINE\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📡 Scanner     {n_assets} assets actifs\n"
-        f"🔄 Mode        {mode}\n"
-        f"💰 Capital     ${capital:,.2f} USDC\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "/start pour accéder au terminal"
+        f"<b>⚡ NEXUS BET — ONLINE</b>\n{line}\n"
+        f"<code>SCANNER  {n_assets} marchés actifs\n"
+        f"MODE     {mode}\n"
+        f"CAPITAL  ${capital:,.2f} USDC</code>\n"
+        f"{line}\n"
+        f"{dot} <i>Tape /start pour accéder au terminal.</i>"
     )
     return await send_telegram_message(msg)
 
@@ -275,6 +283,32 @@ def _signal_buy_keyboard(market_id: str, side: str) -> dict:
     }
 
 
+def _conf_label(confidence: float) -> str:
+    if confidence >= 0.80:
+        return "HIGH"
+    if confidence >= 0.60:
+        return "MED"
+    return "LOW"
+
+
+def _detect_category(question: str) -> str:
+    q = question.lower()
+    if any(k in q for k in ("nfl", "nba", "mlb", "nhl", "soccer", "football", "basketball",
+                             "baseball", "hockey", "tennis", "golf", "ufc", "sport", "league",
+                             "championship", "super bowl", "world cup", "playoff")):
+        return "SPORT"
+    if any(k in q for k in ("trump", "biden", "election", "president", "senate", "congress",
+                             "democrat", "republican", "vote", "political", "harris", "governor")):
+        return "POLITICS"
+    if any(k in q for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana",
+                             "bnb", "xrp", "doge", "token", "blockchain", "defi", "nft")):
+        return "CRYPTO"
+    if any(k in q for k in ("fed", "rate", "gdp", "inflation", "recession", "cpi", "fomc",
+                             "economy", "macro", "interest", "powell")):
+        return "MACRO"
+    return "MARKET"
+
+
 async def push_signal_to_subscribers(
     market_id: str,
     question: str,
@@ -287,9 +321,9 @@ async def push_signal_to_subscribers(
     capital: float = 1000.0,
 ) -> int:
     """
-    Push un signal à tous les abonnés actifs.
-    Inclut : marché, side, edge, confiance, mise conseillée, boutons BUY/PASS.
-    Returns le nombre d'envois réussis.
+    Push signal premium à tous les abonnés actifs.
+    Format : titre en gras, code block pour les métriques, boutons CONFIRMER/IGNORER.
+    Returns nombre d'envois réussis.
     """
     chat_ids = await _get_active_subscriber_chat_ids()
     if not chat_ids:
@@ -301,23 +335,37 @@ async def push_signal_to_subscribers(
     if not token:
         return 0
 
-    # Mise conseillée : Kelly fraction, plafonné à 5% du capital
+    # Métriques
     stake = round(capital * min(kelly_fraction, 0.05), 2)
-    strength_icon = "⚡" if signal_strength == "STRONG_BUY" else "🟢"
-    line = "━━━━━━━━━━━━━━━━━━━━━"
+    ev = round(edge_pct * confidence, 1)
+    cat = _detect_category(question)
+    strength_label = "STRONG BUY" if signal_strength == "STRONG_BUY" else "BUY"
+    fair_price = round(polymarket_price + (edge_pct / 100), 2)
+    poly_pct = round(polymarket_price * 100)
+    fair_pct = round(fair_price * 100)
+    conf_str = _conf_label(confidence)
+    line = "━━━━━━━━━━━━━━━"
 
     msg = (
-        f"{strength_icon} <b>SIGNAL NEXUS CAPITAL</b>\n"
+        f"<b>⚡ {strength_label} · {cat}</b>\n"
         f"{line}\n"
-        f"<b>{question[:80]}</b>\n\n"
-        f"🎯 Signal      : <b>{side}</b>\n"
-        f"💲 Prix actuel : <b>${polymarket_price:.2f}</b>\n"
-        f"📊 Edge        : <b>{edge_pct:.1f}%</b>\n"
-        f"💡 Confiance   : <b>{confidence:.0%}</b>\n"
-        f"💰 Mise conseillée : <b>${stake:.2f}</b>\n"
-        f"{line}"
+        f"<b>{question[:72]}</b>\n"
+        f"<code>EV      +{ev:.1f}%\n"
+        f"EDGE    {edge_pct:.1f}pts\n"
+        f"MISE    ${stake:.2f}\n"
+        f"CONF    {conf_str}</code>\n"
+        f"{line}\n"
+        f"<i>POLY: {poly_pct}% · FAIR: {fair_pct}% · NEXUS BET</i>"
     )
-    kb = _signal_buy_keyboard(market_id, side)
+
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ CONFIRMER", "callback_data": f"buy_{market_id[:40]}|{side}"},
+                {"text": "✕ IGNORER",   "callback_data": f"ignore_{market_id[:40]}|{side}"},
+            ]
+        ]
+    }
 
     sent = 0
     for chat_id in chat_ids:
