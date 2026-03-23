@@ -26,9 +26,18 @@ CREATE TABLE IF NOT EXISTS trades (
     metadata JSONB DEFAULT '{}'
 );
 
-CREATE INDEX idx_trades_market_id ON trades(market_id);
-CREATE INDEX idx_trades_created_at ON trades(created_at DESC);
-CREATE INDEX idx_trades_status ON trades(status);
+-- Migrations : colonnes ajoutées après la création initiale
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS market_question TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS order_type TEXT DEFAULT 'LIMIT';
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS raw_order_id TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS pnl_usd DECIMAL(18, 6);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_reason TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+CREATE INDEX IF NOT EXISTS idx_trades_market_id ON trades(market_id);
+CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 
 -- ============================================
 -- DEBATES (Adversarial AI discussions)
@@ -46,9 +55,14 @@ CREATE TABLE IF NOT EXISTS debates (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_debates_trade_id ON debates(trade_id);
-CREATE INDEX idx_debates_market_id ON debates(market_id);
-CREATE INDEX idx_debates_created_at ON debates(created_at DESC);
+-- Migrations
+ALTER TABLE debates ADD COLUMN IF NOT EXISTS market_id TEXT;
+ALTER TABLE debates ADD COLUMN IF NOT EXISTS tokens_used INTEGER;
+ALTER TABLE debates ADD COLUMN IF NOT EXISTS model_used TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_debates_trade_id ON debates(trade_id);
+CREATE INDEX IF NOT EXISTS idx_debates_market_id ON debates(market_id);
+CREATE INDEX IF NOT EXISTS idx_debates_created_at ON debates(created_at DESC);
 
 -- ============================================
 -- POSITIONS
@@ -72,8 +86,29 @@ CREATE TABLE IF NOT EXISTS positions (
     UNIQUE(market_id, token_id)
 );
 
-CREATE INDEX idx_positions_market_id ON positions(market_id);
-CREATE INDEX idx_positions_status ON positions(status);
+-- Migrations : colonnes ajoutées après la création initiale
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS current_value_usd DECIMAL(18, 6);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS unrealized_pnl DECIMAL(18, 6);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS take_profit_price DECIMAL(8, 4);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS stop_loss_price DECIMAL(8, 4);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'OPEN';
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+-- Appliquer la contrainte CHECK sur status si elle manque (idempotent via DO block)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'positions_status_check'
+    ) THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_status_check
+            CHECK (status IN ('OPEN', 'CLOSED', 'PARTIAL'));
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_positions_market_id ON positions(market_id);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 
 -- ============================================
 -- SMART MONEY (Unusual Whales signals)
@@ -89,8 +124,8 @@ CREATE TABLE IF NOT EXISTS smart_money_signals (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_smart_money_symbol ON smart_money_signals(symbol);
-CREATE INDEX idx_smart_money_detected_at ON smart_money_signals(detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_smart_money_symbol ON smart_money_signals(symbol);
+CREATE INDEX IF NOT EXISTS idx_smart_money_detected_at ON smart_money_signals(detected_at DESC);
 
 -- ============================================
 -- BOT RUNS (Session metadata)
@@ -106,7 +141,7 @@ CREATE TABLE IF NOT EXISTS bot_runs (
     error_message TEXT
 );
 
-CREATE INDEX idx_bot_runs_started_at ON bot_runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bot_runs_started_at ON bot_runs(started_at DESC);
 
 -- ============================================
 -- USERS (Auth token pour dashboard privé)
@@ -123,8 +158,15 @@ CREATE TABLE IF NOT EXISTS users (
     referred_by TEXT
 );
 
-CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
-CREATE INDEX idx_users_access_token ON users(access_token);
+-- Migrations
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_users_telegram_chat_id ON users(telegram_chat_id);
+CREATE INDEX IF NOT EXISTS idx_users_access_token ON users(access_token);
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -140,16 +182,19 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 -- Si seul l'anon_key est configuré, ces policies permettent au bot de fonctionner.
 
 -- Dashboard : vérification token par valeur exacte (SELECT)
+DROP POLICY IF EXISTS "users_anon_select" ON users;
 CREATE POLICY "users_anon_select" ON users
     FOR SELECT TO anon
     USING (true);
 
 -- Bot /access : création d'un nouvel utilisateur (INSERT)
+DROP POLICY IF EXISTS "users_anon_insert" ON users;
 CREATE POLICY "users_anon_insert" ON users
     FOR INSERT TO anon
     WITH CHECK (true);
 
 -- Bot /access : rafraîchissement du token (UPDATE)
+DROP POLICY IF EXISTS "users_anon_update" ON users;
 CREATE POLICY "users_anon_update" ON users
     FOR UPDATE TO anon
     USING (true)
