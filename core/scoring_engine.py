@@ -235,7 +235,9 @@ class NexusScoringEngine:
                 "oddsFormat": "decimal",
             }
             r = httpx.get(url, params=params, timeout=10.0)
-            r.raise_for_status()
+            if r.status_code != 200:
+                log.debug("odds fetch %s: HTTP %d", sport_key, r.status_code)
+                return None
             events = r.json()
             if isinstance(events, list):
                 self._odds_cache[cache_key] = (now, events)

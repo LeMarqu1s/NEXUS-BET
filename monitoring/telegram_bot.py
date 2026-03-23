@@ -6,6 +6,7 @@ Performance: response <1s, cache 60s, timeout 5s on all external calls.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -210,15 +211,18 @@ async def _get_balance() -> float:
 
 async def _get_start_text() -> str:
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-    mode = "LIVE" if not sim else "SIM"
+    mode_tag = "🟡 SIMULATION" if sim else "🟢 LIVE"
     n = _get_market_count()
     balance = await _get_balance()
     return (
-        f"⚡ <b>NEXUS CAPITAL</b>\n"
+        f"<b>⚡ NEXUS CAPITAL</b>\n"
         f"<i>Prediction Market Intelligence</i>\n"
-        f"{LINE}\n"
-        f"● {mode}  📡 {n} marchés  💰 ${balance:,.2f}\n"
-        f"{LINE}"
+        f"<code>{LINE}</code>\n"
+        f"  {mode_tag}\n"
+        f"  📡 Marchés suivis : <b>{n}</b>\n"
+        f"  💰 Balance USDC   : <b>${balance:,.2f}</b>\n"
+        f"<code>{LINE}</code>\n"
+        f"<i>Choisissez une action :</i>"
     )
 
 
@@ -231,11 +235,13 @@ async def _get_scan_text() -> str:
         last_scan_ts = 0
         p_canonical = Path(PENDING_SIGNALS_PATH)
         log.info("Scan handler reading from: %s", os.path.abspath(str(p_canonical)))
+
+        # Read metadata (timestamp, market count)
         try:
             if p_canonical.exists():
-                data = json.loads(p_canonical.read_text(encoding="utf-8"))
-                log.info("Scan file read: signals=%d keys=%s", len(data.get("signals", [])), list(data.keys())[:6])
-                ts = data.get("last_scan_ts") or data.get("last_updated")
+                raw_data = json.loads(p_canonical.read_text(encoding="utf-8"))
+                log.info("Scan file read: signals=%d keys=%s", len(raw_data.get("signals", [])) if isinstance(raw_data, dict) else 0, list(raw_data.keys())[:6] if isinstance(raw_data, dict) else [])
+                ts = raw_data.get("last_scan_ts") or raw_data.get("last_updated") if isinstance(raw_data, dict) else None
                 if ts:
                     if isinstance(ts, (int, float)):
                         last_scan_ts = int(ts)
@@ -247,67 +253,81 @@ async def _get_scan_text() -> str:
             else:
                 cwd_path = Path("paperclip_pending_signals.json").resolve()
                 log.info("Canonical file missing at %s, cwd path: %s", p_canonical, cwd_path)
-                if cwd_path.exists() and cwd_path != p_canonical:
-                    log.info("Found file at cwd path instead - path mismatch!")
         except Exception as e:
             log.info("Scan file read error: %s", e)
-        mins = "—"
+
+        ago = "—"
         if last_scan_ts:
             delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
-            mins = f"{delta // 60}min ago" if delta >= 60 else "<1min ago"
+            ago = f"{delta // 60}min" if delta >= 60 else "&lt;1min"
 
+        # Read signals — primary path then fallback
         signals = get_pending_signals()
         if not signals:
             cwd_path = Path("paperclip_pending_signals.json").resolve()
             for try_path in [p_canonical, cwd_path]:
                 if try_path.exists():
                     try:
-                        data = json.loads(try_path.read_text(encoding="utf-8"))
-                        signals = data.get("signals", []) if isinstance(data, dict) else []
+                        fb_data = json.loads(try_path.read_text(encoding="utf-8"))
+                        signals = fb_data.get("signals", []) if isinstance(fb_data, dict) else []
                         if signals:
                             log.info("Fallback read from %s: %d signals", try_path, len(signals))
                         break
                     except Exception as e:
                         log.info("Fallback read error %s: %s", try_path, e)
+
         n_assets = _get_market_count()
         n_signals = len(signals)
+        sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+        mode_tag = "🟡 SIM" if sim else "🟢 LIVE"
 
         header = (
-            f"🔍 <b>MARKET SCANNER</b>\n"
-            f"{LINE}\n"
-            f"📡 Assets suivis   : {n_assets}\n"
-            f"🟢 Signaux actifs  : {n_signals}\n"
-            f"⚡ Min Edge requis : {threshold}%\n"
-            f"🕐 Dernier scan    : {mins}\n"
-            f"{LINE}\n"
+            f"<b>🔍 MARKET SCANNER</b>\n"
+            f"<code>{LINE}</code>\n"
+            f"  {mode_tag}  │  📡 <b>{n_assets}</b> marchés  │  ⚡ <b>{threshold}%</b> min edge\n"
+            f"  🕐 Dernier scan : <b>{ago}</b>\n"
+            f"  🟢 Signaux actifs : <b>{n_signals}</b>\n"
+            f"<code>{LINE}</code>\n"
         )
+
         if not signals:
             return (
                 header
-                + f"🔍 Scanner actif — {n_assets} marchés surveillés\n"
-                + f"Aucun signal ≥{threshold}% pour l'instant\n"
-                + f"Prochain scan dans 30s\n\n{LINE}"
+                + f"<i>Scanner actif — aucun signal ≥{threshold}% détecté</i>\n"
+                + f"<i>Prochain scan dans ~30s</i>\n"
+                + f"<code>{LINE}</code>"
             )
 
-        lines = [header + "TOP SIGNALS :\n"]
-        mt_map = {"binary": "BINARY", "multi_outcome": "MULTI", "scalar": "SCALAR"}
-        for s in signals[:5]:
-            q = (s.get("question") or str(s.get("market_id", "")))[:40]
-            mt = mt_map.get(str(s.get("market_type", "binary")).lower(), "BINARY")
-            rec = s.get("recommended_outcome") or s.get("side", "?")
+        mt_map = {"binary": "BIN", "multi_outcome": "MULTI", "scalar": "SCALAR"}
+        strength_map = {"STRONG_BUY": "⚡ STRONG", "BUY": "🟢 BUY"}
+        lines = [header + "<b>TOP SIGNALS</b>\n"]
+        for i, s in enumerate(signals[:5], 1):
+            # HTML-escape all dynamic content to prevent parse errors
+            q_raw = (s.get("question") or str(s.get("market_id", "")))[:50]
+            q = html.escape(q_raw)
+            mt = mt_map.get(str(s.get("market_type", "binary")).lower(), "BIN")
+            rec_raw = s.get("recommended_outcome") or s.get("side", "?")
+            rec = html.escape(str(rec_raw))
             price = float(s.get("polymarket_price") or s.get("price") or 0.5)
             edge = float(s.get("edge_pct", 0))
-            emoji = "⚡" if s.get("signal_strength") == "STRONG_BUY" else "🟢"
-            lines.append(f"{emoji} [{mt}] {q}\n→ {rec} @ ${price:.2f} | edge: {edge:.1f}%")
-        lines.append(f"\n{LINE}")
+            kelly = float(s.get("kelly_fraction", 0)) * 100
+            conf = float(s.get("confidence", 0)) * 100
+            strength = strength_map.get(str(s.get("signal_strength", "BUY")), "🟢 BUY")
+            lines.append(
+                f"<b>{i}. {q}</b>\n"
+                f"   {strength} │ [{mt}] │ {rec}\n"
+                f"   💲 <b>{price:.2f}</b>  │  Edge: <b>{edge:.1f}%</b>  │  Kelly: <b>{kelly:.1f}%</b>\n"
+                f"   Confiance: <b>{conf:.0f}%</b>\n"
+            )
+        lines.append(f"<code>{LINE}</code>")
         return "\n".join(lines)
     except Exception as e:
         log.exception("Scan failed: %s", e)
-        return f"🔍 <b>MARKET SCANNER</b>\n{LINE}\n❌ Erreur: {e}"
+        return f"🔍 <b>MARKET SCANNER</b>\n<code>{LINE}</code>\n❌ Erreur: {html.escape(str(e))}"
 
 
 async def _get_portfolio_text() -> str:
-    header = f"💼 <b>PORTFOLIO</b>\n{LINE}\n"
+    header = f"<b>💼 PORTFOLIO</b>\n<code>{LINE}</code>\n"
     try:
         balance = await _get_balance()
         from monitoring.trade_logger import trade_logger
@@ -324,17 +344,18 @@ async def _get_portfolio_text() -> str:
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
 
         pnl_sign = "+" if pnl_today >= 0 else ""
+        pnl_emoji = "📈" if pnl_today >= 0 else "📉"
         return (
             f"{header}"
-            f"💰 Balance      ${balance:,.2f} USDC\n"
-            f"📈 P&amp;L Today    {pnl_sign}${pnl_today:,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
-            f"🎯 Positions    {len(positions)} ouvertes\n"
-            f"✅ Win Rate     {win_rate:.0f}% ({wins} trades)\n"
-            f"{LINE}"
+            f"  💰 Balance      <b>${balance:,.2f}</b> USDC\n"
+            f"  {pnl_emoji} P&amp;L Today    <b>{pnl_sign}${pnl_today:,.2f}</b> ({pnl_sign}{pnl_pct:.1f}%)\n"
+            f"  🎯 Positions    <b>{len(positions)}</b> ouvertes\n"
+            f"  ✅ Win Rate     <b>{win_rate:.0f}%</b> ({wins}/{total_closed} trades)\n"
+            f"<code>{LINE}</code>"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
-        return f"{header}❌ Erreur: {e}"
+        return f"{header}❌ Erreur: {html.escape(str(e))}"
 
 
 async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
@@ -617,15 +638,17 @@ def _format_market_text(m: dict) -> tuple[str, InlineKeyboardMarkup]:
         poly_url = f"https://polymarket.com/event/{poly_slug}"
     else:
         poly_url = f"https://polymarket.com/market/{cid}" if cid else "https://polymarket.com"
+    question = html.escape((m.get("question") or "")[:80])
     text = (
-        f"🎯 <b>MARKET INTELLIGENCE</b>\n"
-        f"{LINE}\n"
-        f"{(m.get('question') or '')[:80]}\n"
-        f"YES: {yes_pct}% | NO: {no_pct}\n"
-        f"Volume 24h: ${vol:,.0f}\n"
-        f"Smart money: {smart_emoji} {smart.upper()} ({whale.get('large_trades_count', 0)} gros trades)\n"
-        f"Edge Nexus: {edge_str} | Score: {score_str}\n"
-        f"{LINE}"
+        f"<b>🎯 MARKET INTELLIGENCE</b>\n"
+        f"<code>{LINE}</code>\n"
+        f"<i>{question}</i>\n"
+        f"<code>{LINE}</code>\n"
+        f"  YES: <b>{yes_pct}%</b>  │  NO: <b>{no_pct}%</b>\n"
+        f"  📊 Volume 24h: <b>${vol:,.0f}</b>\n"
+        f"  {smart_emoji} Smart money: <b>{smart.upper()}</b> ({whale.get('large_trades_count', 0)} gros trades)\n"
+        f"  ⚡ Edge Nexus: <b>{edge_str}</b>  │  Score: <b>{score_str}</b>\n"
+        f"<code>{LINE}</code>"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 Voir sur Polymarket", url=poly_url)],
@@ -649,19 +672,21 @@ def _get_settings_text() -> str:
         max_pos = os.getenv("AUTO_TRADE_MAX_POSITIONS", "3")
         drawdown = os.getenv("AUTO_TRADE_DAILY_DRAWDOWN_LIMIT", "20")
         confirm = os.getenv("AUTO_TRADE_CONFIRM_BUY", "true").lower() in ("true", "1", "yes")
+        sim_label = "🟡 ON" if sim else "⚫ OFF"
+        at_label = "🟢 ON" if at else "⚫ OFF"
         return (
-            f"⚙️ <b>SETTINGS</b>\n"
-            f"{LINE}\n"
-            f"💰 Capital      <b>${cap:,.0f}</b>\n"
-            f"🔁 Simulation   <b>{'ON' if sim else 'OFF'}</b>\n"
-            f"🤖 Auto-Trade   <b>{'ON' if at else 'OFF'}</b>\n"
-            f"📊 Max Pos      <b>{max_pos}</b> │ Drawdown <b>{drawdown}%</b>\n"
-            f"✅ Confirm BUY  <b>{'YES' if confirm else 'NO'}</b>\n"
-            f"📐 Kelly        <b>{kelly:.1f}%</b> │ Edge min <b>{min_edge:.1f}%</b>\n"
-            f"{LINE}"
+            f"<b>⚙️ SETTINGS</b>\n"
+            f"<code>{LINE}</code>\n"
+            f"  💰 Capital      <b>${cap:,.0f}</b> USDC\n"
+            f"  🔁 Simulation   <b>{sim_label}</b>\n"
+            f"  🤖 Auto-Trade   <b>{at_label}</b>\n"
+            f"  📊 Max Pos      <b>{max_pos}</b>  │  Drawdown <b>{drawdown}%</b>\n"
+            f"  ✅ Confirm BUY  <b>{'YES' if confirm else 'NO'}</b>\n"
+            f"  📐 Kelly        <b>{kelly:.1f}%</b>  │  Edge min <b>{min_edge:.1f}%</b>\n"
+            f"<code>{LINE}</code>"
         )
     except Exception as e:
-        return f"⚙️ <b>SETTINGS</b>\n{LINE}\n❌ {e}"
+        return f"<b>⚙️ SETTINGS</b>\n<code>{LINE}</code>\n❌ {html.escape(str(e))}"
 
 
 # ══════════════════════════════════════════════
@@ -726,10 +751,13 @@ def _scan_fallback() -> str:
     """Fallback when scan fails — never leave user with nothing."""
     n = _get_market_count()
     return (
-        f"🔍 <b>SCANNER</b>\n{LINE}\n"
-        f"🔍 Scanner actif — {n} marchés surveillés\n"
-        f"Aucun signal ≥5% pour l'instant\n"
-        f"Prochain scan dans 30s\n\n{LINE}"
+        f"<b>🔍 MARKET SCANNER</b>\n<code>{LINE}</code>\n"
+        f"  📡 Marchés suivis : <b>{n}</b>\n"
+        f"  🟢 Signaux actifs : <b>0</b>\n"
+        f"<code>{LINE}</code>\n"
+        f"<i>Scanner actif — aucun signal ≥5% pour l'instant</i>\n"
+        f"<i>Prochain scan dans ~30s</i>\n"
+        f"<code>{LINE}</code>"
     )
 
 
@@ -1436,6 +1464,8 @@ async def run_forever() -> None:
     """
     Run Telegram poller using low-level async API (no run_polling event loop).
     Compatible with asyncio.gather() in main.py.
+    RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0 eliminates Conflict at the platform level.
+    This function also handles Conflict gracefully at the bot level.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1445,8 +1475,14 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
+    # Wait longer on Railway to let previous deployment fully terminate
+    overlap_wait = int(os.getenv("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS", "5"))
+    if overlap_wait > 0:
+        log.info("Waiting %ds for previous deployment to terminate (RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=%d)", overlap_wait, overlap_wait)
+        await asyncio.sleep(overlap_wait)
+
     await close_telegram_session(token)
-    await asyncio.sleep(3)  # let old instance fully terminate during Railway deploy
+    await asyncio.sleep(2)  # brief pause after webhook delete before starting poller
 
     app = build_application(token)
     try:

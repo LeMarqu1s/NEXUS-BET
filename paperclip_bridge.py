@@ -47,9 +47,14 @@ def on_signal(sig: EdgeSignal) -> None:
         existing: list[dict[str, Any]] = []
         data: dict[str, Any] = {}
         if PENDING_SIGNALS_FILE.exists():
-            with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-                existing = data.get("signals", []) if isinstance(data, dict) else data
+            try:
+                with open(PENDING_SIGNALS_FILE, encoding="utf-8") as f:
+                    data = json.load(f)
+                existing = data.get("signals", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            except Exception as read_err:
+                log.warning("on_signal: could not read existing signals (treating as empty): %s", read_err)
+                existing = []
+                data = {}
 
         entry = {
             "market_id": sig.market_id,
@@ -70,21 +75,37 @@ def on_signal(sig: EdgeSignal) -> None:
             if isinstance(data, dict):
                 out["market_count"] = data.get("market_count", 0)
                 out["last_scan_ts"] = data.get("last_scan_ts", __import__("time").time())
-            with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
+            else:
+                out["last_scan_ts"] = __import__("time").time()
+            # Atomic write: .tmp then rename to prevent partial-write corruption
+            tmp = PENDING_SIGNALS_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
+            tmp.replace(PENDING_SIGNALS_FILE)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
-            # Push notification for STRONG_BUY even when bot idle
-            if getattr(sig, "signal_strength", "BUY") == "STRONG_BUY":
-                try:
-                    import asyncio
+            # Push signal card notification (every signal, card for STRONG_BUY)
+            try:
+                import asyncio
+                import os
+                bot_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+                chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+                strength = getattr(sig, "signal_strength", "BUY")
+                loop = asyncio.get_running_loop()
+                if strength == "STRONG_BUY" and bot_token and chat_id:
+                    from monitoring.signal_card_generator import send_signal_card
+                    loop.create_task(send_signal_card(entry, bot_token, chat_id))
+                else:
                     from monitoring.telegram_alerts import send_telegram_message
-                    msg = f"🔥 <b>STRONG_BUY</b> détecté!\n{entry.get('question','')[:60]}...\nEdge: {entry.get('edge_pct',0):.1f}%"
-                    loop = asyncio.get_running_loop()
+                    import html as _html
+                    q = _html.escape(entry.get("question", "")[:60])
+                    edge_val = entry.get("edge_pct", 0)
+                    icon = "🔥" if strength == "STRONG_BUY" else "⚡"
+                    msg = f"{icon} <b>{strength}</b>\n<i>{q}</i>\nEdge: <b>{edge_val:.1f}%</b>"
                     loop.create_task(send_telegram_message(msg))
-                except RuntimeError:
-                    pass  # No running loop (sync context)
-                except Exception:
-                    pass
+            except RuntimeError:
+                pass  # No running loop (sync context)
+            except Exception:
+                pass
     except Exception as e:
         log.warning("paperclip_bridge on_signal error: %s", e)
 
