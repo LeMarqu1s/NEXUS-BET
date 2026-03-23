@@ -142,8 +142,32 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_count INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS dashboard_token TEXT;
 CREATE INDEX IF NOT EXISTS idx_users_telegram_chat_id ON users(telegram_chat_id);
 CREATE INDEX IF NOT EXISTS idx_users_access_token ON users(access_token);
+CREATE INDEX IF NOT EXISTS idx_users_dashboard_token ON users(dashboard_token);
+
+-- ============================================
+-- SIGNALS
+-- ============================================
+CREATE TABLE IF NOT EXISTS signals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    market_id TEXT NOT NULL,
+    side TEXT NOT NULL,
+    question TEXT,
+    edge_pct DECIMAL(8, 4),
+    kelly_fraction DECIMAL(8, 4),
+    confidence DECIMAL(4, 2),
+    polymarket_price DECIMAL(8, 4),
+    fair_price DECIMAL(8, 4),
+    signal_strength TEXT DEFAULT 'BUY',
+    market_type TEXT DEFAULT 'binary',
+    reasoning TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signals_market_id ON signals(market_id);
 
 -- ============================================
 -- RLS

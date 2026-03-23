@@ -14,11 +14,11 @@ export interface NavModule {
 export const SIDEBAR_MODULES: NavModule[] = [
   // MODULES DE GESTION
   {
-    id: "wallet",
-    label: "Hybrid Wallet System",
+    id: "portfolio",
+    label: "Portfolio & PnL",
     icon: "wallet",
     group: "gestion",
-    description: "Web3Modal ou Custodial • DeFi Yield Hedging (Aave USDC)",
+    description: "Positions ouvertes · Historique trades · PnL en temps réel",
   },
   {
     id: "compound",

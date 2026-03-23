@@ -1048,6 +1048,110 @@ async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _safe_reply(update, f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>")
 
 
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Génère un token d'accès dashboard et envoie le lien à l'utilisateur."""
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    if not chat_id:
+        return
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-terminal.vercel.app")
+
+    if not url or not key:
+        await _safe_reply(update, f"<b>📊 DASHBOARD</b>\n{L}\n<i>Supabase non configuré.</i>")
+        return
+
+    try:
+        token = uuid.uuid4().hex[:16]
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            headers = {
+                "apikey": key, "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal",
+            }
+            # Check user is active
+            r = await client.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "is_active,plan"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            rows = r.json() if r.status_code == 200 else []
+            if not rows or not rows[0].get("is_active"):
+                await _safe_reply(
+                    update,
+                    f"<b>📊 DASHBOARD</b>\n{L}\n"
+                    "⛔ Ton abonnement n'est pas actif.\n"
+                    "Contacte l'admin pour activer ton accès.",
+                )
+                return
+            # Store dashboard_token
+            await client.patch(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}"},
+                headers=headers,
+                json={"dashboard_token": token},
+            )
+        link = f"{dashboard_url}?token={token}"
+        plan = rows[0].get("plan", "premium").upper()
+        msg = (
+            f"<b>📊 DASHBOARD NEXUS</b>\n{L}\n"
+            f"Plan <b>{plan}</b> · Lien valide 30 jours\n\n"
+            f"<code>{link}</code>\n\n"
+            f"{L}\n"
+            f"<i>Ne partage pas ce lien — il est lié à ton compte.</i>"
+        )
+        await _safe_reply(update, msg)
+    except Exception as e:
+        log.warning("cmd_dashboard: %s", e)
+        await _safe_reply(update, f"<b>❌ ERREUR</b>\n{L}\n<code>{e}</code>")
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Status du système : scanner, signaux, abonnés."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+
+    signals_today = 0
+    last_signal = "—"
+    active_users = 0
+
+    if url and key:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                h = {"apikey": key, "Authorization": f"Bearer {key}"}
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                r1 = await client.get(
+                    f"{url}/rest/v1/signals",
+                    params={"created_at": f"gte.{today}T00:00:00Z", "select": "id,created_at", "order": "created_at.desc"},
+                    headers=h,
+                )
+                if r1.status_code == 200:
+                    rows = r1.json()
+                    signals_today = len(rows) if isinstance(rows, list) else 0
+                    if rows:
+                        last_signal = rows[0].get("created_at", "")[:16].replace("T", " ")
+
+                r2 = await client.get(
+                    f"{url}/rest/v1/users",
+                    params={"is_active": "eq.true", "select": "id"},
+                    headers=h,
+                )
+                if r2.status_code == 200:
+                    active_users = len(r2.json()) if isinstance(r2.json(), list) else 0
+        except Exception:
+            pass
+
+    n_markets = _get_market_count()
+    msg = (
+        f"<b>⚡ NEXUS STATUS</b>\n{L}\n"
+        f"<code>SCANNER  {'🟢 UP' if n_markets > 0 else '🔴 DOWN'}\n"
+        f"MARCHÉS  {n_markets}\n"
+        f"SIGNAUX  {signals_today} aujourd'hui\n"
+        f"DERNIER  {last_signal}\n"
+        f"ABONNÉS  {active_users} actifs</code>\n{L}"
+    )
+    await _safe_reply(update, msg)
+
+
 async def handle_wallet_paste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     m = POLYGON_ADDRESS_PATTERN.match(text)
@@ -1592,6 +1696,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("exit", cmd_exit))
     app.add_handler(CommandHandler("access", cmd_access))
     app.add_handler(CommandHandler("activate", cmd_activate))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(

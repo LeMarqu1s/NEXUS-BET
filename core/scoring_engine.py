@@ -69,6 +69,8 @@ SPORT_KEYWORDS_MAP = (
 )
 
 ODDS_CACHE_TTL = 300
+FAILURE_CACHE_TTL = 60   # Cache failures for 60s to avoid immediate retry
+CLAUDE_CACHE_TTL = 3600  # Cache Claude fair values for 1h (questions are stable)
 
 
 def _mask_api_key(s: str) -> str:
@@ -96,6 +98,15 @@ class NexusScoringEngine:
 
     TIME_DECAY_TAU_DAYS = 15.0
     TIME_SCORE_UNKNOWN_DAYS = 50.0
+
+    # Class-level circuit breaker (shared across all instances)
+    _cb_failures: int = 0
+    _cb_disabled_until: float = 0.0
+    _CB_THRESHOLD: int = 3
+    _CB_COOLDOWN: int = 600  # 10 minutes
+
+    # Class-level Claude fair value cache
+    _claude_cache: dict[str, tuple[float, float]] = {}  # question_hash -> (ts, fair_value)
 
     def __init__(self, weights: Optional[ScoringWeights] = None) -> None:
         self.weights = weights or ScoringWeights()
@@ -218,14 +229,23 @@ class NexusScoringEngine:
             return "multi_outcome" if len(outcomes) > 2 else "binary"
 
     def _get_cached_odds(self, sport_key: str, api_key: str, market: str = "h2h") -> Optional[list]:
-        """Fetch odds from Odds API. regions=eu, markets=h2h, decimal format. Cache TTL 300s."""
+        """Fetch odds from Odds API. regions=eu, markets=h2h, decimal format. Cache TTL 300s.
+        Circuit breaker: after 3x 401, pause for 10 min. Failures cached for 60s."""
+        now = time.time()
+
+        # Check circuit breaker
+        if now < NexusScoringEngine._cb_disabled_until:
+            return None
+
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         cache_key = f"{sport_key}_{date_str}_{market}"
-        now = time.time()
+
         if cache_key in self._odds_cache:
             ts, data = self._odds_cache[cache_key]
-            if now - ts < ODDS_CACHE_TTL:
+            ttl = FAILURE_CACHE_TTL if data is None else ODDS_CACHE_TTL
+            if now - ts < ttl:
                 return data
+
         try:
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
             params = {
@@ -235,47 +255,143 @@ class NexusScoringEngine:
                 "oddsFormat": "decimal",
             }
             r = httpx.get(url, params=params, timeout=10.0)
+            if r.status_code == 401:
+                NexusScoringEngine._cb_failures += 1
+                if NexusScoringEngine._cb_failures >= NexusScoringEngine._CB_THRESHOLD:
+                    NexusScoringEngine._cb_disabled_until = now + NexusScoringEngine._CB_COOLDOWN
+                    log.warning(
+                        "ODDS_API circuit breaker OPEN: 3x 401, pausing %d min",
+                        NexusScoringEngine._CB_COOLDOWN // 60,
+                    )
+                self._odds_cache[cache_key] = (now, None)
+                return None
             r.raise_for_status()
             events = r.json()
             if isinstance(events, list):
+                NexusScoringEngine._cb_failures = 0  # Reset on success
                 self._odds_cache[cache_key] = (now, events)
                 return events
+            self._odds_cache[cache_key] = (now, None)
         except Exception as e:
             log.debug("odds fetch %s: %s", sport_key, _mask_api_key(str(e)))
+            self._odds_cache[cache_key] = (now, None)
         return None
 
     def get_fair_value_for_yes(self, market_data: dict[str, Any]) -> Optional[float]:
         """
-        Return fair value (0-1) for YES outcome from Odds API, or None if not available.
-        Matches Polymarket question to Odds API events by team names and dates.
+        Return fair value (0-1) for YES outcome.
+        1. Try Odds API (sports markets with real bookmaker data)
+        2. Fallback to Claude AI for non-sports markets (elections, crypto, macro, etc.)
         """
-        api_key = os.getenv("ODDS_API_KEY", "")
-        if not api_key:
-            return None
         question = (market_data.get("question") or "").strip()
         q_lower = question.lower()
-        if not question or self._is_non_sport(q_lower):
+        if not question:
             return None
-        sport_key = self._match_sport_key_static(q_lower)
+
+        api_key = os.getenv("ODDS_API_KEY", "")
+        sport_key = self._match_sport_key_static(q_lower) if not self._is_non_sport(q_lower) else None
+
+        # Try ODDS_API for sports markets
+        if api_key and sport_key and not (time.time() < NexusScoringEngine._cb_disabled_until):
+            try:
+                events = self._get_cached_odds(sport_key, api_key, "h2h")
+                if events:
+                    result = self._binary_fair_value_with_match(question, events, market_data)
+                    if result is not None:
+                        fair, odds_game, outcome_name = result
+                        pm_price = self._extract_pm_yes_price(market_data)
+                        edge_pct = ((fair - pm_price) / pm_price * 100) if pm_price > 0.01 else 0
+                        log.info(
+                            "ODDS MATCH: %s ↔ %s | odds_prob=%.2f | poly_prob=%.2f | edge=%.2f%%",
+                            question[:50], odds_game, fair, pm_price, edge_pct,
+                        )
+                        return fair
+            except Exception as e:
+                log.debug("get_fair_value_for_yes odds: %s", _mask_api_key(str(e)))
+
+        # Non-sports markets (elections, crypto, macro, AI, culture...): use Claude AI
         if not sport_key:
+            return self._get_fair_value_claude(market_data)
+
+        # Sports market but ODDS_API unavailable — no fake edges
+        return None
+
+    def _get_fair_value_claude(self, market_data: dict[str, Any]) -> Optional[float]:
+        """
+        Fair value estimate from Claude AI — used for non-sports prediction markets.
+        Cached per question for 1 hour to avoid excessive API calls.
+        """
+        from config.settings import settings as _settings
+        api_key = _settings.ANTHROPIC_API_KEY
+        if not api_key:
             return None
+        question = (market_data.get("question") or "")[:120].strip()
+        if not question:
+            return None
+
+        # Check cache
+        cache_key = question[:80]
+        now = time.time()
+        if cache_key in NexusScoringEngine._claude_cache:
+            ts, val = NexusScoringEngine._claude_cache[cache_key]
+            if now - ts < CLAUDE_CACHE_TTL:
+                return val
+
+        pm_price = self._extract_pm_yes_price(market_data)
         try:
-            events = self._get_cached_odds(sport_key, api_key, "h2h")
-            if not events:
-                return None
-            result = self._binary_fair_value_with_match(question, events, market_data)
-            if result is not None:
-                fair, odds_game, outcome_name = result
-                pm_price = self._extract_pm_yes_price(market_data)
-                edge_pct = ((fair - pm_price) / pm_price * 100) if pm_price > 0.01 else 0
-                log.info(
-                    "ODDS MATCH: %s ↔ %s | odds_prob=%.2f | poly_prob=%.2f | edge=%.2f%%",
-                    question[:50], odds_game, fair, pm_price, edge_pct,
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    val = pool.submit(
+                        asyncio.run, self._claude_fair_value_async(api_key, question, pm_price)
+                    ).result(timeout=15)
+            else:
+                val = asyncio.run(self._claude_fair_value_async(api_key, question, pm_price))
+            if val is not None:
+                NexusScoringEngine._claude_cache[cache_key] = (now, val)
+            return val
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _claude_fair_value_async(api_key: str, question: str, pm_price: float) -> Optional[float]:
+        """Call Claude Haiku to estimate fair probability for a prediction market."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 80,
+                        "system": "You are a prediction market analyst. Return ONLY valid JSON, no other text.",
+                        "messages": [{"role": "user", "content": (
+                            f'Prediction market: "{question}"\n'
+                            f'Current Polymarket price YES: {pm_price:.2f}\n'
+                            "Estimate the true probability of YES based on your knowledge. "
+                            "Consider base rates, current events, and market context.\n"
+                            'Reply ONLY with JSON: {"fair": <0.01-0.99>, "confidence": <0.5-0.85>}'
+                        )}],
+                    },
                 )
+                resp.raise_for_status()
+                text = resp.json().get("content", [{}])[0].get("text", "")
+                parsed = json.loads(text)
+                fair = float(parsed.get("fair", pm_price))
+                fair = max(0.01, min(0.99, fair))
+                log.info("CLAUDE FAIR: %s → fair=%.2f (poly=%.2f)", question[:50], fair, pm_price)
                 return fair
         except Exception as e:
-            log.debug("get_fair_value_for_yes: %s", _mask_api_key(str(e)))
-        return None
+            log.debug("claude_fair_value: %s", e)
+            return None
 
     def _score_binary_sport(
         self,

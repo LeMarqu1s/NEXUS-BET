@@ -73,6 +73,27 @@ def on_signal(sig: EdgeSignal) -> None:
             with open(PENDING_SIGNALS_FILE, "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
             log.info("Signal enregistré pour Paperclip: %s %s edge=%.2f%%", sig.market_id, sig.side, sig.edge_pct * 100)
+            # Persist signal to Supabase
+            try:
+                import asyncio as _asyncio
+                from supabase_client import supabase_client as _sc
+                _loop = _asyncio.get_running_loop()
+                _loop.create_task(_sc.log_signal(
+                    market_id=sig.market_id,
+                    side=sig.side,
+                    question=entry.get("question", ""),
+                    edge_pct=sig.edge_pct * 100,
+                    kelly_fraction=sig.kelly_fraction,
+                    confidence=sig.confidence,
+                    polymarket_price=sig.polymarket_price,
+                    fair_price=getattr(sig, "model_fair_price", None),
+                    signal_strength=getattr(sig, "signal_strength", "BUY"),
+                    market_type=getattr(sig, "market_type", "binary"),
+                ))
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
             # Push signal to all active subscribers
             try:
                 import asyncio
