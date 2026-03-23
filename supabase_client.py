@@ -134,7 +134,7 @@ class SupabaseClient:
             return False
 
         def _insert():
-            client.table("debates").insert(
+            client.table("agent_debates").insert(
                 {
                     "trade_id": trade_id,
                     "market_id": market_id,
