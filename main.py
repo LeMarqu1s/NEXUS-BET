@@ -28,7 +28,35 @@ async def run_telegram():
             await asyncio.sleep(5)
 
 
+def check_env():
+    import os
+    issues = []
+    required = {
+        "SUPABASE_URL": "URL projet Supabase (Settings → API)",
+        "SUPABASE_ANON_KEY": "Clé anon public Supabase (Settings → API)",
+        "TELEGRAM_BOT_TOKEN": "Token bot Telegram (@BotFather)",
+        "TELEGRAM_CHAT_ID": "Ton chat ID Telegram",
+    }
+    for key, desc in required.items():
+        val = os.getenv(key, "")
+        if not val:
+            issues.append(f"  ❌ MANQUANT: {key}  ({desc})")
+        else:
+            masked = val[:8] + "..." if len(val) > 8 else "***"
+            log.info("  ✅ %s = %s", key, masked)
+    if issues:
+        log.warning("=" * 60)
+        log.warning("VARIABLES MANQUANTES — Supabase ne fonctionnera PAS :")
+        for issue in issues:
+            log.warning(issue)
+        log.warning("→ Ajoute-les dans Railway → Variables")
+        log.warning("=" * 60)
+    else:
+        log.info("Toutes les variables critiques sont présentes.")
+
+
 async def main():
+    check_env()
     log.info("NEXUS BET starting...")
     await asyncio.gather(
         run_scanner(),
