@@ -296,21 +296,41 @@ async def _get_scan_text() -> str:
             f"SCAN      {mins}</code>\n"
             f"{L}"
         ]
+        from config.settings import settings as _s
+        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+        sim = getattr(_s, "SIMULATION_MODE", True)
+        mode_label = "PAPER" if sim else "LIVE"
+        kb_rows: list = []
         for s in signals[:5]:
-            q = (s.get("question") or str(s.get("market_id", "")))[:42]
-            side = s.get("recommended_outcome") or s.get("side", "?")
+            mid = s.get("market_id") or s.get("conditionId") or ""
+            q = (s.get("question") or str(mid))[:42]
+            side = s.get("recommended_outcome") or s.get("side", "YES")
             price = float(s.get("polymarket_price") or 0.5)
             edge = float(s.get("edge_pct", 0))
             conf = float(s.get("confidence", 0))
+            kelly = float(s.get("kelly_fraction") or 0.05)
+            size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
             tag = "⚡ STRONG BUY" if s.get("signal_strength") == "STRONG_BUY" else "🟢 BUY"
             cat = _detect_category(q)
             lines.append(
                 f"\n{tag} · {cat}\n"
                 f"<b>{q}</b>\n"
-                f"<code>{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}</code>"
+                f"{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}"
             )
+            if mid:
+                cb_buy = f"buy_{mid[:38]}|{side}"
+                cb_pass = f"pass_{mid[:38]}"
+                kb_rows.append([
+                    InlineKeyboardButton(f"✅ BUY ${size_usd:.0f} [{mode_label}]", callback_data=cb_buy),
+                    InlineKeyboardButton("❌ PASS", callback_data=cb_pass),
+                ])
         lines.append(f"\n{L}")
-        return "\n".join(lines)
+        kb_rows.append([
+            InlineKeyboardButton("⟳ REFRESH", callback_data="btn_scan"),
+            InlineKeyboardButton("← MENU", callback_data="menu_back"),
+        ])
+        keyboard = InlineKeyboardMarkup(kb_rows)
+        return "\n".join(lines), keyboard
     except Exception as e:
         log.exception("Scan failed: %s", e)
         return f"<b>📡 MARKET SCANNER</b>\n{L}\n<code>ERREUR — {e}</code>"
@@ -1478,8 +1498,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_scan":
         await edit(f"<b>📡 SCANNING...</b>\n{L}", None)
-        text = await _safe_get(_get_scan_text, _scan_fallback(), None)()
-        await edit(text, _scan_keyboard())
+        result = await _safe_get(_get_scan_text, _scan_fallback(), None)()
+        if isinstance(result, tuple):
+            text, kb = result[0], result[1]
+        else:
+            text, kb = result, _scan_keyboard()
+        await edit(text, kb)
         return
 
     if data == "btn_portfolio":
@@ -1535,16 +1559,87 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         parts = data[4:].split("|", 1)
         market_id = parts[0] if parts else ""
         side = parts[1] if len(parts) > 1 else "YES"
-        from config.settings import settings as _s
-        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
-        await edit(
-            f"<b>✅ POSITION ENREGISTRÉE</b>\n{L}\n"
-            f"<code>MARCHÉ  {market_id[:38]}\n"
-            f"SIDE    {side}\n"
-            f"CAPITAL ${cap:,.0f}</code>\n{L}\n"
-            f"<i>Active Auto-Trade dans ⚙️ SETTINGS pour l'exécution auto.</i>",
-            _back_keyboard(),
-        )
+        await edit(f"<b>⏳ EXÉCUTION...</b>\n{L}", None)
+        try:
+            from config.settings import settings as _s
+            from paperclip_bridge import get_pending_signals
+            sim = getattr(_s, "SIMULATION_MODE", True)
+            # Find matching signal for rich metadata
+            sig_match: dict = {"market_id": market_id, "side": side, "recommended_outcome": side}
+            try:
+                for sig in (get_pending_signals() or []):
+                    mid = sig.get("market_id") or sig.get("conditionId") or ""
+                    if mid.startswith(market_id) or market_id.startswith(mid[:20]):
+                        sig_match = sig
+                        break
+            except Exception:
+                pass
+            price = float(sig_match.get("polymarket_price") or 0.5)
+            kelly = float(sig_match.get("kelly_fraction") or 0.05)
+            cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+            size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
+            question = (sig_match.get("question") or market_id)[:50]
+            if sim:
+                # Paper trade
+                from monitoring.paper_portfolio import record_paper_trade
+                paper_sig = {
+                    "market_id": market_id,
+                    "question": question,
+                    "side": side,
+                    "polymarket_price": price,
+                    "edge_pct": sig_match.get("edge_pct"),
+                    "confidence": sig_match.get("confidence"),
+                }
+                ok = record_paper_trade(paper_sig)
+                if ok:
+                    await edit(
+                        f"<b>✅ PAPER TRADE ENREGISTRÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                        f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>",
+                        _back_keyboard(),
+                    )
+                else:
+                    await edit(
+                        f"<b>⚠️ NON AJOUTÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"<i>Position déjà ouverte ou slots pleins (max 5)</i>",
+                        _back_keyboard(),
+                    )
+            else:
+                # Live order
+                from execution.order_manager import OrderManager, OrderConfig
+                mgr = OrderManager()
+                cfg = OrderConfig(
+                    market_id=market_id,
+                    outcome=side,
+                    side="BUY",
+                    size_usd=size_usd,
+                    limit_price=price,
+                )
+                order_id = await mgr.place_limit_order(cfg)
+                if order_id:
+                    await edit(
+                        f"<b>✅ ORDRE PLACÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                        f"Order: <code>{order_id}</code>\n{L}",
+                        _back_keyboard(),
+                    )
+                else:
+                    await edit(
+                        f"<b>❌ ÉCHEC ORDRE</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"<i>Vérifiez POLYMARKET_PRIVATE_KEY et les logs.</i>",
+                        _back_keyboard(),
+                    )
+        except Exception as e:
+            log.exception("buy_ callback: %s", e)
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", _back_keyboard())
+        return
+
+    if data.startswith("pass_"):
+        await edit(f"<b>❌ SIGNAL PASSÉ</b>\n{L}\n<i>Signal ignoré.</i>", _scan_keyboard())
         return
 
     if data.startswith("ignore_"):
