@@ -2,6 +2,7 @@ import os
 import sys
 import signal
 import asyncio
+import logging
 import time
 from dotenv import load_dotenv
 load_dotenv()
