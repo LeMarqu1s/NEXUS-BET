@@ -333,7 +333,7 @@ async def _get_portfolio_text() -> str:
         pnl_sign = "+" if pnl_today >= 0 else ""
         pnl_icon = "▲" if pnl_today >= 0 else "▼"
 
-        return (
+        real_block = (
             f"<b>💰 PORTFOLIO</b>\n{L}\n"
             f"<code>BALANCE   ${balance:,.2f} USDC\n"
             f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
@@ -341,6 +341,56 @@ async def _get_portfolio_text() -> str:
             f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
             f"{L}"
         )
+
+        # ── Section simulation $50 ── jamais bloque si erreur ──
+        paper_block = ""
+        try:
+            from monitoring.paper_portfolio import sync_from_signals, get_paper_summary, PAPER_CAPITAL
+            sync_from_signals()
+            s = get_paper_summary()
+            pnl_total = s["total_pnl"]
+            pnl_sign_p = "+" if pnl_total >= 0 else ""
+            pnl_icon_p = "▲" if pnl_total >= 0 else "▼"
+
+            lines_p = [
+                f"\n<b>🎮 PAPER TRADING · ${PAPER_CAPITAL:.0f}</b>\n{L}\n",
+                f"<code>"
+                f"CAPITAL   ${PAPER_CAPITAL:.0f} (sim)\n"
+                f"INVESTI   ${s['invested']:.2f}\n"
+                f"P&L TOT   {pnl_icon_p}{pnl_sign_p}${abs(pnl_total):.2f} ({pnl_sign_p}{s['total_pnl_pct']:.1f}%)\n"
+                f"WIN RATE  {s['win_rate']:.0f}% ({s['wins']}/{max(s['total_closed'],1)})\n"
+                f"OPEN      {len(s['open_trades'])} pos · FREE ${s['free']:.2f}"
+                f"</code>",
+            ]
+
+            # Positions ouvertes (max 5)
+            if s["open_trades"]:
+                lines_p.append(f"\n<b>Positions ouvertes :</b>")
+                for t in s["open_trades"][:5]:
+                    p_sign = "+" if t["pnl_pct"] >= 0 else ""
+                    p_icon = "▲" if t["pnl_pct"] >= 0 else "▼"
+                    q = t["question"][:38]
+                    lines_p.append(
+                        f"<code>{t['side']:<4} {p_icon}{p_sign}{t['pnl_pct']:.1f}%  "
+                        f"@{t['entry_price']:.2f}→{t['current_price']:.2f}\n"
+                        f"  {q}</code>"
+                    )
+
+            # Trades clôturés récents (max 3)
+            if s["closed_trades"]:
+                lines_p.append(f"\n<b>Derniers clôturés :</b>")
+                for t in s["closed_trades"][:3]:
+                    p = float(t.get("pnl_usd") or 0)
+                    icon = "✅" if p > 0 else "❌"
+                    q = t["question"][:38]
+                    lines_p.append(f"<code>{icon} {t['side']:<4} {p:+.2f}$  {q}</code>")
+
+            lines_p.append(f"\n{L}")
+            paper_block = "\n".join(lines_p)
+        except Exception as e:
+            log.debug("paper_portfolio in portfolio: %s", e)
+
+        return real_block + paper_block
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
         return f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — {e}</code>"
