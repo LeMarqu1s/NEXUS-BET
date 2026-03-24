@@ -319,9 +319,10 @@ class NexusScoringEngine:
 
     def _get_fair_value_claude(self, market_data: dict[str, Any]) -> Optional[float]:
         """
-        Fair value estimate from Claude AI — used for non-sports prediction markets.
-        Cached per question for 1 hour to avoid excessive API calls.
+        Fair value estimate from Claude AI — DISABLED: called in scan loop, causes 429 spam.
+        Scanner must work without Claude. Claude is only for agent debates.
         """
+        return None
         from config.settings import settings as _settings
         api_key = _settings.ANTHROPIC_API_KEY
         if not api_key:
@@ -582,9 +583,10 @@ class NexusScoringEngine:
 
     def _calc_news_sentiment_score(self, market_data: dict[str, Any]) -> float:
         """
-        Ask Claude for a bullish sentiment score (0–1) on the YES outcome.
-        Returns 0.5 on any failure or missing API key.
+        News sentiment via Claude — DISABLED: called in scan loop, causes 429 spam.
+        Scanner must work without Claude. Returns neutral 0.5.
         """
+        return 0.5
         from config.settings import settings as _settings
         api_key = _settings.ANTHROPIC_API_KEY
         if not api_key:
