@@ -6,6 +6,7 @@ Performance: response <1s, cache 60s, timeout 5s on all external calls.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -1501,7 +1502,7 @@ async def _run_buy_order(pending: dict, size_usd: float) -> str:
     market_id = pending["market_id"]
     side = pending["side"]
     price = pending["price"]
-    question = pending["question"]
+    question = html.escape(pending["question"])
     sim = pending["sim"]
     size_usd = round(size_usd, 1)
     if sim:
@@ -1668,7 +1669,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             kelly = float(sig_match.get("kelly_fraction") or 0.05)
             cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
             kelly_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
-            question = (sig_match.get("question") or market_id)[:50]
+            question = html.escape((sig_match.get("question") or market_id)[:50])
             context.user_data["buy_pending"] = {
                 "sig_match": sig_match,
                 "market_id": market_id,

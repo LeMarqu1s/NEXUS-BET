@@ -11,6 +11,7 @@ AI agents : post-trade analysis uniquement (rapports hebdomadaires).
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import time
@@ -222,7 +223,7 @@ class PolymarketSniper:
 
             self._last_alert[token_id] = time.time()
             market_id = str(market.get("conditionId") or market.get("id") or token_id)
-            question = str(market.get("question") or market_id)[:80]
+            question = html.escape(str(market.get("question") or market_id)[:80])
 
             return SniperSignal(
                 market_id=market_id,

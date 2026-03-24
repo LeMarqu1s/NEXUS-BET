@@ -5,6 +5,7 @@ Broadcast instantané sur Telegram avec boutons SNIPE / PASS.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 from typing import Any
@@ -75,18 +76,20 @@ async def push_sniper_alert(signal) -> None:
     kelly_usd = calculate_kelly(signal)
     target_pct = (signal.target_price / signal.price - 1) * 100
     stop_pct   = (1 - signal.stop_price / signal.price) * 100
+    safe_question = html.escape(signal.question[:60])
+    safe_signals  = " · ".join(html.escape(s) for s in signal.signals)
 
     L = "━━━━━━━━━━━━━━━"
     message = (
         f"⚡ <b>SNIPER ALERT</b>\n{L}\n"
-        f"<b>{signal.question[:60]}</b>\n\n"
+        f"<b>{safe_question}</b>\n\n"
         f"<code>"
         f"PRIX    {signal.price:.3f}\n"
         f"TARGET  {signal.target_price:.3f} (+{target_pct:.0f}%)\n"
         f"STOP    {signal.stop_price:.3f} (-{stop_pct:.0f}%)\n"
         f"CONF    {signal.confidence * 100:.0f}%"
         f"</code>\n{L}\n"
-        f"🔍 {' · '.join(signal.signals)}"
+        f"🔍 {safe_signals}"
     )
 
     buttons = InlineKeyboardMarkup([[
