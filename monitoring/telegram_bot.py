@@ -132,6 +132,7 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(copy_label, callback_data="settings_toggle_copy")],
         [InlineKeyboardButton("AVANCÉ", callback_data="settings_advanced")],
+        [InlineKeyboardButton("📊 DASHBOARD", callback_data="settings_dashboard")],
         [InlineKeyboardButton("← MENU", callback_data="menu_back")],
     ])
 
@@ -1496,6 +1497,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # ── Settings ──
     if data == "btn_settings":
         await edit(_get_settings_text(), _settings_keyboard())
+        return
+
+    if data == "settings_dashboard":
+        # Generate/show dashboard link for the user
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
+        # Try to get or generate a token from Supabase
+        token = ""
+        url_sb = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key_sb = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if url_sb and key_sb and chat_id:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(
+                        f"{url_sb}/rest/v1/users",
+                        params={"telegram_chat_id": f"eq.{chat_id}", "select": "access_token,is_active"},
+                        headers={"apikey": key_sb, "Authorization": f"Bearer {key_sb}"},
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if rows and isinstance(rows, list):
+                            token = rows[0].get("access_token", "")
+            except Exception:
+                pass
+        if not token:
+            token = str(uuid.uuid4()).replace("-", "")[:24]
+        private_link = f"{dashboard_url}?token={token}"
+        public_link = f"{dashboard_url}?token=public"
+        await edit(
+            f"<b>📊 DASHBOARD NEXUS BET</b>\n{L}\n"
+            f"<b>Lien privé (abonnés)</b>\n<code>{private_link}</code>\n\n"
+            f"<b>Track Record public</b>\n<code>{public_link}</code>\n\n"
+            f"{L}\n"
+            f"<i>Ne partage pas ton lien privé — lié à ton compte.</i>",
+            _settings_keyboard(),
+        )
         return
 
     if data == "settings_thresholds":

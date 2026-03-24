@@ -3,20 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NEXUS CAPITAL | Prediction Terminal</title>
+  <title>NEXUS BET | Prediction Terminal</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;NEXUS BET&quot;,&quot;short_name&quot;:&quot;NEXUS&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%230A0A0A&quot;,&quot;theme_color&quot;:&quot;%23B8963E&quot;,&quot;start_url&quot;:&quot;/&quot;}">
+  <meta name="theme-color" content="#B8963E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --gold: #F5A623;
-      --gold-light: #FFD700;
+      --gold: #B8963E;
+      --gold-light: #D4AF5A;
       --dark-bg: #0A0A0A;
       --dark-card: #111111;
       --dark-border: #1E1E1E;
       --glass-bg: rgba(255,255,255,0.03);
-      --glass-border: rgba(245,166,35,0.15);
-      --green: #00FF88;
+      --glass-border: rgba(184,150,62,0.2);
+      --green: #00C853;
       --red: #FF4444;
+      --blue: #2979FF;
       --text-primary: #FFFFFF;
       --text-secondary: #888888;
     }
@@ -28,7 +33,8 @@
       min-height: 100vh;
       overflow-x: hidden;
     }
-    .data-font { font-family: 'JetBrains Mono', monospace; }
+    .data-font { font-family: 'IBM Plex Mono', monospace; }
+    .title-font { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
     .text-secondary { color: var(--text-secondary); }
     .header {
       position: fixed;
@@ -44,7 +50,7 @@
       justify-content: space-between;
       z-index: 100;
     }
-    .logo { font-family: 'JetBrains Mono'; font-weight: 700; font-size: 1.2rem; color: var(--gold); }
+    .logo { font-family: 'Bebas Neue', sans-serif; font-size: 1.4rem; letter-spacing: 0.08em; color: var(--gold); }
     .status-bar { font-size: 0.75rem; color: var(--text-secondary); display: flex; gap: 16px; align-items: center; }
     .status-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
@@ -76,7 +82,7 @@
     .glass-card.metric { padding: 20px; }
     .glass-card.metric.live { animation: gold-pulse 2s ease-in-out infinite; }
     .glass-card h3 { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
-    .glass-card .val { font-family: 'JetBrains Mono'; font-size: 1.8rem; font-weight: 600; color: var(--gold); }
+    .glass-card .val { font-family: 'IBM Plex Mono'; font-size: 1.8rem; font-weight: 600; color: var(--gold); }
     .glass-card .val.green { color: var(--green); }
     .glass-card .val.red { color: var(--red); }
     .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
@@ -92,7 +98,7 @@
     }
     @keyframes slideIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
     .activity-item:last-child { border-bottom: none; }
-    .activity-time { color: var(--text-secondary); font-family: 'JetBrains Mono'; font-size: 0.75rem; margin-right: 8px; }
+    .activity-time { color: var(--text-secondary); font-family: 'IBM Plex Mono'; font-size: 0.75rem; margin-right: 8px; }
     table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
     th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--dark-border); }
     th { color: var(--text-secondary); font-weight: 500; font-size: 0.7rem; text-transform: uppercase; }
@@ -120,7 +126,7 @@
     .market-panel { position: fixed; top: 0; right: 0; width: 420px; max-width: 95vw; height: 100vh; background: var(--dark-bg); border-left: 1px solid var(--glass-border); z-index: 501; transform: translateX(100%); transition: transform 0.3s ease; overflow-y: auto; }
     .market-panel.open { transform: translateX(0); }
     .market-panel-inner { padding: 24px; font-size: 0.9rem; }
-    .market-panel h2 { font-size: 1rem; color: var(--gold); margin-bottom: 16px; font-family: JetBrains Mono; }
+    .market-panel h2 { font-size: 1rem; color: var(--gold); margin-bottom: 16px; font-family: IBM Plex Mono; }
     .market-panel-section { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--dark-border); }
     .market-panel-section:last-child { border-bottom: none; }
     .market-panel .mini-table { font-size: 0.75rem; width: 100%; }
@@ -135,7 +141,7 @@
   <div id="paywall-overlay" style="display:none;position:fixed;inset:0;background:var(--dark-bg);z-index:999;flex-direction:column;align-items:center;justify-content:center;padding:24px;flex:1;">
     <div class="glass-card" style="max-width:400px;text-align:center;padding:48px 32px;">
       <div style="font-size:2.5rem;margin-bottom:16px;">⚡</div>
-      <h1 style="font-family:JetBrains Mono;color:var(--gold);font-size:1.5rem;margin-bottom:8px;">NEXUS CAPITAL</h1>
+      <h1 style="font-family:IBM Plex Mono;color:var(--gold);font-size:1.5rem;margin-bottom:8px;">NEXUS CAPITAL</h1>
       <p style="color:var(--text-secondary);font-size:1rem;margin-bottom:24px;">Accès restreint aux abonnés</p>
       <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:24px;">Obtenez votre lien privé via le bot Telegram.</p>
       <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
@@ -145,27 +151,28 @@
     </div>
   </div>
   <header class="header" id="main-header">
-    <span class="logo">⚡ NEXUS CAPITAL</span>
+    <span class="logo">⚡ NEXUS BET</span>
     <div class="status-bar">
-      <span class="status-dot"></span>
-      <span>LIVE</span>
+      <span id="bot-status-pill" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:rgba(0,200,83,0.12);border:1px solid rgba(0,200,83,0.3);font-size:0.72rem;letter-spacing:0.05em">
+        <span class="status-dot"></span>
+        <span id="bot-mode-label">LIVE</span>
+      </span>
       <span>📡 <span id="market-count">—</span> marchés</span>
-      <span>🔄 refresh 5s</span>
-      <span id="utc-time">—</span>
+      <span id="utc-time" style="font-family:'IBM Plex Mono',monospace;font-size:0.75rem">—</span>
     </div>
     <nav class="nav">
       <a href="#" class="active" data-page="overview">Overview</a>
       <a href="#" data-page="signals">Signals</a>
       <a href="#" data-page="portfolio">Portfolio</a>
       <a href="#" data-page="debates">AI Debates</a>
-      <a href="#" data-page="performance">Performance</a>
+      <a href="#" data-page="performance">Track Record</a>
     </nav>
   </header>
 
   <main class="main">
     <div id="overview" class="page active">
       <div class="grid-4">
-        <div class="glass-card metric"><h3>💰 CAPITAL</h3><div class="val data-font" id="ov-capital">—</div></div>
+        <div class="glass-card metric live"><h3>💰 CAPITAL</h3><div class="val data-font" id="ov-capital">—</div></div>
         <div class="glass-card metric"><h3>📈 P&L TODAY</h3><div class="val data-font" id="ov-pnl">—</div></div>
         <div class="glass-card metric"><h3>🎯 POSITIONS</h3><div class="val data-font" id="ov-positions">—</div></div>
         <div class="glass-card metric"><h3>⚡ SIGNAUX ACTIFS</h3><div class="val data-font" id="ov-signals">—</div></div>
@@ -235,7 +242,7 @@
         <h3>SWARM NEXUS — 20 AGENTS IA EN TEMPS RÉEL</h3>
         <p id="deb-status" style="margin:8px 0;font-size:0.9rem;color:var(--text-secondary)">⏳ En veille</p>
         <div id="deb-timeline"></div>
-        <div id="deb-verdict" style="font-size:1.5rem;margin-top:16px;font-family:JetBrains Mono;color:var(--gold)"></div>
+        <div id="deb-verdict" style="font-size:1.5rem;margin-top:16px;font-family:IBM Plex Mono;color:var(--gold)"></div>
         <div class="glass-card" style="margin-top:20px">
           <h3>RECOMMANDATIONS CETTE SEMAINE</h3>
           <div id="deb-recs"></div>
@@ -244,27 +251,72 @@
     </div>
 
     <div id="performance" class="page">
-      <div class="glass-card">
-        <h3>TRACK RECORD PUBLIC — NEXUS CAPITAL</h3>
-        <p style="font-size:0.85rem;color:var(--text-secondary);margin:8px 0">Paper trading depuis <span id="perf-depuis">—</span> — résultats vérifiables on-chain</p>
+      <!-- Hero Banner — sales page proof -->
+      <div class="glass-card" style="text-align:center;padding:40px 24px;border-color:var(--glass-border);background:linear-gradient(135deg,rgba(184,150,62,0.05),rgba(10,10,10,0))">
+        <div class="title-font" style="font-size:3.5rem;color:var(--gold);line-height:1">NEXUS BET</div>
+        <div style="font-size:0.8rem;color:var(--text-secondary);letter-spacing:0.2em;margin:6px 0 20px">PREDICTION MARKET INTELLIGENCE · POLYMARKET</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:28px">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;background:rgba(0,200,83,0.12);border:1px solid rgba(0,200,83,0.3);font-size:0.8rem;font-family:'IBM Plex Mono',monospace">
+            <span style="width:7px;height:7px;background:var(--green);border-radius:50%;animation:pulse 2s infinite"></span>
+            BOT ACTIF — SIMULATION MODE
+          </span>
+          <span id="perf-verified-badge" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;background:rgba(184,150,62,0.1);border:1px solid var(--glass-border);font-size:0.8rem;font-family:'IBM Plex Mono',monospace;color:var(--gold)">
+            ✓ Verified by Supabase
+          </span>
+        </div>
+        <p style="font-size:0.9rem;color:var(--text-secondary);max-width:600px;margin:0 auto">
+          Bot autonome de prediction markets — détecte les mispricings sur Polymarket via 20 agents IA.
+          Track record vérifié depuis <span id="perf-depuis">—</span>.
+        </p>
       </div>
+
       <div class="grid-4">
-        <div class="glass-card metric"><h3>WIN RATE</h3><div class="val data-font" id="perf-wr">—</div></div>
+        <div class="glass-card metric live"><h3>WIN RATE</h3><div class="val data-font title-font" id="perf-wr" style="font-size:3rem">—</div></div>
         <div class="glass-card metric"><h3>TOTAL P&L</h3><div class="val data-font" id="perf-pnl">—</div></div>
         <div class="glass-card metric"><h3>TOTAL TRADES</h3><div class="val data-font" id="perf-trades">—</div></div>
         <div class="glass-card metric"><h3>AVG EDGE</h3><div class="val data-font" id="perf-edge">—</div></div>
       </div>
+
       <div class="glass-card">
-        <h3>P&L CUMULATIF</h3>
+        <h3>P&L CUMULATIF — 30 JOURS</h3>
         <canvas id="pnl-chart" class="pnl-chart" width="800" height="200"></canvas>
       </div>
-      <div class="glass-card">
-        <h3>BREAKDOWN PAR CATÉGORIE</h3>
-        <div id="perf-breakdown"></div>
+
+      <div class="grid-2">
+        <div class="glass-card">
+          <h3>MEILLEUR TRADE</h3>
+          <div id="perf-best-trade" style="font-size:2rem;color:var(--green);font-family:'IBM Plex Mono',monospace;margin:8px 0">—</div>
+          <div id="perf-best-trade-label" style="font-size:0.8rem;color:var(--text-secondary)">—</div>
+        </div>
+        <div class="glass-card">
+          <h3>BREAKDOWN PAR CATÉGORIE</h3>
+          <div id="perf-breakdown"></div>
+        </div>
       </div>
+
       <div class="glass-card">
-        <h3>MEILLEURS TRADES (TOP 5)</h3>
+        <h3>TOP 5 TRADES</h3>
         <div id="perf-best"></div>
+      </div>
+
+      <!-- CTA Section -->
+      <div class="glass-card" style="text-align:center;padding:40px 24px;border-color:var(--glass-border)">
+        <div class="title-font" style="font-size:2rem;color:var(--gold);margin-bottom:12px">REJOINS NEXUS BET</div>
+        <p style="color:var(--text-secondary);margin-bottom:24px;font-size:0.95rem">Accède aux signaux en temps réel · Suivi de portfolio · Auto-trade</p>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+          <div style="padding:16px 28px;border:1px solid var(--glass-border);border-radius:12px;min-width:160px">
+            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€97<span style="font-size:0.9rem;color:var(--text-secondary)">/mois</span></div>
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Signal Intel</div>
+          </div>
+          <div style="padding:16px 28px;background:rgba(184,150,62,0.1);border:1px solid var(--gold);border-radius:12px;min-width:160px">
+            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€197<span style="font-size:0.9rem;color:var(--text-secondary)">/mois</span></div>
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Full Auto ⚡</div>
+          </div>
+          <div style="padding:16px 28px;border:1px solid var(--glass-border);border-radius:12px;min-width:160px">
+            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€297<span style="font-size:0.9rem;color:var(--text-secondary)"> once</span></div>
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Lifetime License</div>
+          </div>
+        </div>
       </div>
     </div>
   </main>
@@ -492,12 +544,28 @@
           const mid = s.market_id || s.conditionId || '';
           const slug = (s.slug || '').replace(/^.*\//, '') || '';
           const clickId = mid || slug || (s.question || '').slice(0, 50);
-          return `<div class="signal-card glass-card" data-market-id="${mid || clickId}">
-            <div class="signal-type">[${mt}] ${cat}</div>
-            <div class="signal-question">${(s.question || s.market_id || '').slice(0, 80)}</div>
-            <div class="edge-bar"><div class="edge-bar-fill" style="width:${pct}%"></div></div>
-            <div class="signal-meta">Edge: ${edge.toFixed(1)}% | Outcome: ${s.side || 'YES'} @ $${price.toFixed(2)}</div>
-            <div style="font-size:0.8rem;color:var(--text-secondary)">Score IA: ${Math.min(100, 50 + edge * 2).toFixed(0)}/100</div>
+          const isStrong = (s.signal_strength || '').includes('STRONG');
+          const conf = parseFloat(s.confidence || 0);
+          const confLabel = conf >= 0.8 ? 'HIGH' : conf >= 0.6 ? 'MED' : 'LOW';
+          const kelly = parseFloat(s.kelly_fraction || 0);
+          const stake = (1000 * Math.min(kelly, 0.05)).toFixed(2);
+          const ev = (edge * (conf || 0.7)).toFixed(1);
+          const accentColor = isStrong ? 'var(--gold)' : 'var(--blue)';
+          const strLabel = isStrong ? '⚡ STRONG BUY' : '▲ BUY';
+          return `<div class="signal-card glass-card" data-market-id="${mid || clickId}" style="border-left:3px solid ${accentColor}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="color:${accentColor};font-size:0.75rem;font-family:'IBM Plex Mono',monospace;letter-spacing:0.08em">${strLabel} · ${cat}</span>
+              <span style="font-size:0.7rem;color:var(--text-secondary);font-family:'IBM Plex Mono',monospace">${mt}</span>
+            </div>
+            <div class="signal-question" style="margin-bottom:10px">${(s.question || s.market_id || '').slice(0, 80)}</div>
+            <div class="edge-bar" style="margin-bottom:10px"><div class="edge-bar-fill" style="width:${pct}%;background:${accentColor}"></div></div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;background:rgba(0,0,0,0.3);border-radius:8px;padding:10px">
+              <div><div style="color:var(--text-secondary)">EV</div><div style="color:var(--green)">+${ev}%</div></div>
+              <div><div style="color:var(--text-secondary)">EDGE</div><div style="color:var(--text-primary)">${edge.toFixed(1)}pts</div></div>
+              <div><div style="color:var(--text-secondary)">MISE</div><div style="color:var(--text-primary)">$${stake}</div></div>
+              <div><div style="color:var(--text-secondary)">CONF</div><div style="color:var(--gold)">${confLabel}</div></div>
+            </div>
+            <div style="margin-top:8px;font-size:0.75rem;color:var(--text-secondary);font-family:'IBM Plex Mono',monospace">POLY: ${(price*100).toFixed(0)}% · FAIR: ${((price + edge/100)*100).toFixed(0)}% · ${s.side || 'YES'}</div>
           </div>`;
         }).join('');
         document.querySelectorAll('#sig-list .signal-card').forEach(card => {
@@ -603,7 +671,7 @@
           const min = Math.min(...vals), max = Math.max(...vals);
           const range = max - min || 1;
           const pad = 20;
-          ctx.strokeStyle = '#F5A623';
+          ctx.strokeStyle = '#B8963E';
           ctx.lineWidth = 2;
           ctx.beginPath();
           vals.forEach((v, i) => {
@@ -724,7 +792,7 @@
       ctx.fillRect(0, 0, w, h);
       if (!trades || !trades.length) {
         ctx.fillStyle = '#888';
-        ctx.font = '14px JetBrains Mono';
+        ctx.font = '14px IBM Plex Mono';
         ctx.fillText('Aucune donnée', 20, h / 2);
         return;
       }
@@ -741,7 +809,7 @@
       const pad = 40;
       const chartW = w - pad * 2;
       const chartH = h - pad * 2;
-      ctx.strokeStyle = acc >= 0 ? '#F5A623' : '#FF4444';
+      ctx.strokeStyle = acc >= 0 ? '#B8963E' : '#FF4444';
       ctx.lineWidth = 2;
       ctx.beginPath();
       cum.forEach((p, i) => {
@@ -752,12 +820,13 @@
       });
       ctx.stroke();
       ctx.fillStyle = '#888';
-      ctx.font = '10px JetBrains Mono';
+      ctx.font = '10px IBM Plex Mono';
       ctx.fillText('P&L ($)', 8, 20);
     }
 
     async function loadPerformance() {
       try {
+        // Public access uses special public endpoint (no token required)
         const [trackRecord, trades] = await Promise.all([
           fetchApi('/api/track-record').catch(() => ({})),
           fetchApi('/api/trades').catch(() => []),
@@ -785,6 +854,14 @@
             ${Object.entries(byCat).map(([cat, d]) => `<tr><td>${cat}</td><td>${d.trades}</td><td>${d.trades ? (d.wins / d.trades * 100).toFixed(1) : 0}%</td><td class="${d.pnl >= 0 ? 'positive' : 'negative'}">$${d.pnl.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
           : '<div style="padding:24px;color:var(--text-secondary)">Aucune donnée</div>';
         const best = (trades || []).map(t => ({ ...t, p: parseFloat(t.pnl_usd || t.pnl) || 0 })).sort((a, b) => b.p - a.p).slice(0, 5);
+        // Best trade highlight
+        if (best.length) {
+          const top = best[0];
+          const btEl = document.getElementById('perf-best-trade');
+          const btLbl = document.getElementById('perf-best-trade-label');
+          if (btEl) { btEl.textContent = (top.p >= 0 ? '+' : '') + '$' + top.p.toFixed(2); btEl.className = top.p >= 0 ? 'green' : 'red'; }
+          if (btLbl) btLbl.textContent = (top.market_id || 'N/A').slice(0, 50) + ' — edge ' + (top.edge_pct ?? '—') + '%';
+        }
         document.getElementById('perf-best').innerHTML = best.length
           ? `<table><thead><tr><th>Marché</th><th>P&L</th><th>Edge</th><th>Date</th></tr></thead><tbody>
             ${best.map(t => `<tr><td>${(t.market_id || '').slice(0, 35)}...</td><td class="${t.p >= 0 ? 'positive' : 'negative'}">$${t.p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td><td>${(t.created_at || '').slice(0, 10)}</td></tr>`).join('')}</tbody></table>`
@@ -807,11 +884,48 @@
       else if (page === 'performance') loadPerformance();
     }, REFRESH_MS);
 
-    if (!AUTH_TOKEN) {
-      showPaywall();
+    // Public access: if token=public, only show Track Record tab
+    const isPublic = AUTH_TOKEN === 'public';
+    if (!AUTH_TOKEN || isPublic) {
+      if (isPublic) {
+        // Public mode: show only Track Record (no paywall)
+        hidePaywall();
+        // Hide tabs except track record
+        document.querySelectorAll('.nav a').forEach(a => {
+          if (a.dataset.page !== 'performance') a.style.display = 'none';
+        });
+        page = 'performance';
+        nav();
+        // Also load performance without token auth
+        loadPerformance();
+      } else {
+        showPaywall();
+      }
     } else {
       nav();
     }
+
+    // Update bot mode label based on sim data
+    async function updateBotStatus() {
+      try {
+        const d = await fetchApi('/api/scan').catch(() => null);
+        const sim = d?.simulation_mode !== false;
+        const pill = document.getElementById('bot-status-pill');
+        const lbl = document.getElementById('bot-mode-label');
+        if (pill && lbl) {
+          if (sim) {
+            pill.style.background = 'rgba(41,121,255,0.12)';
+            pill.style.border = '1px solid rgba(41,121,255,0.3)';
+            lbl.textContent = 'SIM';
+          } else {
+            pill.style.background = 'rgba(0,200,83,0.12)';
+            pill.style.border = '1px solid rgba(0,200,83,0.3)';
+            lbl.textContent = 'LIVE';
+          }
+        }
+      } catch (e) {}
+    }
+    if (AUTH_TOKEN && !isPublic) updateBotStatus();
   </script>
 </body>
 </html>

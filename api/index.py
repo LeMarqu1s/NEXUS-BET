@@ -565,6 +565,18 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "market_not_found", "id": rest}).encode())
                 return
 
+        # Public track-record endpoints (accessible without auth for sales page proof)
+        if token == "public":
+            if path == "/api/track-record":
+                self._json_response(_get_track_record())
+                return
+            if path == "/api/trades":
+                rows = _supabase_fetch("trades", 50)
+                self._json_response(rows)
+                return
+            self._unauthorized()
+            return
+
         # Endpoints API protégés par token
         if not token or not _validate_token(token):
             self._unauthorized()

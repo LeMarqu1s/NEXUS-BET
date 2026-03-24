@@ -13,6 +13,42 @@ from config.settings import SETTINGS, settings
 log = logging.getLogger(__name__)
 
 
+async def send_photo_to_chat(
+    chat_id: str,
+    photo_bytes: bytes,
+    caption: str = "",
+    reply_markup: Optional[dict] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """Envoie une photo via l'API Telegram (multipart/form-data)."""
+    _token = token or (
+        (SETTINGS.get("telegram") and getattr(SETTINGS["telegram"], "bot_token", None))
+        or os.getenv("TELEGRAM_BOT_TOKEN")
+        or os.getenv("TELEGRAM_TOKEN")
+    )
+    if not _token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{_token}/sendPhoto"
+    data = {
+        "chat_id": chat_id,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": "true",
+    }
+    if caption:
+        data["caption"] = caption
+    if reply_markup:
+        import json as _json
+        data["reply_markup"] = _json.dumps(reply_markup)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            files = {"photo": ("signal_card.png", photo_bytes, "image/png")}
+            r = await client.post(url, data=data, files=files)
+            return r.status_code == 200
+    except Exception as e:
+        log.debug("send_photo_to_chat %s: %s", chat_id, e)
+        return False
+
+
 def _is_enabled() -> bool:
     t = SETTINGS.get("telegram")
     if not t:
@@ -367,24 +403,57 @@ async def push_signal_to_subscribers(
         ]
     }
 
+    # Try to generate signal card image
+    card_bytes: Optional[bytes] = None
+    try:
+        from monitoring.signal_card import generate_signal_card
+        card_bytes = generate_signal_card(
+            question=question,
+            signal_strength=signal_strength,
+            category=cat,
+            edge_pct=edge_pct,
+            ev_pct=ev,
+            kelly_fraction=kelly_fraction,
+            polymarket_price=polymarket_price,
+            fair_price=fair_price,
+            confidence=confidence,
+            capital=capital,
+            side=side,
+        )
+    except Exception as _e:
+        log.debug("signal_card generation failed: %s", _e)
+
     sent = 0
     for chat_id in chat_ids:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={
-                        "chat_id": chat_id,
-                        "text": msg,
-                        "parse_mode": "HTML",
-                        "disable_web_page_preview": True,
-                        "reply_markup": kb,
-                    },
+            ok = False
+            # Try photo first if card available
+            if card_bytes:
+                ok = await send_photo_to_chat(
+                    chat_id=chat_id,
+                    photo_bytes=card_bytes,
+                    caption=msg,
+                    reply_markup=kb,
+                    token=token,
                 )
-                if r.status_code == 200:
-                    sent += 1
-                else:
-                    log.debug("push_signal to %s: %s %s", chat_id, r.status_code, r.text[:80])
+            # Fallback to text message
+            if not ok:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={
+                            "chat_id": chat_id,
+                            "text": msg,
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": True,
+                            "reply_markup": kb,
+                        },
+                    )
+                    ok = r.status_code == 200
+                    if not ok:
+                        log.debug("push_signal to %s: %s %s", chat_id, r.status_code, r.text[:80])
+            if ok:
+                sent += 1
         except Exception as e:
             log.debug("push_signal to %s failed: %s", chat_id, e)
 
