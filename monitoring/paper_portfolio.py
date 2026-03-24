@@ -97,7 +97,8 @@ def close_paper_trade(market_id: str, side: str, exit_price: float) -> Optional[
 
 
 def sync_from_signals() -> int:
-    """Read paperclip_pending_signals.json and create paper trades for new signals. Returns count added."""
+    """Read paperclip_pending_signals.json and create paper trades for new signals. Returns count added.
+    Deduplicates by market_id only — keeps the signal with highest absolute edge per market."""
     p = _ROOT / "paperclip_pending_signals.json"
     if not p.exists():
         return 0
@@ -106,8 +107,19 @@ def sync_from_signals() -> int:
     except Exception:
         return 0
     signals = raw.get("signals", []) if isinstance(raw, dict) else raw or []
-    added = 0
+
+    # Deduplicate by market_id — keep the side with highest absolute edge_pct
+    best: dict[str, dict] = {}
     for s in signals:
+        mid = s.get("market_id") or s.get("conditionId") or ""
+        if not mid:
+            continue
+        edge = abs(float(s.get("edge_pct") or 0))
+        if mid not in best or edge > abs(float(best[mid].get("edge_pct") or 0)):
+            best[mid] = s
+
+    added = 0
+    for s in best.values():
         if record_paper_trade(s):
             added += 1
     return added
