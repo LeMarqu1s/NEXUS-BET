@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
+from core.claude_limiter import claude_call_with_limit
 
 log = logging.getLogger("nexus.scoring")
 
@@ -318,9 +319,10 @@ class NexusScoringEngine:
 
     def _get_fair_value_claude(self, market_data: dict[str, Any]) -> Optional[float]:
         """
-        Fair value estimate from Claude AI — used for non-sports prediction markets.
-        Cached per question for 1 hour to avoid excessive API calls.
+        Fair value estimate from Claude AI — DISABLED: called in scan loop, causes 429 spam.
+        Scanner must work without Claude. Claude is only for agent debates.
         """
+        return None
         from config.settings import settings as _settings
         api_key = _settings.ANTHROPIC_API_KEY
         if not api_key:
@@ -359,36 +361,43 @@ class NexusScoringEngine:
 
     @staticmethod
     async def _claude_fair_value_async(api_key: str, question: str, pm_price: float) -> Optional[float]:
-        """Call Claude Haiku to estimate fair probability for a prediction market."""
+        """Call Claude Haiku to estimate fair probability — throttled via shared limiter."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-haiku-4-5-20251001",
-                        "max_tokens": 80,
-                        "system": "You are a prediction market analyst. Return ONLY valid JSON, no other text.",
-                        "messages": [{"role": "user", "content": (
-                            f'Prediction market: "{question}"\n'
-                            f'Current Polymarket price YES: {pm_price:.2f}\n'
-                            "Estimate the true probability of YES based on your knowledge. "
-                            "Consider base rates, current events, and market context.\n"
-                            'Reply ONLY with JSON: {"fair": <0.01-0.99>, "confidence": <0.5-0.85>}'
-                        )}],
-                    },
-                )
-                resp.raise_for_status()
-                text = resp.json().get("content", [{}])[0].get("text", "")
-                parsed = json.loads(text)
-                fair = float(parsed.get("fair", pm_price))
-                fair = max(0.01, min(0.99, fair))
-                log.info("CLAUDE FAIR: %s → fair=%.2f (poly=%.2f)", question[:50], fair, pm_price)
-                return fair
+            async def _do_call():
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": "claude-haiku-4-5-20251001",
+                            "max_tokens": 80,
+                            "system": "You are a prediction market analyst. Return ONLY valid JSON, no other text.",
+                            "messages": [{"role": "user", "content": (
+                                f'Prediction market: "{question}"\n'
+                                f'Current Polymarket price YES: {pm_price:.2f}\n'
+                                "Estimate the true probability of YES based on your knowledge. "
+                                "Consider base rates, current events, and market context.\n"
+                                'Reply ONLY with JSON: {"fair": <0.01-0.99>, "confidence": <0.5-0.85>}'
+                            )}],
+                        },
+                    )
+                    if resp.status_code == 429:
+                        raise Exception("429")
+                    resp.raise_for_status()
+                    return resp.json().get("content", [{}])[0].get("text", "")
+
+            text = await claude_call_with_limit(_do_call)
+            if not text or text == "Agent indisponible":
+                return None
+            parsed = json.loads(text)
+            fair = float(parsed.get("fair", pm_price))
+            fair = max(0.01, min(0.99, fair))
+            log.info("CLAUDE FAIR: %s → fair=%.2f (poly=%.2f)", question[:50], fair, pm_price)
+            return fair
         except Exception as e:
             log.debug("claude_fair_value: %s", e)
             return None
@@ -574,9 +583,10 @@ class NexusScoringEngine:
 
     def _calc_news_sentiment_score(self, market_data: dict[str, Any]) -> float:
         """
-        Ask Claude for a bullish sentiment score (0–1) on the YES outcome.
-        Returns 0.5 on any failure or missing API key.
+        News sentiment via Claude — DISABLED: called in scan loop, causes 429 spam.
+        Scanner must work without Claude. Returns neutral 0.5.
         """
+        return 0.5
         from config.settings import settings as _settings
         api_key = _settings.ANTHROPIC_API_KEY
         if not api_key:
@@ -604,32 +614,38 @@ class NexusScoringEngine:
     @staticmethod
     async def _sentiment_async(api_key: str, question: str) -> float:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 50,
-                        "system": "Return ONLY valid JSON. No other text.",
-                        "messages": [{"role": "user", "content": (
-                            f'Polymarket question: "{question}". '
-                            "Rate the bullish sentiment for YES outcome from 0.0 (very bearish) "
-                            "to 1.0 (very bullish) based on current public knowledge. "
-                            'Reply ONLY: {"score": <float>}'
-                        )}],
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                text = data.get("content", [{}])[0].get("text", "")
-                parsed = json.loads(text)
-                score = float(parsed.get("score", 0.5))
-                return max(0.0, min(1.0, score))
+            async def _do_call():
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": "claude-sonnet-4-20250514",
+                            "max_tokens": 50,
+                            "system": "Return ONLY valid JSON. No other text.",
+                            "messages": [{"role": "user", "content": (
+                                f'Polymarket question: "{question}". '
+                                "Rate the bullish sentiment for YES outcome from 0.0 (very bearish) "
+                                "to 1.0 (very bullish) based on current public knowledge. "
+                                'Reply ONLY: {"score": <float>}'
+                            )}],
+                        },
+                    )
+                    if resp.status_code == 429:
+                        raise Exception("429")
+                    resp.raise_for_status()
+                    return resp.json().get("content", [{}])[0].get("text", "")
+
+            text = await claude_call_with_limit(_do_call)
+            if not text or text == "Agent indisponible":
+                return 0.5
+            parsed = json.loads(text)
+            score = float(parsed.get("score", 0.5))
+            return max(0.0, min(1.0, score))
         except Exception as e:
             log.debug("news_sentiment: %s", e)
             return 0.5

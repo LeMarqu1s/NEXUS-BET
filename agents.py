@@ -13,6 +13,7 @@ from typing import Optional
 
 import httpx
 from config.settings import settings
+from core.claude_limiter import claude_call_with_limit
 
 log = logging.getLogger("nexus.agents")
 
@@ -75,31 +76,41 @@ class AdversarialAITeam:
         self.model = "claude-sonnet-4-20250514"
 
     async def _call_claude(self, system: str, user: str) -> str:
-        """Call Anthropic Claude API asynchronously."""
+        """Call Anthropic Claude API — throttled via shared claude_call_with_limit."""
         if not self.api_key:
             return "[NO_API_KEY] Mock response - configure ANTHROPIC_API_KEY"
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                self.base_url,
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": 1024,
-                    "system": system,
-                    "messages": [{"role": "user", "content": user}],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data.get("content", [])
-            if content and isinstance(content[0], dict):
-                return content[0].get("text", "")
-            return str(content)
+        api_key = self.api_key
+        base_url = self.base_url
+        model = self.model
+
+        async def _do_call():
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    base_url,
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 1024,
+                        "system": system,
+                        "messages": [{"role": "user", "content": user}],
+                    },
+                )
+                if resp.status_code == 429:
+                    raise Exception("429")
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("content", [])
+                if content and isinstance(content[0], dict):
+                    return content[0].get("text", "")
+                return str(content)
+
+        result = await claude_call_with_limit(_do_call)
+        return result if result is not None else "Agent indisponible"
 
     async def _call_agent(self, role: str, system: str, user: str) -> str:
         """Route to Paperclip agent if available, otherwise fall back to Claude."""
@@ -158,3 +169,8 @@ Output format: VERDICT: APPROVE or REJECT (exactly one). Then 1-2 sentence justi
             final_verdict=verdict,
             approved=approved,
         )
+
+
+async def call_claude(system: str = "", user: str = "") -> str:
+    """Module-level wrapper — rate-limited Claude call via AdversarialAITeam."""
+    return await AdversarialAITeam()._call_claude(system, user)
