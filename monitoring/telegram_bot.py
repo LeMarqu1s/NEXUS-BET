@@ -1764,6 +1764,7 @@ async def run_forever() -> None:
     """
     Run Telegram poller using low-level async API (no run_polling event loop).
     Compatible with asyncio.gather() in main.py.
+    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry + backoff.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1773,8 +1774,9 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
+    # Aggressively clear any previous session before starting
     await close_telegram_session(token)
-    await asyncio.sleep(3)  # let old instance fully terminate during Railway deploy
+    await asyncio.sleep(5)  # let old Railway instance fully terminate
 
     app = build_application(token)
     try:
@@ -1795,40 +1797,50 @@ async def run_forever() -> None:
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
-        max_retries = 5
-        for attempt in range(max_retries):
+        # Infinite retry for Conflict errors — Railway deploy overlap can last 30-60s
+        conflict_attempt = 0
+        while True:
             try:
                 await app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                 )
                 log.info("Bot is now listening for messages...")
+                conflict_attempt = 0  # reset on success
                 try:
                     while True:
                         await asyncio.sleep(1)
                 except asyncio.CancelledError:
-                    pass
-                break
+                    raise
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
+                is_conflict = "Conflict" in str(e) or "409" in str(e)
                 try:
-                    from telegram.error import Conflict
-                    if isinstance(e, Conflict):
-                        log.warning("Telegram Conflict (other getUpdates): wait 10s, deleteWebhook, retry")
-                        await asyncio.sleep(10)
-                        await close_telegram_session(token)
-                        await asyncio.sleep(2)
-                        if attempt < max_retries - 1:
-                            continue
+                    from telegram.error import Conflict as TGConflict
+                    is_conflict = is_conflict or isinstance(e, TGConflict)
                 except ImportError:
                     pass
-                if "Conflict" in str(e) or "409" in str(e):
-                    log.warning("Telegram Conflict detected: %s", str(e)[:80])
-                    await asyncio.sleep(10)
+
+                if is_conflict:
+                    conflict_attempt += 1
+                    # Backoff: 15s, 20s, 25s, 30s, 30s, ... (Railway overlap typically resolves in 30-60s)
+                    wait = min(15 + (conflict_attempt - 1) * 5, 30)
+                    log.warning(
+                        "Telegram Conflict #%d (Railway deploy overlap) — deleteWebhook + retry in %ds",
+                        conflict_attempt, wait,
+                    )
+                    await asyncio.sleep(wait)
                     await close_telegram_session(token)
-                    await asyncio.sleep(2)
-                    if attempt < max_retries - 1:
-                        continue
-                raise
+                    await asyncio.sleep(3)
+                    # Try to stop/restart updater to clear state
+                    try:
+                        await app.updater.stop()
+                    except Exception:
+                        pass
+                    continue  # infinite retry for conflicts
+                else:
+                    raise  # non-conflict errors propagate up
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise

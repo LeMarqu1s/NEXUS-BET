@@ -585,6 +585,17 @@ class handler(BaseHTTPRequestHandler):
         if path == "/api/signals":
             p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
             data = _load_json(str(p), {"signals": []})
+            # Add simulation_mode flag from environment
+            if isinstance(data, dict):
+                data["simulation_mode"] = os.getenv("SIMULATION_MODE", "true").lower() not in ("false", "0", "no")
+            self._json_response(data)
+            return
+        if path == "/api/scan":
+            # Alias for /api/signals — used by dashboard bot status pill
+            p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
+            data = _load_json(str(p), {"signals": []})
+            if isinstance(data, dict):
+                data["simulation_mode"] = os.getenv("SIMULATION_MODE", "true").lower() not in ("false", "0", "no")
             self._json_response(data)
             return
         if path == "/api/yield":
