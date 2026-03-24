@@ -307,7 +307,9 @@ class PolymarketSniper:
 
     async def run_forever(self) -> None:
         """Boucle principale du sniper — scan toutes les 10 secondes."""
-        log.info("Sniper started — scanning every %ds", SCAN_INTERVAL)
+        log.info("🎯 Sniper started — scanning every %ds | VOLUME_SPIKE x%.0f | MOMENTUM >%.0f%% | SPREAD >%.0f%% | WHALE >$%.0f",
+                 SCAN_INTERVAL, VOLUME_SPIKE_MULTIPLIER, MOMENTUM_THRESHOLD * 100,
+                 SPREAD_THRESHOLD * 100, WHALE_THRESHOLD_USD)
         while True:
             try:
                 markets = await self._fetch_markets()
