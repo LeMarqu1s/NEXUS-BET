@@ -722,16 +722,56 @@ async def _register_referred_user(chat_id: str, ref_code: str) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reset user state + clear pending callbacks on /start. Handles deep-link referral."""
+    """Reset user state + clear pending callbacks on /start. Handles deep-link referral + onboarding."""
     try:
         context.user_data.clear()
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
         # Handle deep-link: /start ref_XXXXXXXX
         args = context.args or []
         if args and str(args[0]).startswith("ref_"):
             ref_code = str(args[0])[4:].upper()
-            chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
             asyncio.create_task(_register_referred_user(chat_id, ref_code))
+
+        # Check if brand new user → start onboarding
+        try:
+            is_new = await asyncio.wait_for(_is_new_user(chat_id), timeout=4.0)
+        except Exception:
+            is_new = False
+
+        if is_new:
+            context.user_data["onboarding"] = True
+            context.user_data["awaiting"] = "onboarding_wallet"
+            await update.message.reply_text(
+                f"<b>⚡ Bienvenue sur NEXUS BET</b>\n{L}\n"
+                f"Bot de prédiction Polymarket autonome.\n\n"
+                f"<b>20 agents IA</b> détectent les mispricings 24/7.\n"
+                f"Signaux vérifiés · Auto-trade · Track record public.\n"
+                f"{L}\n"
+                f"<b>Étape 1/4</b> — Connecte ton wallet Polymarket :\n"
+                f"<code>Envoie ton adresse 0x...</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Check trial/subscription status
+        try:
+            status = await asyncio.wait_for(_check_trial_status(chat_id), timeout=4.0)
+        except Exception:
+            status = {"exists": True, "is_active": True, "is_trial": False, "expired": False}
+
+        if status.get("expired"):
+            await update.message.reply_text(
+                f"<b>⚡ NEXUS BET</b>\n{L}\n"
+                f"<b>⏰ Essai gratuit terminé</b>\n\n"
+                f"Abonne-toi pour continuer à recevoir les signaux :\n{L}",
+                parse_mode="HTML",
+                reply_markup=_payment_keyboard(),
+            )
+            return
+
         text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
+        if status.get("is_trial") and status.get("days_left", 0) <= 2:
+            text += f"\n⚠️ <i>Essai se termine dans {status['days_left']}j</i>"
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
     except Exception as e:
         log.exception("cmd_start: %s", e)
@@ -1193,6 +1233,46 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     from monitoring.env_config import set_env_value, set_env_values
 
+    # ── Onboarding flow ──
+    if awaiting == "onboarding_wallet":
+        if not POLYGON_ADDRESS_PATTERN.match(text):
+            await update.message.reply_text(
+                f"<b>❌ Adresse invalide</b>\n{L}\n<code>Format: 0x + 40 hex chars</code>\nRéessaie :",
+                parse_mode="HTML",
+            )
+            return
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+        await _save_user_field(chat_id, wallet_address=text)
+        context.user_data["onboarding_wallet"] = text
+        context.user_data["awaiting"] = "onboarding_apikey"
+        await update.message.reply_text(
+            f"<b>✅ Wallet connecté</b>\n<code>{text}</code>\n{L}\n"
+            f"<b>Étape 2/4</b> — Clé API Polymarket :\n"
+            f"<code>Polymarket.com → Settings → API Keys</code>\n\n"
+            f"Envoie ta clé API (commence par 0x...) :",
+            parse_mode="HTML",
+        )
+        return
+
+    if awaiting == "onboarding_apikey":
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+        # Save API key (basic validation: non-empty string)
+        if len(text) < 10:
+            await update.message.reply_text(f"<b>❌ Clé trop courte</b>\nRéessaie :", parse_mode="HTML")
+            return
+        await _save_user_field(chat_id, polymarket_api_key=text[:200])
+        context.user_data["awaiting"] = None
+        await update.message.reply_text(
+            f"<b>✅ Clé API sauvegardée</b>\n{L}\n"
+            f"<b>Étape 3/4</b> — Profil de risque :\n\n"
+            f"🛡️ <b>Conservateur</b> — Kelly 10%, max 3 positions\n"
+            f"📊 <b>Quantitatif</b> — Kelly 25%, max 5 positions\n"
+            f"🎲 <b>Degen</b> — Kelly 50%, max 10 positions",
+            parse_mode="HTML",
+            reply_markup=_risk_profile_keyboard(),
+        )
+        return
+
     if awaiting == "thresholds":
         parts = text.split()
         if len(parts) >= 4:
@@ -1494,6 +1574,56 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit(f"<b>✕ EXIT EXÉCUTÉ</b>\n{L}\n<i>Position soldée.</i>", _main_keyboard())
         return
 
+    # ── Onboarding callbacks ──
+    RISK_PROFILES = {
+        "onboard_risk_conservateur": ("conservateur", 0.10, 3),
+        "onboard_risk_quantitatif":  ("quantitatif",  0.25, 5),
+        "onboard_risk_degen":        ("degen",         0.50, 10),
+    }
+    if data in RISK_PROFILES:
+        profile_name, kelly, max_pos = RISK_PROFILES[data]
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        await _save_user_field(chat_id, risk_profile=profile_name, kelly_pct=kelly, max_positions=max_pos)
+        ls97  = os.getenv("LS_CHECKOUT_97",  "https://t.me/nexus_capital_bot")
+        ls197 = os.getenv("LS_CHECKOUT_197", "https://t.me/nexus_capital_bot")
+        ls297 = os.getenv("LS_CHECKOUT_297", "https://t.me/nexus_capital_bot")
+        await edit(
+            f"<b>✅ Profil {profile_name.upper()} sauvegardé</b>\n{L}\n"
+            f"<code>Kelly     {int(kelly*100)}%\n"
+            f"Max pos   {max_pos}</code>\n"
+            f"{L}\n"
+            f"<b>Étape 4/4</b> — Choisis ton abonnement :\n\n"
+            f"<b>€97/mois</b> — Signaux Telegram + dashboard\n"
+            f"<b>€197/mois</b> — Full Auto-trade ⚡\n"
+            f"<b>€297 once</b> — Lifetime License ♾️\n\n"
+            f"<i>Ou démarre avec 7 jours gratuits ↓</i>",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("€97/mois — Signal Intel", url=ls97)],
+                [InlineKeyboardButton("⚡ €197/mois — Full Auto", url=ls197)],
+                [InlineKeyboardButton("♾️ €297 — Lifetime", url=ls297)],
+                [InlineKeyboardButton("🎁 Essai 7j gratuit", callback_data="onboard_start_trial")],
+            ]),
+        )
+        return
+
+    if data == "onboard_start_trial":
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        ok = await _start_trial(chat_id)
+        if ok:
+            token, _ = await _upsert_user_token(chat_id)
+            dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
+            link = f"{dashboard_url}?token={token}" if token else dashboard_url
+            await edit(
+                f"<b>🎉 Essai gratuit activé — 7 jours</b>\n{L}\n"
+                f"Tu reçois maintenant les signaux NEXUS BET.\n\n"
+                f"🔐 Dashboard privé :\n<code>{link}</code>\n{L}\n"
+                f"<i>Tape /start pour accéder au menu.</i>",
+                _back_keyboard(),
+            )
+        else:
+            await edit(f"<b>❌ Erreur activation</b>\n{L}\n<i>Contacte le support.</i>", _back_keyboard())
+        return
+
         # ── Settings ──
     if data == "btn_settings":
         await edit(_get_settings_text(), _settings_keyboard())
@@ -1707,6 +1837,254 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ══════════════════════════════════════════════
 # POLLER
 # ══════════════════════════════════════════════
+
+# ══════════════════════════════════════════════
+# ONBOARDING + TRIAL + BROADCAST
+# ══════════════════════════════════════════════
+
+TRIAL_DAYS = 7
+
+
+def _risk_profile_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛡️ Conservateur", callback_data="onboard_risk_conservateur")],
+        [InlineKeyboardButton("📊 Quantitatif", callback_data="onboard_risk_quantitatif")],
+        [InlineKeyboardButton("🎲 Degen", callback_data="onboard_risk_degen")],
+    ])
+
+
+def _payment_keyboard() -> InlineKeyboardMarkup:
+    ls97 = os.getenv("LS_CHECKOUT_97", "https://t.me/nexus_capital_bot")
+    ls197 = os.getenv("LS_CHECKOUT_197", "https://t.me/nexus_capital_bot")
+    ls297 = os.getenv("LS_CHECKOUT_297", "https://t.me/nexus_capital_bot")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("€97/mois — Signal Intel", url=ls97)],
+        [InlineKeyboardButton("⚡ €197/mois — Full Auto", url=ls197)],
+        [InlineKeyboardButton("♾️ €297 — Lifetime", url=ls297)],
+        [InlineKeyboardButton("🎁 Essai 7 jours gratuit", callback_data="onboard_start_trial")],
+    ])
+
+
+async def _is_new_user(chat_id: str) -> bool:
+    """Returns True if the user doesn't exist yet in Supabase."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "id", "limit": "1"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            return r.status_code == 200 and not r.json()
+    except Exception:
+        return False
+
+
+async def _start_trial(chat_id: str) -> bool:
+    """Creates user row with 7-day trial in Supabase. Returns True on success."""
+    from datetime import datetime, timezone, timedelta
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.post(
+                f"{url}/rest/v1/users",
+                headers={
+                    "apikey": key, "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=ignore-duplicates,return=minimal",
+                },
+                json={
+                    "telegram_chat_id": chat_id,
+                    "is_active": True,
+                    "is_trial": True,
+                    "trial_ends_at": trial_ends,
+                    "plan": "trial",
+                },
+            )
+            return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
+
+
+async def _check_trial_status(chat_id: str) -> dict:
+    """Returns {exists, is_active, is_trial, days_left, expired, plan}."""
+    from datetime import datetime, timezone
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    default = {"exists": False, "is_active": False, "is_trial": False, "days_left": 0, "expired": False, "plan": "free"}
+    if not url or not key:
+        return default
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "is_active,is_trial,trial_ends_at,plan", "limit": "1"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if r.status_code != 200 or not r.json():
+                return default
+            row = r.json()[0]
+            is_trial = bool(row.get("is_trial"))
+            is_active = bool(row.get("is_active"))
+            plan = row.get("plan", "free")
+            days_left = 0
+            expired = False
+            if is_trial:
+                exp = row.get("trial_ends_at")
+                if exp:
+                    try:
+                        exp_dt = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+                        if exp_dt.tzinfo is None:
+                            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                        delta = (exp_dt - datetime.now(timezone.utc)).days
+                        days_left = max(0, delta)
+                        expired = delta < 0
+                        if expired:
+                            is_active = False
+                    except Exception:
+                        pass
+            return {"exists": True, "is_active": is_active, "is_trial": is_trial, "days_left": days_left, "expired": expired, "plan": plan}
+    except Exception:
+        return default
+
+
+async def _save_user_field(chat_id: str, **fields) -> bool:
+    """Upsert fields into Supabase users table."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.post(
+                f"{url}/rest/v1/users",
+                headers={
+                    "apikey": key, "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                },
+                json={"telegram_chat_id": chat_id, **fields},
+            )
+            return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
+
+
+async def _get_active_chat_ids() -> list[str]:
+    """Returns list of telegram_chat_id for all is_active=true users (for broadcast)."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"is_active": "eq.true", "select": "telegram_chat_id", "limit": "500"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if r.status_code == 200:
+                return [row["telegram_chat_id"] for row in r.json() if row.get("telegram_chat_id")]
+    except Exception:
+        pass
+    return []
+
+
+async def broadcast_signal(bot, signal: dict) -> int:
+    """
+    Send a signal card to ALL active subscribers.
+    Returns the number of messages sent successfully.
+    """
+    chat_ids = await _get_active_chat_ids()
+    if not chat_ids:
+        # Fallback to single TELEGRAM_CHAT_ID
+        fallback = os.getenv("TELEGRAM_CHAT_ID")
+        if fallback:
+            chat_ids = [fallback]
+    edge = float(signal.get("edge_pct") or 0)
+    question = (signal.get("question") or signal.get("market_id") or "?")[:72]
+    side = signal.get("side", "YES")
+    price = float(signal.get("polymarket_price") or 0.5)
+    strength = signal.get("signal_strength", "BUY")
+    icon = "⚡" if "STRONG" in str(strength) else "▲"
+    cat = _detect_category(question)
+    text = (
+        f"{icon} <b>SIGNAL · {cat}</b>\n{L}\n"
+        f"<b>{question}</b>\n"
+        f"<code>SIDE    {side}\n"
+        f"PRICE   {price*100:.1f}%\n"
+        f"EDGE    +{edge:.1f}pts\n"
+        f"FORCE   {strength}</code>\n"
+        f"{L}\n<i>Via NEXUS BET Intelligence</i>"
+    )
+    sent = 0
+    for cid in chat_ids:
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            log.debug("broadcast to %s failed: %s", cid, e)
+    return sent
+
+
+async def send_daily_report(bot) -> None:
+    """Send daily P&L report to all active subscribers."""
+    import json as _json
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parent.parent
+    # Gather paper portfolio stats
+    try:
+        from monitoring.paper_portfolio import get_paper_summary
+        pp = get_paper_summary()
+    except Exception:
+        pp = {}
+    # Gather signal stats
+    signals_today = 0
+    try:
+        p = root / "paperclip_pending_signals.json"
+        if p.exists():
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date().isoformat()
+            d = _json.loads(p.read_text(encoding="utf-8"))
+            for s in (d.get("signals", []) if isinstance(d, dict) else []):
+                ts = s.get("created_at") or s.get("last_scan_ts")
+                if ts and str(ts)[:10] == today:
+                    signals_today += 1
+            if signals_today == 0:
+                signals_today = len(d.get("signals", [])) if isinstance(d, dict) else 0
+    except Exception:
+        pass
+    pnl = pp.get("total_pnl", 0)
+    wr = pp.get("win_rate", 0)
+    invested = pp.get("invested", 0)
+    open_count = len(pp.get("open_trades", []))
+    text = (
+        f"<b>📊 RAPPORT DU JOUR — NEXUS BET</b>\n{L}\n"
+        f"<code>Signaux détectés : {signals_today}\n"
+        f"Positions ouvertes: {open_count}\n"
+        f"Investi (paper)   : ${invested:.2f}\n"
+        f"P&L total         : {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+        f"Win rate          : {wr:.0f}%</code>\n"
+        f"{L}\n<i>NEXUS BET · Rapport automatique 21h00 UTC</i>"
+    )
+    chat_ids = await _get_active_chat_ids()
+    if not chat_ids:
+        fallback = os.getenv("TELEGRAM_CHAT_ID")
+        if fallback:
+            chat_ids = [fallback]
+    for cid in chat_ids:
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+        except Exception as e:
+            log.debug("daily report to %s failed: %s", cid, e)
+
 
 async def close_telegram_session(token: str) -> bool:
     """Delete webhook + clear pending updates. Prevents 409 when switching to polling."""
