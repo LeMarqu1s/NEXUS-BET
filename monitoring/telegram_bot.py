@@ -1459,6 +1459,84 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
         return
 
+    if awaiting == "buy_amount":
+        pending = context.user_data.pop("buy_pending", None)
+        context.user_data.pop("awaiting", None)
+        if not pending:
+            await update.message.reply_text(f"<b>⚠️ EXPIRÉ</b>\n{L}\n<i>Recommence depuis le scan.</i>", parse_mode="HTML")
+            return
+        try:
+            size_usd = max(1.0, float(text.replace(",", ".")))
+        except (ValueError, TypeError):
+            context.user_data["buy_pending"] = pending
+            context.user_data["awaiting"] = "buy_amount"
+            kelly_usd = pending["kelly_usd"]
+            await update.message.reply_text(
+                f"<b>❌ MONTANT INVALIDE</b>\n{L}\n<i>Entrez un nombre en USD (ex: 50)\nKelly suggère ${kelly_usd:.0f}</i>",
+                parse_mode="HTML",
+            )
+            return
+        result_text = await _run_buy_order(pending, size_usd)
+        await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=_main_keyboard())
+        return
+
+
+async def _run_buy_order(pending: dict, size_usd: float) -> str:
+    """Execute a buy order from pending state dict; returns HTML result message."""
+    sig_match = pending["sig_match"]
+    market_id = pending["market_id"]
+    side = pending["side"]
+    price = pending["price"]
+    question = pending["question"]
+    sim = pending["sim"]
+    size_usd = round(size_usd, 1)
+    if sim:
+        from monitoring.paper_portfolio import record_paper_trade
+        paper_sig = {
+            "market_id": market_id,
+            "question": question,
+            "side": side,
+            "polymarket_price": price,
+            "edge_pct": sig_match.get("edge_pct"),
+            "confidence": sig_match.get("confidence"),
+        }
+        ok = record_paper_trade(paper_sig)
+        if ok:
+            return (
+                f"<b>✅ PAPER TRADE ENREGISTRÉ</b>\n{L}\n"
+                f"<b>{question}</b>\n"
+                f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>"
+            )
+        return (
+            f"<b>⚠️ NON AJOUTÉ</b>\n{L}\n"
+            f"<b>{question}</b>\n"
+            f"<i>Position déjà ouverte ou slots pleins (max 5)</i>"
+        )
+    else:
+        from execution.order_manager import OrderManager, OrderConfig
+        mgr = OrderManager()
+        cfg = OrderConfig(
+            market_id=market_id,
+            outcome=side,
+            side="BUY",
+            size_usd=size_usd,
+            limit_price=price,
+        )
+        order_id = await mgr.place_limit_order(cfg)
+        if order_id:
+            return (
+                f"<b>✅ ORDRE PLACÉ</b>\n{L}\n"
+                f"<b>{question}</b>\n"
+                f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                f"Order: <code>{order_id}</code>\n{L}"
+            )
+        return (
+            f"<b>❌ ÉCHEC ORDRE</b>\n{L}\n"
+            f"<b>{question}</b>\n"
+            f"<i>Vérifiez POLYMARKET_PRIVATE_KEY et les logs.</i>"
+        )
+
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -1555,16 +1633,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     # ── Signal callbacks: BUY / PASS / Investiguer ──
-    if data.startswith("buy_"):
+    if data.startswith("buy_") and not data.startswith("buy_amount"):
         parts = data[4:].split("|", 1)
         market_id = parts[0] if parts else ""
         side = parts[1] if len(parts) > 1 else "YES"
-        await edit(f"<b>⏳ EXÉCUTION...</b>\n{L}", None)
         try:
             from config.settings import settings as _s
             from paperclip_bridge import get_pending_signals
             sim = getattr(_s, "SIMULATION_MODE", True)
-            # Find matching signal for rich metadata
             sig_match: dict = {"market_id": market_id, "side": side, "recommended_outcome": side}
             try:
                 for sig in (get_pending_signals() or []):
@@ -1577,65 +1653,54 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             price = float(sig_match.get("polymarket_price") or 0.5)
             kelly = float(sig_match.get("kelly_fraction") or 0.05)
             cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
-            size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
+            kelly_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
             question = (sig_match.get("question") or market_id)[:50]
-            if sim:
-                # Paper trade
-                from monitoring.paper_portfolio import record_paper_trade
-                paper_sig = {
-                    "market_id": market_id,
-                    "question": question,
-                    "side": side,
-                    "polymarket_price": price,
-                    "edge_pct": sig_match.get("edge_pct"),
-                    "confidence": sig_match.get("confidence"),
-                }
-                ok = record_paper_trade(paper_sig)
-                if ok:
-                    await edit(
-                        f"<b>✅ PAPER TRADE ENREGISTRÉ</b>\n{L}\n"
-                        f"<b>{question}</b>\n"
-                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
-                        f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>",
-                        _back_keyboard(),
-                    )
-                else:
-                    await edit(
-                        f"<b>⚠️ NON AJOUTÉ</b>\n{L}\n"
-                        f"<b>{question}</b>\n"
-                        f"<i>Position déjà ouverte ou slots pleins (max 5)</i>",
-                        _back_keyboard(),
-                    )
-            else:
-                # Live order
-                from execution.order_manager import OrderManager, OrderConfig
-                mgr = OrderManager()
-                cfg = OrderConfig(
-                    market_id=market_id,
-                    outcome=side,
-                    side="BUY",
-                    size_usd=size_usd,
-                    limit_price=price,
-                )
-                order_id = await mgr.place_limit_order(cfg)
-                if order_id:
-                    await edit(
-                        f"<b>✅ ORDRE PLACÉ</b>\n{L}\n"
-                        f"<b>{question}</b>\n"
-                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
-                        f"Order: <code>{order_id}</code>\n{L}",
-                        _back_keyboard(),
-                    )
-                else:
-                    await edit(
-                        f"<b>❌ ÉCHEC ORDRE</b>\n{L}\n"
-                        f"<b>{question}</b>\n"
-                        f"<i>Vérifiez POLYMARKET_PRIVATE_KEY et les logs.</i>",
-                        _back_keyboard(),
-                    )
+            context.user_data["buy_pending"] = {
+                "sig_match": sig_match,
+                "market_id": market_id,
+                "side": side,
+                "price": price,
+                "kelly_usd": kelly_usd,
+                "question": question,
+                "sim": sim,
+            }
+            context.user_data["awaiting"] = "buy_amount"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✅ Confirmer Kelly (${kelly_usd:.0f})", callback_data="buy_amount_confirm")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="buy_amount_cancel")],
+            ])
+            await edit(
+                f"<b>💰 MONTANT À MISER ?</b>\n{L}\n"
+                f"<b>{question}</b>\n"
+                f"{side} @ ${price:.2f}\n{L}\n"
+                f"Kelly suggère <b>${kelly_usd:.0f}</b>\n\n"
+                f"<i>Tape un montant en USD ou confirme le Kelly :</i>",
+                kb,
+            )
         except Exception as e:
             log.exception("buy_ callback: %s", e)
             await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", _back_keyboard())
+        return
+
+    if data == "buy_amount_confirm":
+        pending = context.user_data.pop("buy_pending", None)
+        context.user_data.pop("awaiting", None)
+        if not pending:
+            await edit(f"<b>⚠️ EXPIRÉ</b>\n{L}\n<i>Recommence depuis le scan.</i>", _back_keyboard())
+            return
+        await edit(f"<b>⏳ EXÉCUTION...</b>\n{L}", None)
+        try:
+            result_text = await _run_buy_order(pending, pending["kelly_usd"])
+            await edit(result_text, _back_keyboard())
+        except Exception as e:
+            log.exception("buy_amount_confirm: %s", e)
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", _back_keyboard())
+        return
+
+    if data == "buy_amount_cancel":
+        context.user_data.pop("buy_pending", None)
+        context.user_data.pop("awaiting", None)
+        await edit(f"<b>✕ ACHAT ANNULÉ</b>\n{L}", _main_keyboard())
         return
 
     if data.startswith("pass_"):
