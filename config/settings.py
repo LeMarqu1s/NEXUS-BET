@@ -255,5 +255,17 @@ class _SettingsProxy:
     def DEBUG(self) -> bool:
         return _get_env_bool("DEBUG", False)
 
+    @property
+    def EARLY_EXIT_TP_PCT(self) -> float:
+        return _get_env_float("EARLY_EXIT_TP_PCT", 0.40)
+
+    @property
+    def EARLY_EXIT_SL_PCT(self) -> float:
+        return _get_env_float("EARLY_EXIT_SL_PCT", 0.30)
+
+    @property
+    def SIMULATION_MODE(self) -> bool:
+        return _get_env_bool("SIMULATION_MODE", True)
+
 
 settings = _SettingsProxy()

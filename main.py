@@ -37,10 +37,19 @@ async def run_telegram():
 
 
 async def run_position_monitor():
+    """Background task: TP/SL monitor + paper portfolio sync every 60s."""
     from execution.order_manager import OrderManager
+    om = OrderManager()
     while True:
-        om = OrderManager()
         try:
+            # Sync paper portfolio from signals
+            try:
+                from monitoring.paper_portfolio import sync_from_signals
+                added = sync_from_signals()
+                if added:
+                    log.info("Paper portfolio: +%d new trades synced", added)
+            except Exception as e:
+                log.debug("Paper portfolio sync: %s", e)
             await om.monitor_open_positions(interval_sec=60.0)
         except asyncio.CancelledError:
             raise
@@ -52,6 +61,7 @@ async def run_position_monitor():
                 await om.client.close()
             except Exception:
                 pass
+            om = OrderManager()
 
 
 async def main():

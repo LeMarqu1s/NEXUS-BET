@@ -101,82 +101,78 @@ class OrderManager:
 
     async def monitor_open_positions(self, interval_sec: float = 60.0) -> None:
         """
-        Boucle infinie — vérifie les positions ouvertes toutes les 60s.
-        Auto-vend si +40% (TP) ou -30% (SL) depuis le prix d'entrée.
-        Les seuils sont configurables via EARLY_EXIT_TP_PCT / EARLY_EXIT_SL_PCT.
+        Background loop: checks open Supabase positions every interval_sec.
+        Auto-sells at TP (+40%) or SL (-30%) and sends Telegram alert.
         """
         import logging
-        from monitoring.trade_logger import trade_logger
+        import os
+        import httpx
+        log = logging.getLogger(__name__)
 
-        log = logging.getLogger("nexus.exit_monitor")
         tp_pct = settings.EARLY_EXIT_TP_PCT
         sl_pct = settings.EARLY_EXIT_SL_PCT
-        log.info(
-            "Position monitor démarré — TP +%.0f%% | SL -%.0f%% | interval %ds",
-            tp_pct * 100, sl_pct * 100, interval_sec,
-        )
+
+        async def _send_telegram(msg: str) -> None:
+            token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+            if not token or not chat_id:
+                return
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as c:
+                    await c.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                    )
+            except Exception:
+                pass
 
         while True:
             await asyncio.sleep(interval_sec)
-            positions = trade_logger.get_positions()
-            if not positions:
-                continue
-
-            for pos in positions:
-                try:
-                    mid = pos.get("market_id") or ""
-                    outcome = pos.get("outcome") or "YES"
-                    entry = float(pos.get("avg_price") or 0)
-                    size = float(pos.get("size") or 0)
-
-                    if not mid or entry <= 0 or size <= 0:
+            try:
+                from monitoring.trade_logger import TradeLogger
+                logger_inst = TradeLogger()
+                positions = logger_inst.get_positions() or []
+                for pos in positions:
+                    market_id = pos.get("market_id") or pos.get("conditionId") or ""
+                    side = pos.get("side", "YES")
+                    entry_price = float(pos.get("avg_entry_price") or pos.get("entry_price") or 0)
+                    if not market_id or entry_price <= 0:
                         continue
-
-                    current = await self.client.get_mid_price(mid, outcome)
-                    if current is None:
+                    try:
+                        current_price = await self.client.get_mid_price(market_id, side)
+                    except Exception:
+                        current_price = None
+                    if current_price is None:
                         continue
-
-                    pct = (current - entry) / entry
-
-                    if pct >= tp_pct:
-                        reason, icon = f"TP +{pct * 100:.1f}%", "💰"
-                    elif pct <= -sl_pct:
-                        reason, icon = f"SL {pct * 100:.1f}%", "🛑"
+                    pct_change = (current_price - entry_price) / entry_price
+                    if pct_change >= tp_pct:
+                        trigger = "TP"
+                        emoji = "💰"
+                    elif pct_change <= -sl_pct:
+                        trigger = "SL"
+                        emoji = "🛑"
                     else:
                         continue
-
-                    # Placer l'ordre de vente au marché (-2% slippage)
-                    sell_price = max(0.01, current * 0.98)
-                    cfg = OrderConfig(
-                        market_id=mid,
-                        outcome=outcome,
+                    # Place sell order
+                    sell_cfg = OrderConfig(
+                        market_id=market_id,
+                        outcome=side,
                         side="SELL",
-                        size_usd=size * sell_price,
-                        limit_price=sell_price,
+                        size_usd=float(pos.get("cost_basis_usd") or pos.get("size_usd") or 10.0),
+                        limit_price=current_price,
                     )
-                    order_id = await self.place_limit_order(cfg)
-                    trade_logger.update_position(mid, outcome, 0, 0)
-
-                    question = (pos.get("question") or mid)[:50]
-                    pnl_usd = (current - entry) * size
-                    log.warning(
-                        "AUTO-EXIT [%s] %s | entry=%.3f current=%.3f pnl=%+.2f$",
-                        reason, question[:40], entry, current, pnl_usd,
+                    order_id = await self.place_limit_order(sell_cfg)
+                    pnl = (current_price - entry_price) * float(pos.get("shares") or sell_cfg.size_usd / entry_price)
+                    question = (pos.get("question") or market_id)[:60]
+                    msg = (
+                        f"{emoji} <b>AUTO {trigger} — {question}</b>\n"
+                        f"Entry: {entry_price*100:.1f}%  →  Exit: {current_price*100:.1f}%\n"
+                        f"P&L: {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+                        f"Order: {order_id or 'SIMULATION'}"
                     )
-
-                    try:
-                        from monitoring.telegram_alerts import send_telegram_message
-                        await send_telegram_message(
-                            f"<b>{icon} AUTO-EXIT {reason}</b>\n"
-                            f"━━━━━━━━━━━━━━━\n"
-                            f"<code>{question}</code>\n"
-                            f"<code>Entry : {entry:.3f}</code>\n"
-                            f"<code>Exit  : {current:.3f}</code>\n"
-                            f"<code>PnL   : {pnl_usd:+.2f}$</code>\n"
-                            f"<code>Order : {order_id}</code>"
-                        )
-                    except Exception:
-                        pass
-
-                except Exception as e:
-                    log.debug("monitor_open_positions pos=%s: %s", pos.get("market_id", "?"), e)
+                    await _send_telegram(msg)
+                    log.info("AUTO %s triggered: %s pnl=%.2f", trigger, market_id[:20], pnl)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("monitor_open_positions error: %s", e)
