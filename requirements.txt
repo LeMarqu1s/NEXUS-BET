@@ -8,3 +8,4 @@ web3>=6.0.0
 python-telegram-bot>=21.0
 Pillow>=10.0.0
 tavily-python>=0.3.0
+cryptography>=42.0.0

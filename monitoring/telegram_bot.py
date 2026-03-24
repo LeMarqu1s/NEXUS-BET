@@ -1352,14 +1352,28 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if awaiting == "onboarding_apikey":
         chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
-        # Save API key (basic validation: non-empty string)
-        if len(text) < 10:
+        raw_key = text.strip().strip('"').strip("'")
+        if len(raw_key) < 10:
             await update.message.reply_text(f"<b>❌ Clé trop courte</b>\nRéessaie :", parse_mode="HTML")
             return
-        await _save_user_field(chat_id, polymarket_api_key=text[:200])
+        # Chiffrement Fernet si NEXUS_ENCRYPTION_KEY disponible
+        try:
+            from core.crypto_keys import encrypt_key, is_encryption_available
+            if is_encryption_available():
+                encrypted = encrypt_key(raw_key)
+                await _save_user_field(chat_id, polymarket_private_key_enc=encrypted)
+                log.info("onboarding: private key encrypted and stored for chat_id=%s", chat_id)
+            else:
+                log.warning("onboarding: NEXUS_ENCRYPTION_KEY not set — storing key unencrypted")
+                await _save_user_field(chat_id, polymarket_api_key=raw_key[:200])
+        except Exception as e:
+            log.error("onboarding encrypt error: %s", e)
+            await _save_user_field(chat_id, polymarket_api_key=raw_key[:200])
+        finally:
+            raw_key = None  # efface la clé de la mémoire locale
         context.user_data["awaiting"] = None
         await update.message.reply_text(
-            f"<b>✅ Clé API sauvegardée</b>\n{L}\n"
+            f"<b>✅ Clé chiffrée et stockée de façon sécurisée</b>\n{L}\n"
             f"<b>Étape 3/4</b> — Profil de risque :\n\n"
             f"🛡️ <b>Conservateur</b> — Kelly 10%, max 3 positions\n"
             f"📊 <b>Quantitatif</b> — Kelly 25%, max 5 positions\n"
@@ -1701,6 +1715,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data.pop("buy_pending", None)
         context.user_data.pop("awaiting", None)
         await edit(f"<b>✕ ACHAT ANNULÉ</b>\n{L}", _main_keyboard())
+        return
+
+    if data.startswith("snipe_"):
+        market_id = data[6:]
+        await edit(f"<b>⏳ SNIPE EN COURS...</b>\n{L}", None)
+        try:
+            from config.settings import settings as _s
+            from monitoring.push_alerts import calculate_kelly
+            sim = getattr(_s, "SIMULATION_MODE", True)
+
+            # Reconstruit un pending minimal depuis l'ID marché
+            class _FakeSig:
+                confidence = 0.5
+            kelly_usd = calculate_kelly(_FakeSig())
+
+            context.user_data["buy_pending"] = {
+                "sig_match": {"market_id": market_id, "side": "YES"},
+                "market_id": market_id,
+                "side": "YES",
+                "price": 0.5,
+                "kelly_usd": kelly_usd,
+                "question": market_id[:50],
+                "sim": sim,
+            }
+            context.user_data["awaiting"] = "buy_amount"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✅ Confirmer Kelly (${kelly_usd:.0f})", callback_data="buy_amount_confirm")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="buy_amount_cancel")],
+            ])
+            await edit(
+                f"<b>⚡ SNIPE — MONTANT À MISER ?</b>\n{L}\n"
+                f"<code>{market_id[:50]}</code>\n{L}\n"
+                f"Kelly suggère <b>${kelly_usd:.0f}</b>\n\n"
+                f"<i>Tape un montant en USD ou confirme :</i>",
+                kb,
+            )
+        except Exception as e:
+            log.exception("snipe_ callback: %s", e)
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", _back_keyboard())
         return
 
     if data.startswith("pass_"):

@@ -123,6 +123,20 @@ async def test_clob_connection() -> bool:
         return False
 
 
+async def run_sniper():
+    """Boucle sniper — mathématique pure, scan toutes les 10s."""
+    from core.sniper import PolymarketSniper
+    sniper = PolymarketSniper()
+    while True:
+        try:
+            await sniper.run_forever()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Sniper crashed: %s, restart in 5s", e)
+            await asyncio.sleep(5)
+
+
 async def main():
     log.info("NEXUS BET starting...")
     await test_clob_connection()
@@ -144,10 +158,11 @@ async def main():
     telegram_task = asyncio.create_task(run_telegram(), name="telegram")
     monitor_task = asyncio.create_task(run_position_monitor(), name="position_monitor")
     report_task  = asyncio.create_task(run_daily_report(), name="daily_report")
+    sniper_task  = asyncio.create_task(run_sniper(), name="sniper")
     stop_task    = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
-        [scanner_task, telegram_task, monitor_task, report_task, stop_task],
+        [scanner_task, telegram_task, monitor_task, report_task, sniper_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 
