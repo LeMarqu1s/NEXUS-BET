@@ -162,6 +162,22 @@ class EdgeEngine:
                 price_floats.append(0.0)
         return list(outcomes), price_floats
 
+    def _days_until_resolution(self, market: dict[str, Any]) -> float:
+        """Returns DAYS until resolution (not fraction of year). Returns inf if unknown."""
+        end = market.get("endDate") or market.get("end_date_iso") or market.get("end_date")
+        if not end:
+            return float("inf")
+        try:
+            if isinstance(end, (int, float)):
+                dt = datetime.fromtimestamp(end, tz=timezone.utc)
+            else:
+                dt = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds() / 86400.0)
+        except Exception:
+            return float("inf")
+
     def _days_to_resolution(self, market: dict[str, Any]) -> float:
         end = market.get("endDate") or market.get("end_date_iso") or market.get("end_date")
         if not end:
@@ -215,12 +231,27 @@ class EdgeEngine:
         if polymarket_price <= 0.01 or polymarket_price >= 0.99:
             return None
 
+        # Sanity check: fair price must be within 20% of market price (no impossible edges)
+        if abs(fair - polymarket_price) > 0.20:
+            log.warning(
+                "Edge sanity fail: fair=%.3f market=%.3f diff=%.1f%% > 20%% → skip [%s]",
+                fair, polymarket_price, abs(fair - polymarket_price) * 100,
+                (market.get("question") or "")[:40],
+            )
+            return None
+
         if side.upper() == "YES":
             edge_pct = (fair - polymarket_price) / polymarket_price if polymarket_price > 0 else 0
         else:
             fair_no = 1.0 - fair
             pm_no = 1.0 - polymarket_price
             edge_pct = (fair_no - pm_no) / pm_no if pm_no > 0 else 0
+
+        # Hard cap: real prediction market edges never exceed 50%
+        MAX_EDGE = 0.50
+        if edge_pct > MAX_EDGE:
+            log.warning("Edge cap: raw=%.0f%% capped at 50%% [%s]", edge_pct * 100, (market.get("question") or "")[:40])
+            edge_pct = MAX_EDGE
 
         question = (market.get("question") or "")[:40]
         log.debug("Market: %s | price=%.2f | edge=%.2f%%", question, polymarket_price, edge_pct * 100)
@@ -263,10 +294,11 @@ class EdgeEngine:
             return None
 
         sum_prices = sum(prices)
-        if sum_prices >= 0.97:
+        # Minimum realistic sum: any market with sum < 0.70 is data garbage
+        if sum_prices >= 0.97 or sum_prices < 0.70:
             return None
 
-        edge_pct = (1.0 - sum_prices)
+        edge_pct = min(1.0 - sum_prices, 0.30)  # cap multi_outcome edge at 30%
         min_edge = settings.MIN_EDGE_PCT / 100.0
         if edge_pct < min_edge:
             return None
@@ -373,7 +405,11 @@ class EdgeEngine:
 
             if market_price <= 0:
                 continue
-            edge = abs(fair - market_price) / market_price
+            raw_edge = abs(fair - market_price) / market_price
+            # Sanity: fair price must not be more than 20% from market price
+            if abs(fair - market_price) > 0.20:
+                continue
+            edge = min(raw_edge, 0.50)  # cap scalar edge at 50%
             if edge > best_edge:
                 best_edge = edge
                 best_idx = i
@@ -422,6 +458,64 @@ class EdgeEngine:
             recommended_outcome=best_outcome,
         )
 
+    def _compute_edge_bond(
+        self,
+        market: dict[str, Any],
+        token_id: str,
+        side: str,
+        polymarket_price: float,
+    ) -> Optional[EdgeSignal]:
+        """
+        Bond Strategy: near-certain positions resolving within 7 days.
+        Looks for markets at > 90% probability with < 7 days to resolution.
+        Return = (1 - price) / price. E.g. 0.93 YES → 7.5% in <7 days.
+        signal_type = "BOND" in metadata.
+        """
+        # Only consider high-confidence markets near resolution
+        if polymarket_price <= 0.90 or polymarket_price >= 0.99:
+            return None
+        days = self._days_until_resolution(market)
+        if days <= 0 or days > 7:
+            return None
+
+        # Potential return if resolves as expected
+        edge_pct = round((1.0 - polymarket_price) / polymarket_price, 4)
+        min_edge = settings.MIN_EDGE_PCT / 100.0
+        if edge_pct < min_edge:
+            return None
+
+        # Kelly: assume 95% confidence it resolves as current leader
+        p_win = 0.95
+        b = (1.0 - polymarket_price) / polymarket_price
+        kelly = self._kelly(p_win, 1 - p_win, b, kelly_cap=0.10)  # conservative cap for bonds
+
+        question = (market.get("question") or "")[:120]
+        market_id = str(market.get("conditionId", market.get("condition_id", market.get("id", ""))))
+        log.info(
+            "BOND: %s @ %.1f%% · %.1f days · return=%.1f%%",
+            question[:40], polymarket_price * 100, days, edge_pct * 100,
+        )
+        return EdgeSignal(
+            market_id=market_id,
+            token_id=token_id,
+            side=side.upper(),
+            polymarket_price=polymarket_price,
+            model_fair_price=1.0,
+            edge_pct=edge_pct,
+            kelly_fraction=kelly,
+            model=MarketModel.NCAA,
+            confidence=0.92,
+            metadata={
+                "model": "bond",
+                "question": question,
+                "signal_type": "BOND",
+                "days_remaining": round(days, 1),
+            },
+            signal_strength="BUY",
+            market_type="binary",
+            recommended_outcome=side.upper(),
+        )
+
     def compute_edge(
         self,
         market: dict[str, Any],
@@ -435,6 +529,11 @@ class EdgeEngine:
         Returns EdgeSignal if edge > min_edge_pct, else None.
         """
         try:
+            # Bond strategy: check near-resolution high-confidence positions first
+            bond_sig = self._compute_edge_bond(market, token_id, side, polymarket_price)
+            if bond_sig is not None:
+                return bond_sig
+
             market_type = detect_market_type(market)
 
             if market_type == "binary":
