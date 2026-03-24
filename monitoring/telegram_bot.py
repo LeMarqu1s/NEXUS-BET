@@ -1764,7 +1764,8 @@ async def run_forever() -> None:
     """
     Run Telegram poller using low-level async API (no run_polling event loop).
     Compatible with asyncio.gather() in main.py.
-    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry + backoff.
+    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry.
+    On Conflict: never stop/shutdown the old app — build a completely new one.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1774,10 +1775,7 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
-    # Aggressively clear any previous session before starting
-    await close_telegram_session(token)
-    await asyncio.sleep(5)  # let old Railway instance fully terminate
-
+    conflict_attempt = 0
     app = build_application(token)
     try:
         await app.initialize()
@@ -1796,13 +1794,14 @@ async def run_forever() -> None:
             BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
         ])
 
+        # Delete any existing webhook and drop pending updates before polling
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        await asyncio.sleep(5)
+
         log.info("Telegram poller démarré (async-native, no run_polling)")
-        # Infinite retry for Conflict — rebuild Application on each conflict (PTB v21 updater not restartable)
         while True:
-            conflict_attempt = 0
-            _app = app
             try:
-                await _app.updater.start_polling(
+                await app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                 )
@@ -1821,28 +1820,17 @@ async def run_forever() -> None:
 
                 if is_conflict:
                     conflict_attempt += 1
-                    wait = min(10 + conflict_attempt * 5, 30)
-                    log.warning(
-                        "Telegram Conflict #%d — wait %ds, rebuild app, retry",
-                        conflict_attempt, wait,
-                    )
-                    # Gracefully stop current app before rebuilding
-                    try:
-                        await _app.updater.stop()
-                        await _app.stop()
-                        await _app.shutdown()
-                    except Exception:
-                        pass
-                    await asyncio.sleep(wait)
-                    await close_telegram_session(token)
-                    await asyncio.sleep(3)
-                    # Rebuild fresh Application (PTB v21 updater cannot be restarted)
+                    log.warning("Telegram Conflict #%d — new Application in 15s", conflict_attempt)
+                    # Do NOT stop/shutdown old app — just abandon it and build fresh
+                    await asyncio.sleep(15)
                     app = build_application(token)
                     await app.initialize()
                     await app.start()
+                    await app.bot.delete_webhook(drop_pending_updates=True)
+                    await asyncio.sleep(5)
                     continue
                 else:
-                    raise  # non-conflict errors propagate up
+                    raise
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise
