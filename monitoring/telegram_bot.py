@@ -365,9 +365,60 @@ async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
     return result
 
 
+async def _fetch_live_positions(addr: str) -> list[dict]:
+    """Positions ouvertes depuis data-api.polymarket.com."""
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": addr, "sizeThreshold": "0.01"},
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return data if isinstance(data, list) else []
+    except Exception as e:
+        log.debug("_fetch_live_positions: %s", e)
+    return []
+
+
 async def _get_portfolio_text() -> str:
     try:
+        # Balance + live positions depuis Polymarket API
+        relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS", "").strip()
         balance = await _get_balance()
+
+        live_section = ""
+        if relayer_addr:
+            try:
+                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=6.0)
+                if live_pos:
+                    live_pnl_total = 0.0
+                    live_lines = []
+                    for p in live_pos[:8]:
+                        outcome = html.escape(str(p.get("outcome") or p.get("title") or "?")[:35])
+                        size = float(p.get("size") or p.get("currentValue") or 0)
+                        entry = float(p.get("avgPrice") or p.get("buyPrice") or 0)
+                        current = float(p.get("currentPrice") or p.get("price") or entry)
+                        pnl_pct = ((current - entry) / entry * 100) if entry > 0 else 0
+                        pnl_usd = (current - entry) * size / current if entry > 0 and current > 0 else 0
+                        live_pnl_total += pnl_usd
+                        icon = "▲" if pnl_pct >= 0 else "▼"
+                        sign = "+" if pnl_pct >= 0 else ""
+                        live_lines.append(
+                            f"{outcome}\n"
+                            f"  @{entry:.3f}→{current:.3f} {icon}{sign}{pnl_pct:.1f}%  ${size:.1f}"
+                        )
+                    total_icon = "▲" if live_pnl_total >= 0 else "▼"
+                    total_sign = "+" if live_pnl_total >= 0 else ""
+                    live_section = (
+                        f"\n{L}\n<b>📊 POSITIONS LIVE ({len(live_pos)})</b>\n"
+                        f"<code>P&L TOTAL  {total_icon}{total_sign}${abs(live_pnl_total):.2f}\n"
+                        + "\n".join(live_lines)
+                        + "</code>"
+                    )
+            except Exception as lpe:
+                log.debug("live positions error: %s", lpe)
+
         from monitoring.trade_logger import trade_logger
         positions = trade_logger.get_positions()
         trades = trade_logger.get_recent_trades(limit=100)
@@ -424,7 +475,7 @@ async def _get_portfolio_text() -> str:
             f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
             f"POSITIONS {len(positions)} ouvertes\n"
             f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
-            f"{L}{paper_section}"
+            f"{L}{live_section}{paper_section}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
