@@ -1,14 +1,20 @@
 """
 NEXUS BET - Order Manager
 Limit orders with auto take-profit and stop-loss.
+SIMULATION_MODE=true  → logs orders, never hits Polymarket CLOB
+SIMULATION_MODE=false → places real orders, logs to Supabase trades table
 """
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from config.settings import settings
 from data.polymarket_client import PolymarketClient
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,15 +38,43 @@ class OrderManager:
         self._monitor_task: Optional[asyncio.Task] = None
 
     async def place_limit_order(self, cfg: OrderConfig) -> Optional[str]:
-        """Place limit order on Polymarket. Returns order_id or None."""
+        """
+        Place limit order on Polymarket.
+        SIMULATION_MODE=true → simulates, never hits CLOB.
+        SIMULATION_MODE=false → real order via py-clob-client + logs to Supabase.
+        Returns order_id or None.
+        """
+        # ── SIMULATION guard ──────────────────────────────────────────────────
+        if settings.SIMULATION_MODE:
+            sim_id = f"SIM_{cfg.market_id[:8]}_{int(time.time())}"
+            log.info(
+                "[SIM] Order NOT placed (SIMULATION_MODE=true): %s %s @ %.3f size=$%.2f → %s",
+                cfg.side, cfg.outcome, cfg.limit_price, cfg.size_usd, sim_id,
+            )
+            return sim_id
+
+        # ── REAL ORDER ────────────────────────────────────────────────────────
+        import os
+        if not os.getenv("POLYMARKET_PRIVATE_KEY"):
+            log.error("POLYMARKET_PRIVATE_KEY not set — cannot place real order")
+            return None
+
         try:
             token_id = await self.client.get_token_id_from_market(cfg.market_id, cfg.outcome)
             if not token_id:
+                log.error("place_limit_order: token_id not found for market=%s outcome=%s", cfg.market_id, cfg.outcome)
                 return None
-            # Polymarket uses size in shares: shares = amount_usd / price
+
+            # Polymarket size = shares (amount_usd / price)
             size_shares = cfg.size_usd / cfg.limit_price if cfg.limit_price > 0 else 0
             if size_shares <= 0:
+                log.error("place_limit_order: invalid size_shares=%.4f", size_shares)
                 return None
+
+            log.info(
+                "[LIVE] Placing %s %s token=%s price=%.3f shares=%.4f (~$%.2f)",
+                cfg.side, cfg.outcome, token_id[:16], cfg.limit_price, size_shares, cfg.size_usd,
+            )
             result = await self.client.place_limit_order(
                 token_id=token_id,
                 side=cfg.side,
@@ -48,14 +82,37 @@ class OrderManager:
                 size=size_shares,
             )
             if not result:
+                log.error("place_limit_order: CLOB returned None for %s %s", cfg.market_id, cfg.outcome)
                 return None
+
             order_id = result.get("orderID") or result.get("orderId") if isinstance(result, dict) else str(result)
+            log.info("[LIVE] Order placed: order_id=%s", order_id)
+
+            # Track active TP/SL orders
             if order_id and (cfg.take_profit_pct or cfg.stop_loss_pct):
                 self.active_orders[order_id] = cfg
+
+            # Log to Supabase trades table
+            try:
+                from supabase_client import supabase_client
+                await supabase_client.log_trade(
+                    market_id=cfg.market_id,
+                    token_id=token_id,
+                    side=cfg.side,
+                    amount_usd=cfg.size_usd,
+                    shares=size_shares,
+                    price=cfg.limit_price,
+                    order_type="LIMIT",
+                    status="PENDING",
+                    raw_order_id=order_id,
+                )
+                log.info("Trade logged to Supabase: %s", order_id)
+            except Exception as db_err:
+                log.warning("Supabase log_trade failed (non-critical): %s", db_err)
+
             return order_id
         except Exception as e:
-            if settings.DEBUG:
-                print(f"[OrderManager] place_limit_order error: {e}")
+            log.exception("place_limit_order error: %s", e)
             return None
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -132,6 +189,8 @@ class OrderManager:
                 from monitoring.trade_logger import TradeLogger
                 logger_inst = TradeLogger()
                 positions = logger_inst.get_positions() or []
+                log.info("monitor_open_positions: checking %d position(s) [TP=+%.0f%% SL=-%.0f%%]",
+                         len(positions), tp_pct * 100, sl_pct * 100)
                 for pos in positions:
                     market_id = pos.get("market_id") or pos.get("conditionId") or ""
                     side = pos.get("side", "YES")
