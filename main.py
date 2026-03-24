@@ -97,8 +97,49 @@ async def run_position_monitor():
             om = OrderManager()
 
 
+async def test_clob_connection() -> bool:
+    """Verify CLOB connectivity and key validity at startup. Logs exact errors."""
+    import os
+    from py_clob_client.client import ClobClient
+    raw_key = os.getenv("POLYMARKET_PRIVATE_KEY", "").strip().strip('"').strip("'").strip()
+    log.info("CLOB test — key present: %s | length: %d", bool(raw_key), len(raw_key))
+    if raw_key and not raw_key.startswith("0x"):
+        log.warning("CLOB test — key does NOT start with 0x, will prepend")
+        raw_key = "0x" + raw_key
+    if not raw_key:
+        log.error("CLOB test — POLYMARKET_PRIVATE_KEY is empty, skipping CLOB test")
+        return False
+    try:
+        client = ClobClient(
+            host="https://clob.polymarket.com",
+            key=raw_key,
+            chain_id=137,
+        )
+        api_creds = client.create_or_derive_api_creds()
+        log.info("CLOB test — connected OK, api_key=%s", str(getattr(api_creds, "api_key", "?"))[:8])
+        return True
+    except Exception as e:
+        log.error("CLOB test — connection FAILED: %s: %s", type(e).__name__, e)
+        return False
+
+
+async def run_sniper():
+    """Boucle sniper — mathématique pure, scan toutes les 10s."""
+    from core.sniper import PolymarketSniper
+    sniper = PolymarketSniper()
+    while True:
+        try:
+            await sniper.run_forever()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Sniper crashed: %s, restart in 5s", e)
+            await asyncio.sleep(5)
+
+
 async def main():
     log.info("NEXUS BET starting...")
+    await test_clob_connection()
 
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
@@ -117,10 +158,11 @@ async def main():
     telegram_task = asyncio.create_task(run_telegram(), name="telegram")
     monitor_task = asyncio.create_task(run_position_monitor(), name="position_monitor")
     report_task  = asyncio.create_task(run_daily_report(), name="daily_report")
+    sniper_task  = asyncio.create_task(run_sniper(), name="sniper")
     stop_task    = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
-        [scanner_task, telegram_task, monitor_task, report_task, stop_task],
+        [scanner_task, telegram_task, monitor_task, report_task, sniper_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 

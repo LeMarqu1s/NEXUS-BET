@@ -55,9 +55,11 @@ class OrderManager:
 
         # ── REAL ORDER ────────────────────────────────────────────────────────
         import os
-        if not os.getenv("POLYMARKET_PRIVATE_KEY"):
-            log.error("POLYMARKET_PRIVATE_KEY not set — cannot place real order")
+        raw_key = os.getenv("POLYMARKET_PRIVATE_KEY", "").strip().strip('"').strip("'").strip()
+        if not raw_key:
+            log.error("POLYMARKET_PRIVATE_KEY not set or empty — cannot place real order")
             return None
+        log.info("POLYMARKET_PRIVATE_KEY present, length=%d", len(raw_key))
 
         try:
             token_id = await self.client.get_token_id_from_market(cfg.market_id, cfg.outcome)

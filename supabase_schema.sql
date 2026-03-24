@@ -179,3 +179,12 @@ DROP POLICY IF EXISTS "users_anon_insert" ON users;
 CREATE POLICY "users_anon_insert" ON users FOR INSERT TO anon WITH CHECK (true);
 DROP POLICY IF EXISTS "users_anon_update" ON users;
 CREATE POLICY "users_anon_update" ON users FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+-- ============================================
+-- SNIPER — colonnes ajoutées pour SaaS multi-client
+-- ============================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS polymarket_private_key_enc TEXT;   -- AES-256 Fernet
+ALTER TABLE users ADD COLUMN IF NOT EXISTS polymarket_api_key_enc TEXT;        -- AES-256 Fernet
+ALTER TABLE users ADD COLUMN IF NOT EXISTS capital_allocated FLOAT DEFAULT 50;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_profile TEXT DEFAULT 'conservative';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_snipe BOOLEAN DEFAULT FALSE;
