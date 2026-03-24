@@ -132,6 +132,7 @@ def _settings_keyboard() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(copy_label, callback_data="settings_toggle_copy")],
         [InlineKeyboardButton("AVANCÉ", callback_data="settings_advanced")],
+        [InlineKeyboardButton("📊 DASHBOARD", callback_data="settings_dashboard")],
         [InlineKeyboardButton("← MENU", callback_data="menu_back")],
     ])
 
@@ -1498,6 +1499,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit(_get_settings_text(), _settings_keyboard())
         return
 
+    if data == "settings_dashboard":
+        # Generate/show dashboard link for the user
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
+        # Try to get or generate a token from Supabase
+        token = ""
+        url_sb = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key_sb = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if url_sb and key_sb and chat_id:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(
+                        f"{url_sb}/rest/v1/users",
+                        params={"telegram_chat_id": f"eq.{chat_id}", "select": "access_token,is_active"},
+                        headers={"apikey": key_sb, "Authorization": f"Bearer {key_sb}"},
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if rows and isinstance(rows, list):
+                            token = rows[0].get("access_token", "")
+            except Exception:
+                pass
+        if not token:
+            token = str(uuid.uuid4()).replace("-", "")[:24]
+        private_link = f"{dashboard_url}?token={token}"
+        public_link = f"{dashboard_url}?token=public"
+        await edit(
+            f"<b>📊 DASHBOARD NEXUS BET</b>\n{L}\n"
+            f"<b>Lien privé (abonnés)</b>\n<code>{private_link}</code>\n\n"
+            f"<b>Track Record public</b>\n<code>{public_link}</code>\n\n"
+            f"{L}\n"
+            f"<i>Ne partage pas ton lien privé — lié à ton compte.</i>",
+            _settings_keyboard(),
+        )
+        return
+
     if data == "settings_thresholds":
         context.user_data["awaiting"] = "thresholds"
         await edit(
@@ -1727,6 +1764,7 @@ async def run_forever() -> None:
     """
     Run Telegram poller using low-level async API (no run_polling event loop).
     Compatible with asyncio.gather() in main.py.
+    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry + backoff.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1736,8 +1774,9 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
+    # Aggressively clear any previous session before starting
     await close_telegram_session(token)
-    await asyncio.sleep(3)  # let old instance fully terminate during Railway deploy
+    await asyncio.sleep(5)  # let old Railway instance fully terminate
 
     app = build_application(token)
     try:
@@ -1758,40 +1797,52 @@ async def run_forever() -> None:
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
-        max_retries = 5
-        for attempt in range(max_retries):
+        # Infinite retry for Conflict — rebuild Application on each conflict (PTB v21 updater not restartable)
+        while True:
+            conflict_attempt = 0
+            _app = app
             try:
-                await app.updater.start_polling(
+                await _app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                 )
                 log.info("Bot is now listening for messages...")
-                try:
-                    while True:
-                        await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    pass
-                break
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
+                is_conflict = "Conflict" in str(e) or "409" in str(e)
                 try:
-                    from telegram.error import Conflict
-                    if isinstance(e, Conflict):
-                        log.warning("Telegram Conflict (other getUpdates): wait 10s, deleteWebhook, retry")
-                        await asyncio.sleep(10)
-                        await close_telegram_session(token)
-                        await asyncio.sleep(2)
-                        if attempt < max_retries - 1:
-                            continue
+                    from telegram.error import Conflict as TGConflict
+                    is_conflict = is_conflict or isinstance(e, TGConflict)
                 except ImportError:
                     pass
-                if "Conflict" in str(e) or "409" in str(e):
-                    log.warning("Telegram Conflict detected: %s", str(e)[:80])
-                    await asyncio.sleep(10)
+
+                if is_conflict:
+                    conflict_attempt += 1
+                    wait = min(10 + conflict_attempt * 5, 30)
+                    log.warning(
+                        "Telegram Conflict #%d — wait %ds, rebuild app, retry",
+                        conflict_attempt, wait,
+                    )
+                    # Gracefully stop current app before rebuilding
+                    try:
+                        await _app.updater.stop()
+                        await _app.stop()
+                        await _app.shutdown()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(wait)
                     await close_telegram_session(token)
-                    await asyncio.sleep(2)
-                    if attempt < max_retries - 1:
-                        continue
-                raise
+                    await asyncio.sleep(3)
+                    # Rebuild fresh Application (PTB v21 updater cannot be restarted)
+                    app = build_application(token)
+                    await app.initialize()
+                    await app.start()
+                    continue
+                else:
+                    raise  # non-conflict errors propagate up
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise

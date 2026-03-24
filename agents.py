@@ -2,14 +2,55 @@
 NEXUS CAPITAL - Adversarial AI Team
 Paperclip agents: DataAnalyst (UW smart money), Quant (edge/EV), RiskManager (destroys thesis), Sniper (executes).
 Falls back to Claude direct when PAPERCLIP_URL not set.
+Tavily web search enriches agent debates with real-time news context.
 """
 
 import asyncio
+import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
 import httpx
 from config.settings import settings
+
+log = logging.getLogger("nexus.agents")
+
+
+async def _tavily_search(query: str, max_results: int = 3) -> str:
+    """
+    Search the web using Tavily API for real-time context.
+    Returns a formatted string with top results or empty string if unavailable.
+    """
+    api_key = os.getenv("TAVILY_API_KEY", "")
+    if not api_key:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": api_key,
+                    "query": query,
+                    "search_depth": "basic",
+                    "max_results": max_results,
+                    "include_answer": True,
+                },
+            )
+            if r.status_code != 200:
+                return ""
+            data = r.json()
+            parts = []
+            if data.get("answer"):
+                parts.append(f"Summary: {data['answer'][:300]}")
+            for res in data.get("results", [])[:max_results]:
+                title = res.get("title", "")
+                snippet = res.get("content", "")[:150]
+                parts.append(f"• {title}: {snippet}")
+            return "\n".join(parts)
+    except Exception as e:
+        log.debug("Tavily search failed: %s", e)
+        return ""
 
 
 @dataclass
@@ -89,9 +130,23 @@ Output format: VERDICT: APPROVE or REJECT (exactly one). Then 1-2 sentence justi
         return approved, out
 
     async def full_debate(self, market_id: str, outcome: str, edge_bps: float, kelly: float, rationale: str, market_context: str = "") -> TradeThesis:
-        """Run full adversarial pipeline: Quant → Risk → Analyst."""
+        """Run full adversarial pipeline: Quant → Risk → Analyst.
+        Enriches context with Tavily web search for real-time news when available.
+        """
+        # Enrich with Tavily web search if available
+        tavily_context = ""
+        if rationale and len(rationale) > 10:
+            search_query = f"Polymarket prediction {rationale[:100]}"
+            tavily_context = await _tavily_search(search_query)
+            if tavily_context:
+                log.debug("Tavily enrichment: %d chars for market %s", len(tavily_context), market_id)
+
+        enriched_context = market_context
+        if tavily_context:
+            enriched_context = f"{market_context}\n\nWeb context:\n{tavily_context}".strip()
+
         thesis_text = await self.quant_propose_trade(market_id, outcome, edge_bps, kelly, rationale)
-        risk_concerns = await self.risk_manager_challenge(thesis_text, market_context)
+        risk_concerns = await self.risk_manager_challenge(thesis_text, enriched_context)
         approved, verdict = await self.head_analyst_validate(thesis_text, risk_concerns)
         return TradeThesis(
             market_id=market_id,
