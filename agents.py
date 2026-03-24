@@ -8,6 +8,7 @@ Tavily web search enriches agent debates with real-time news context.
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -15,6 +16,9 @@ import httpx
 from config.settings import settings
 
 log = logging.getLogger("nexus.agents")
+
+_last_claude_call: float = 0.0
+_MIN_INTERVAL = 15  # seconds between Claude API calls
 
 
 async def _tavily_search(query: str, max_results: int = 3) -> str:
@@ -75,31 +79,50 @@ class AdversarialAITeam:
         self.model = "claude-sonnet-4-20250514"
 
     async def _call_claude(self, system: str, user: str) -> str:
-        """Call Anthropic Claude API asynchronously."""
+        """Call Anthropic Claude API — rate-limited (1 call / 15s) with 429 guard."""
+        global _last_claude_call
         if not self.api_key:
             return "[NO_API_KEY] Mock response - configure ANTHROPIC_API_KEY"
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                self.base_url,
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": 1024,
-                    "system": system,
-                    "messages": [{"role": "user", "content": user}],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data.get("content", [])
-            if content and isinstance(content[0], dict):
-                return content[0].get("text", "")
-            return str(content)
+        now = time.time()
+        wait = _MIN_INTERVAL - (now - _last_claude_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_claude_call = time.time()
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    self.base_url,
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "max_tokens": 1024,
+                        "system": system,
+                        "messages": [{"role": "user", "content": user}],
+                    },
+                )
+                if resp.status_code == 429:
+                    log.warning("Anthropic 429 rate limit — sleeping 60s")
+                    await asyncio.sleep(60)
+                    return "Agent indisponible"
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("content", [])
+                if content and isinstance(content[0], dict):
+                    return content[0].get("text", "")
+                return str(content)
+        except Exception as e:
+            if "429" in str(e):
+                log.warning("Anthropic 429 (exc) — sleeping 60s: %s", e)
+                await asyncio.sleep(60)
+            else:
+                log.error("Claude API error: %s", e)
+            return "Agent indisponible"
 
     async def _call_agent(self, role: str, system: str, user: str) -> str:
         """Route to Paperclip agent if available, otherwise fall back to Claude."""
@@ -158,3 +181,8 @@ Output format: VERDICT: APPROVE or REJECT (exactly one). Then 1-2 sentence justi
             final_verdict=verdict,
             approved=approved,
         )
+
+
+async def call_claude(system: str = "", user: str = "") -> str:
+    """Module-level wrapper — rate-limited Claude call via AdversarialAITeam."""
+    return await AdversarialAITeam()._call_claude(system, user)
