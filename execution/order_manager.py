@@ -1,14 +1,20 @@
 """
 NEXUS BET - Order Manager
 Limit orders with auto take-profit and stop-loss.
+SIMULATION_MODE=true  → logs orders, never hits Polymarket CLOB
+SIMULATION_MODE=false → places real orders, logs to Supabase trades table
 """
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from config.settings import settings
 from data.polymarket_client import PolymarketClient
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,15 +38,43 @@ class OrderManager:
         self._monitor_task: Optional[asyncio.Task] = None
 
     async def place_limit_order(self, cfg: OrderConfig) -> Optional[str]:
-        """Place limit order on Polymarket. Returns order_id or None."""
+        """
+        Place limit order on Polymarket.
+        SIMULATION_MODE=true → simulates, never hits CLOB.
+        SIMULATION_MODE=false → real order via py-clob-client + logs to Supabase.
+        Returns order_id or None.
+        """
+        # ── SIMULATION guard ──────────────────────────────────────────────────
+        if settings.SIMULATION_MODE:
+            sim_id = f"SIM_{cfg.market_id[:8]}_{int(time.time())}"
+            log.info(
+                "[SIM] Order NOT placed (SIMULATION_MODE=true): %s %s @ %.3f size=$%.2f → %s",
+                cfg.side, cfg.outcome, cfg.limit_price, cfg.size_usd, sim_id,
+            )
+            return sim_id
+
+        # ── REAL ORDER ────────────────────────────────────────────────────────
+        import os
+        if not os.getenv("POLYMARKET_PRIVATE_KEY"):
+            log.error("POLYMARKET_PRIVATE_KEY not set — cannot place real order")
+            return None
+
         try:
             token_id = await self.client.get_token_id_from_market(cfg.market_id, cfg.outcome)
             if not token_id:
+                log.error("place_limit_order: token_id not found for market=%s outcome=%s", cfg.market_id, cfg.outcome)
                 return None
-            # Polymarket uses size in shares: shares = amount_usd / price
+
+            # Polymarket size = shares (amount_usd / price)
             size_shares = cfg.size_usd / cfg.limit_price if cfg.limit_price > 0 else 0
             if size_shares <= 0:
+                log.error("place_limit_order: invalid size_shares=%.4f", size_shares)
                 return None
+
+            log.info(
+                "[LIVE] Placing %s %s token=%s price=%.3f shares=%.4f (~$%.2f)",
+                cfg.side, cfg.outcome, token_id[:16], cfg.limit_price, size_shares, cfg.size_usd,
+            )
             result = await self.client.place_limit_order(
                 token_id=token_id,
                 side=cfg.side,
@@ -48,14 +82,37 @@ class OrderManager:
                 size=size_shares,
             )
             if not result:
+                log.error("place_limit_order: CLOB returned None for %s %s", cfg.market_id, cfg.outcome)
                 return None
+
             order_id = result.get("orderID") or result.get("orderId") if isinstance(result, dict) else str(result)
+            log.info("[LIVE] Order placed: order_id=%s", order_id)
+
+            # Track active TP/SL orders
             if order_id and (cfg.take_profit_pct or cfg.stop_loss_pct):
                 self.active_orders[order_id] = cfg
+
+            # Log to Supabase trades table
+            try:
+                from supabase_client import supabase_client
+                await supabase_client.log_trade(
+                    market_id=cfg.market_id,
+                    token_id=token_id,
+                    side=cfg.side,
+                    amount_usd=cfg.size_usd,
+                    shares=size_shares,
+                    price=cfg.limit_price,
+                    order_type="LIMIT",
+                    status="PENDING",
+                    raw_order_id=order_id,
+                )
+                log.info("Trade logged to Supabase: %s", order_id)
+            except Exception as db_err:
+                log.warning("Supabase log_trade failed (non-critical): %s", db_err)
+
             return order_id
         except Exception as e:
-            if settings.DEBUG:
-                print(f"[OrderManager] place_limit_order error: {e}")
+            log.exception("place_limit_order error: %s", e)
             return None
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -101,82 +158,80 @@ class OrderManager:
 
     async def monitor_open_positions(self, interval_sec: float = 60.0) -> None:
         """
-        Boucle infinie — vérifie les positions ouvertes toutes les 60s.
-        Auto-vend si +40% (TP) ou -30% (SL) depuis le prix d'entrée.
-        Les seuils sont configurables via EARLY_EXIT_TP_PCT / EARLY_EXIT_SL_PCT.
+        Background loop: checks open Supabase positions every interval_sec.
+        Auto-sells at TP (+40%) or SL (-30%) and sends Telegram alert.
         """
         import logging
-        from monitoring.trade_logger import trade_logger
+        import os
+        import httpx
+        log = logging.getLogger(__name__)
 
-        log = logging.getLogger("nexus.exit_monitor")
         tp_pct = settings.EARLY_EXIT_TP_PCT
         sl_pct = settings.EARLY_EXIT_SL_PCT
-        log.info(
-            "Position monitor démarré — TP +%.0f%% | SL -%.0f%% | interval %ds",
-            tp_pct * 100, sl_pct * 100, interval_sec,
-        )
+
+        async def _send_telegram(msg: str) -> None:
+            token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+            if not token or not chat_id:
+                return
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as c:
+                    await c.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                    )
+            except Exception:
+                pass
 
         while True:
             await asyncio.sleep(interval_sec)
-            positions = trade_logger.get_positions()
-            if not positions:
-                continue
-
-            for pos in positions:
-                try:
-                    mid = pos.get("market_id") or ""
-                    outcome = pos.get("outcome") or "YES"
-                    entry = float(pos.get("avg_price") or 0)
-                    size = float(pos.get("size") or 0)
-
-                    if not mid or entry <= 0 or size <= 0:
+            try:
+                from monitoring.trade_logger import TradeLogger
+                logger_inst = TradeLogger()
+                positions = logger_inst.get_positions() or []
+                log.info("monitor_open_positions: checking %d position(s) [TP=+%.0f%% SL=-%.0f%%]",
+                         len(positions), tp_pct * 100, sl_pct * 100)
+                for pos in positions:
+                    market_id = pos.get("market_id") or pos.get("conditionId") or ""
+                    side = pos.get("side", "YES")
+                    entry_price = float(pos.get("avg_entry_price") or pos.get("entry_price") or 0)
+                    if not market_id or entry_price <= 0:
                         continue
-
-                    current = await self.client.get_mid_price(mid, outcome)
-                    if current is None:
+                    try:
+                        current_price = await self.client.get_mid_price(market_id, side)
+                    except Exception:
+                        current_price = None
+                    if current_price is None:
                         continue
-
-                    pct = (current - entry) / entry
-
-                    if pct >= tp_pct:
-                        reason, icon = f"TP +{pct * 100:.1f}%", "💰"
-                    elif pct <= -sl_pct:
-                        reason, icon = f"SL {pct * 100:.1f}%", "🛑"
+                    pct_change = (current_price - entry_price) / entry_price
+                    if pct_change >= tp_pct:
+                        trigger = "TP"
+                        emoji = "💰"
+                    elif pct_change <= -sl_pct:
+                        trigger = "SL"
+                        emoji = "🛑"
                     else:
                         continue
-
-                    # Placer l'ordre de vente au marché (-2% slippage)
-                    sell_price = max(0.01, current * 0.98)
-                    cfg = OrderConfig(
-                        market_id=mid,
-                        outcome=outcome,
+                    # Place sell order
+                    sell_cfg = OrderConfig(
+                        market_id=market_id,
+                        outcome=side,
                         side="SELL",
-                        size_usd=size * sell_price,
-                        limit_price=sell_price,
+                        size_usd=float(pos.get("cost_basis_usd") or pos.get("size_usd") or 10.0),
+                        limit_price=current_price,
                     )
-                    order_id = await self.place_limit_order(cfg)
-                    trade_logger.update_position(mid, outcome, 0, 0)
-
-                    question = (pos.get("question") or mid)[:50]
-                    pnl_usd = (current - entry) * size
-                    log.warning(
-                        "AUTO-EXIT [%s] %s | entry=%.3f current=%.3f pnl=%+.2f$",
-                        reason, question[:40], entry, current, pnl_usd,
+                    order_id = await self.place_limit_order(sell_cfg)
+                    pnl = (current_price - entry_price) * float(pos.get("shares") or sell_cfg.size_usd / entry_price)
+                    question = (pos.get("question") or market_id)[:60]
+                    msg = (
+                        f"{emoji} <b>AUTO {trigger} — {question}</b>\n"
+                        f"Entry: {entry_price*100:.1f}%  →  Exit: {current_price*100:.1f}%\n"
+                        f"P&L: {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+                        f"Order: {order_id or 'SIMULATION'}"
                     )
-
-                    try:
-                        from monitoring.telegram_alerts import send_telegram_message
-                        await send_telegram_message(
-                            f"<b>{icon} AUTO-EXIT {reason}</b>\n"
-                            f"━━━━━━━━━━━━━━━\n"
-                            f"<code>{question}</code>\n"
-                            f"<code>Entry : {entry:.3f}</code>\n"
-                            f"<code>Exit  : {current:.3f}</code>\n"
-                            f"<code>PnL   : {pnl_usd:+.2f}$</code>\n"
-                            f"<code>Order : {order_id}</code>"
-                        )
-                    except Exception:
-                        pass
-
-                except Exception as e:
-                    log.debug("monitor_open_positions pos=%s: %s", pos.get("market_id", "?"), e)
+                    await _send_telegram(msg)
+                    log.info("AUTO %s triggered: %s pnl=%.2f", trigger, market_id[:20], pnl)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("monitor_open_positions error: %s", e)

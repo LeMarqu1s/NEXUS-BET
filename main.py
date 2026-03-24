@@ -1,6 +1,7 @@
-import asyncio
-import logging
+import os
+import sys
 import signal
+import asyncio
 import time
 from dotenv import load_dotenv
 load_dotenv()
@@ -10,6 +11,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelna
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("NEXUS")
+
+if os.environ.get("PAUSE_BOT", "").strip().lower() == "true":
+    log.info("Bot is paused (PAUSE_BOT=true), exiting gracefully")
+    sys.exit(0)
 
 
 async def run_scanner():
@@ -36,11 +41,47 @@ async def run_telegram():
             await asyncio.sleep(5)
 
 
-async def run_position_monitor():
-    from execution.order_manager import OrderManager
+async def run_daily_report():
+    """Sends daily P&L report to all active subscribers at 21:00 UTC."""
+    from datetime import datetime, timezone
+    import telegram
+    token = __import__("os").getenv("TELEGRAM_BOT_TOKEN") or __import__("os").getenv("TELEGRAM_TOKEN")
+    if not token:
+        return
     while True:
-        om = OrderManager()
+        now = datetime.now(timezone.utc)
+        # Compute seconds until next 21:00 UTC
+        target = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        if now >= target:
+            import datetime as _dt
+            target = target + _dt.timedelta(days=1)
+        wait_sec = (target - now).total_seconds()
+        await asyncio.sleep(wait_sec)
         try:
+            bot = telegram.Bot(token=token)
+            from monitoring.telegram_bot import send_daily_report
+            await send_daily_report(bot)
+            log.info("Daily report sent")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Daily report error: %s", e)
+
+
+async def run_position_monitor():
+    """Background task: TP/SL monitor + paper portfolio sync every 60s."""
+    from execution.order_manager import OrderManager
+    om = OrderManager()
+    while True:
+        try:
+            # Sync paper portfolio from signals
+            try:
+                from monitoring.paper_portfolio import sync_from_signals
+                added = sync_from_signals()
+                if added:
+                    log.info("Paper portfolio: +%d new trades synced", added)
+            except Exception as e:
+                log.debug("Paper portfolio sync: %s", e)
             await om.monitor_open_positions(interval_sec=60.0)
         except asyncio.CancelledError:
             raise
@@ -52,6 +93,7 @@ async def run_position_monitor():
                 await om.client.close()
             except Exception:
                 pass
+            om = OrderManager()
 
 
 async def main():
@@ -73,10 +115,11 @@ async def main():
     scanner_task = asyncio.create_task(run_scanner(), name="scanner")
     telegram_task = asyncio.create_task(run_telegram(), name="telegram")
     monitor_task = asyncio.create_task(run_position_monitor(), name="position_monitor")
-    stop_task = asyncio.create_task(stop_event.wait(), name="stop")
+    report_task  = asyncio.create_task(run_daily_report(), name="daily_report")
+    stop_task    = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
-        [scanner_task, telegram_task, monitor_task, stop_task],
+        [scanner_task, telegram_task, monitor_task, report_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 

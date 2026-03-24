@@ -113,10 +113,14 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
         ts = time.time()
         data: dict = {"last_scan_ts": ts, "market_count": market_count, "signals": [], "count": 0}
         if p.exists():
-            with open(p, encoding="utf-8") as f:
-                existing = json.load(f)
-            if isinstance(existing, dict):
-                data["signals"] = list(existing.get("signals", []))
+            try:
+                with open(p, encoding="utf-8") as f:
+                    existing = json.load(f)
+                if isinstance(existing, dict):
+                    data["signals"] = list(existing.get("signals", []))
+            except Exception as read_err:
+                logger.warning("_write_scan_ts: could not read existing signals (treating as empty): %s", read_err)
+                # Continue with empty signals — don't abort the write
         if new_signals:
             for sig in new_signals:
                 entry = _signal_to_entry(sig)
@@ -125,8 +129,11 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
                     logger.info("SIGNAL STORED: %s edge=%.2f%%", entry.get("question", "")[:40], entry["edge_pct"])
             data["signals"] = data["signals"][-50:]
         data["count"] = len(data["signals"])
-        with open(p, "w", encoding="utf-8") as f:
+        # Atomic write: write to .tmp then rename to prevent partial-write corruption
+        tmp = p.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        tmp.replace(p)
         logger.info("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
     except Exception as e:
         logger.warning("_write_scan_ts failed: %s", e)

@@ -296,24 +296,72 @@ async def _get_scan_text() -> str:
             f"SCAN      {mins}</code>\n"
             f"{L}"
         ]
+        from config.settings import settings as _s
+        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+        sim = getattr(_s, "SIMULATION_MODE", True)
+        mode_label = "PAPER" if sim else "LIVE"
+        kb_rows: list = []
         for s in signals[:5]:
-            q = (s.get("question") or str(s.get("market_id", "")))[:42]
-            side = s.get("recommended_outcome") or s.get("side", "?")
+            mid = s.get("market_id") or s.get("conditionId") or ""
+            q = (s.get("question") or str(mid))[:42]
+            side = s.get("recommended_outcome") or s.get("side", "YES")
             price = float(s.get("polymarket_price") or 0.5)
             edge = float(s.get("edge_pct", 0))
             conf = float(s.get("confidence", 0))
+            kelly = float(s.get("kelly_fraction") or 0.05)
+            size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
             tag = "⚡ STRONG BUY" if s.get("signal_strength") == "STRONG_BUY" else "🟢 BUY"
             cat = _detect_category(q)
             lines.append(
                 f"\n{tag} · {cat}\n"
                 f"<b>{q}</b>\n"
-                f"<code>{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}</code>"
+                f"{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}"
             )
+            if mid:
+                cb_buy = f"buy_{mid[:38]}|{side}"
+                cb_pass = f"pass_{mid[:38]}"
+                kb_rows.append([
+                    InlineKeyboardButton(f"✅ BUY ${size_usd:.0f} [{mode_label}]", callback_data=cb_buy),
+                    InlineKeyboardButton("❌ PASS", callback_data=cb_pass),
+                ])
         lines.append(f"\n{L}")
-        return "\n".join(lines)
+        kb_rows.append([
+            InlineKeyboardButton("⟳ REFRESH", callback_data="btn_scan"),
+            InlineKeyboardButton("← MENU", callback_data="menu_back"),
+        ])
+        keyboard = InlineKeyboardMarkup(kb_rows)
+        return "\n".join(lines), keyboard
     except Exception as e:
         log.exception("Scan failed: %s", e)
         return f"<b>📡 MARKET SCANNER</b>\n{L}\n<code>ERREUR — {e}</code>"
+
+
+async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
+    """Fetch live YES prices from Gamma API for open paper positions (parallel, 3s timeout)."""
+    result: dict[str, float] = {}
+    if not market_ids:
+        return result
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            tasks = [client.get(f"https://gamma-api.polymarket.com/markets/{mid}") for mid in market_ids[:5]]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            for mid, r in zip(market_ids[:5], responses):
+                if isinstance(r, Exception):
+                    continue
+                try:
+                    data = r.json()
+                    m = data[0] if isinstance(data, list) and data else data
+                    if not isinstance(m, dict):
+                        continue
+                    prices = m.get("outcomePrices", ["0.5", "0.5"])
+                    if isinstance(prices, str):
+                        prices = json.loads(prices)
+                    result[mid] = float(prices[0])
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return result
 
 
 async def _get_portfolio_text() -> str:
@@ -333,67 +381,65 @@ async def _get_portfolio_text() -> str:
         pnl_sign = "+" if pnl_today >= 0 else ""
         pnl_icon = "▲" if pnl_today >= 0 else "▼"
 
-        real_block = (
+        # Paper portfolio with live prices
+        paper_section = ""
+        try:
+            from monitoring.paper_portfolio import get_paper_summary
+            pp_data = _load_paper_trades_json()
+            open_ids = [t.get("market_id", "") for t in pp_data if t.get("status") == "OPEN" and t.get("market_id")]
+            live_prices = await _fetch_paper_prices(open_ids) if open_ids else {}
+            pp = get_paper_summary(current_prices=live_prices)
+            open_trades = pp.get("open_trades", [])
+            pp_pnl = pp.get("total_pnl", 0)
+            pp_pnl_pct = pp.get("total_pnl_pct", 0)
+            pp_wr = pp.get("win_rate", 0)
+            pp_invested = pp.get("invested", 0)
+            pp_free = pp.get("free", 0)
+            sign = "+" if pp_pnl >= 0 else ""
+            icon = "▲" if pp_pnl >= 0 else "▼"
+            paper_section = (
+                f"\n{L}\n<b>📄 PAPER SIM — $50</b>\n"
+                f"<code>INVESTI   ${pp_invested:.2f}  LIBRE ${pp_free:.2f}\n"
+                f"P&L       {icon}{sign}${abs(pp_pnl):.2f} ({sign}{pp_pnl_pct:.1f}%)\n"
+                f"WIN RATE  {pp_wr:.0f}%  POSITIONS {len(open_trades)}</code>"
+            )
+            if open_trades:
+                paper_section += f"\n<code>"
+                for t in open_trades[:3]:
+                    q = (t.get("question") or t.get("market_id", "?"))[:28]
+                    s = t.get("side", "?")
+                    ep = float(t.get("entry_price") or 0)
+                    cp = float(t.get("current_price") or ep)
+                    p = float(t.get("pnl_pct") or 0)
+                    pi = "▲" if p >= 0 else "▼"
+                    paper_section += f"\n{q[:28]}\n{s} @{ep:.2f}→{cp:.2f} {pi}{abs(p):.1f}%"
+                paper_section += "</code>"
+        except Exception as pe:
+            log.debug("Paper portfolio in portfolio text: %s", pe)
+
+        return (
             f"<b>💰 PORTFOLIO</b>\n{L}\n"
             f"<code>BALANCE   ${balance:,.2f} USDC\n"
             f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
             f"POSITIONS {len(positions)} ouvertes\n"
             f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
-            f"{L}"
+            f"{L}{paper_section}"
         )
-
-        # ── Section simulation $50 ── jamais bloque si erreur ──
-        paper_block = ""
-        try:
-            from monitoring.paper_portfolio import sync_from_signals, get_paper_summary, PAPER_CAPITAL
-            sync_from_signals()
-            s = get_paper_summary()
-            pnl_total = s["total_pnl"]
-            pnl_sign_p = "+" if pnl_total >= 0 else ""
-            pnl_icon_p = "▲" if pnl_total >= 0 else "▼"
-
-            lines_p = [
-                f"\n<b>🎮 PAPER TRADING · ${PAPER_CAPITAL:.0f}</b>\n{L}\n",
-                f"<code>"
-                f"CAPITAL   ${PAPER_CAPITAL:.0f} (sim)\n"
-                f"INVESTI   ${s['invested']:.2f}\n"
-                f"P&L TOT   {pnl_icon_p}{pnl_sign_p}${abs(pnl_total):.2f} ({pnl_sign_p}{s['total_pnl_pct']:.1f}%)\n"
-                f"WIN RATE  {s['win_rate']:.0f}% ({s['wins']}/{max(s['total_closed'],1)})\n"
-                f"OPEN      {len(s['open_trades'])} pos · FREE ${s['free']:.2f}"
-                f"</code>",
-            ]
-
-            # Positions ouvertes (max 5)
-            if s["open_trades"]:
-                lines_p.append(f"\n<b>Positions ouvertes :</b>")
-                for t in s["open_trades"][:5]:
-                    p_sign = "+" if t["pnl_pct"] >= 0 else ""
-                    p_icon = "▲" if t["pnl_pct"] >= 0 else "▼"
-                    q = t["question"][:38]
-                    lines_p.append(
-                        f"<code>{t['side']:<4} {p_icon}{p_sign}{t['pnl_pct']:.1f}%  "
-                        f"@{t['entry_price']:.2f}→{t['current_price']:.2f}\n"
-                        f"  {q}</code>"
-                    )
-
-            # Trades clôturés récents (max 3)
-            if s["closed_trades"]:
-                lines_p.append(f"\n<b>Derniers clôturés :</b>")
-                for t in s["closed_trades"][:3]:
-                    p = float(t.get("pnl_usd") or 0)
-                    icon = "✅" if p > 0 else "❌"
-                    q = t["question"][:38]
-                    lines_p.append(f"<code>{icon} {t['side']:<4} {p:+.2f}$  {q}</code>")
-
-            lines_p.append(f"\n{L}")
-            paper_block = "\n".join(lines_p)
-        except Exception as e:
-            log.debug("paper_portfolio in portfolio: %s", e)
-
-        return real_block + paper_block
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
         return f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — {e}</code>"
+
+
+def _load_paper_trades_json() -> list:
+    """Load open trades list from paper_trades.json (sync helper)."""
+    try:
+        p = Path(__file__).resolve().parent.parent / "logs" / "paper_trades.json"
+        if not p.exists():
+            return []
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data.get("trades", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
 
 
 async def _fetch_market_meta(market_id: str) -> tuple[str, int]:
@@ -467,7 +513,7 @@ async def _get_positions_detail(context: ContextTypes.DEFAULT_TYPE | None = None
         await pm.close()
         lines.append(f"\n{L}")
         kb = InlineKeyboardMarkup([
-            *[[InlineKeyboardButton(f"💰 Exit Now #{i+1}", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
+            *[[InlineKeyboardButton(f"✕ EXIT #{i+1}", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
             [InlineKeyboardButton("← PORTFOLIO", callback_data="btn_portfolio")],
         ])
         if context:
@@ -557,7 +603,7 @@ async def _get_whales_text() -> str:
             size = float(t.get("size") or 0)
             price = float(t.get("price") or 0)
             amt = size * price
-            if amt >= 1000:
+            if amt >= 50000:
                 whales.append({
                     "title": (t.get("title") or t.get("slug", "?"))[:40],
                     "side": str(t.get("side", "?")).upper(),
@@ -566,40 +612,16 @@ async def _get_whales_text() -> str:
                 })
         whales = sorted(whales, key=lambda x: -x["amount"])[:6]
         if not whales:
-            base = f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$1 000 récent.</i>\n{L}"
-        else:
-            lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
-            for w in whales:
-                lines.append(
-                    f"<b>${w['amount']:,.0f}</b>  {w['outcome']}\n"
-                    f"<code>{w['title']}</code>"
-                )
-            lines.append(f"\n{L}")
-            base = "\n".join(lines)
+            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$50 000 récent.</i>\n{L}"
 
-        # Section mouvements coordonnés (sybil detector) — jamais bloque si erreur
-        coord_section = ""
-        try:
-            from data.sybil_detector import scan_coordinated_activity
-            coord = await scan_coordinated_activity()
-            if coord:
-                parts = [f"\n<b>🕵️ MOUVEMENTS COORDONNÉS</b>\n{L}"]
-                for s in coord[:3]:
-                    if s["action"] == "FOLLOW":
-                        tag = "🟢 FOLLOW"
-                    elif s["action"] == "FADE":
-                        tag = "🔴 FADE"
-                    else:
-                        tag = "👀 WATCH"
-                    parts.append(
-                        f"{tag}  <b>{s['wallets_count']} wallets</b> · <b>${s['coordinated_volume']:,.0f}</b>\n"
-                        f"<code>{s['market'][:45]}</code>  @{s['entry_price']:.2f}"
-                    )
-                coord_section = "\n".join(parts)
-        except Exception as e:
-            log.debug("sybil_detector in whales: %s", e)
-
-        return base + coord_section
+        lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
+        for w in whales:
+            lines.append(
+                f"<b>${w['amount']:,.0f}</b>  {w['outcome']}\n"
+                f"<code>{w['title']}</code>"
+            )
+        lines.append(f"\n{L}")
+        return "\n".join(lines)
     except Exception as e:
         log.exception("Whales failed: %s", e)
         return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>ERREUR — {e}</code>"
@@ -796,16 +818,56 @@ async def _register_referred_user(chat_id: str, ref_code: str) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reset user state + clear pending callbacks on /start. Handles deep-link referral."""
+    """Reset user state + clear pending callbacks on /start. Handles deep-link referral + onboarding."""
     try:
         context.user_data.clear()
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
         # Handle deep-link: /start ref_XXXXXXXX
         args = context.args or []
         if args and str(args[0]).startswith("ref_"):
             ref_code = str(args[0])[4:].upper()
-            chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
             asyncio.create_task(_register_referred_user(chat_id, ref_code))
+
+        # Check if brand new user → start onboarding
+        try:
+            is_new = await asyncio.wait_for(_is_new_user(chat_id), timeout=4.0)
+        except Exception:
+            is_new = False
+
+        if is_new:
+            context.user_data["onboarding"] = True
+            context.user_data["awaiting"] = "onboarding_wallet"
+            await update.message.reply_text(
+                f"<b>⚡ Bienvenue sur NEXUS BET</b>\n{L}\n"
+                f"Bot de prédiction Polymarket autonome.\n\n"
+                f"<b>20 agents IA</b> détectent les mispricings 24/7.\n"
+                f"Signaux vérifiés · Auto-trade · Track record public.\n"
+                f"{L}\n"
+                f"<b>Étape 1/4</b> — Connecte ton wallet Polymarket :\n"
+                f"<code>Envoie ton adresse 0x...</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Check trial/subscription status
+        try:
+            status = await asyncio.wait_for(_check_trial_status(chat_id), timeout=4.0)
+        except Exception:
+            status = {"exists": True, "is_active": True, "is_trial": False, "expired": False}
+
+        if status.get("expired"):
+            await update.message.reply_text(
+                f"<b>⚡ NEXUS BET</b>\n{L}\n"
+                f"<b>⏰ Essai gratuit terminé</b>\n\n"
+                f"Abonne-toi pour continuer à recevoir les signaux :\n{L}",
+                parse_mode="HTML",
+                reply_markup=_payment_keyboard(),
+            )
+            return
+
         text = await asyncio.wait_for(_get_start_text(), timeout=HANDLER_TIMEOUT)
+        if status.get("is_trial") and status.get("days_left", 0) <= 2:
+            text += f"\n⚠️ <i>Essai se termine dans {status['days_left']}j</i>"
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=_main_keyboard())
     except Exception as e:
         log.exception("cmd_start: %s", e)
@@ -1267,6 +1329,46 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     from monitoring.env_config import set_env_value, set_env_values
 
+    # ── Onboarding flow ──
+    if awaiting == "onboarding_wallet":
+        if not POLYGON_ADDRESS_PATTERN.match(text):
+            await update.message.reply_text(
+                f"<b>❌ Adresse invalide</b>\n{L}\n<code>Format: 0x + 40 hex chars</code>\nRéessaie :",
+                parse_mode="HTML",
+            )
+            return
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+        await _save_user_field(chat_id, wallet_address=text)
+        context.user_data["onboarding_wallet"] = text
+        context.user_data["awaiting"] = "onboarding_apikey"
+        await update.message.reply_text(
+            f"<b>✅ Wallet connecté</b>\n<code>{text}</code>\n{L}\n"
+            f"<b>Étape 2/4</b> — Clé API Polymarket :\n"
+            f"<code>Polymarket.com → Settings → API Keys</code>\n\n"
+            f"Envoie ta clé API (commence par 0x...) :",
+            parse_mode="HTML",
+        )
+        return
+
+    if awaiting == "onboarding_apikey":
+        chat_id = str(update.effective_user.id if update.effective_user else update.effective_chat.id)
+        # Save API key (basic validation: non-empty string)
+        if len(text) < 10:
+            await update.message.reply_text(f"<b>❌ Clé trop courte</b>\nRéessaie :", parse_mode="HTML")
+            return
+        await _save_user_field(chat_id, polymarket_api_key=text[:200])
+        context.user_data["awaiting"] = None
+        await update.message.reply_text(
+            f"<b>✅ Clé API sauvegardée</b>\n{L}\n"
+            f"<b>Étape 3/4</b> — Profil de risque :\n\n"
+            f"🛡️ <b>Conservateur</b> — Kelly 10%, max 3 positions\n"
+            f"📊 <b>Quantitatif</b> — Kelly 25%, max 5 positions\n"
+            f"🎲 <b>Degen</b> — Kelly 50%, max 10 positions",
+            parse_mode="HTML",
+            reply_markup=_risk_profile_keyboard(),
+        )
+        return
+
     if awaiting == "thresholds":
         parts = text.split()
         if len(parts) >= 4:
@@ -1396,8 +1498,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_scan":
         await edit(f"<b>📡 SCANNING...</b>\n{L}", None)
-        text = await _safe_get(_get_scan_text, _scan_fallback(), None)()
-        await edit(text, _scan_keyboard())
+        result = await _safe_get(_get_scan_text, _scan_fallback(), None)()
+        if isinstance(result, tuple):
+            text, kb = result[0], result[1]
+        else:
+            text, kb = result, _scan_keyboard()
+        await edit(text, kb)
         return
 
     if data == "btn_portfolio":
@@ -1453,16 +1559,87 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         parts = data[4:].split("|", 1)
         market_id = parts[0] if parts else ""
         side = parts[1] if len(parts) > 1 else "YES"
-        from config.settings import settings as _s
-        cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
-        await edit(
-            f"<b>✅ POSITION ENREGISTRÉE</b>\n{L}\n"
-            f"<code>MARCHÉ  {market_id[:38]}\n"
-            f"SIDE    {side}\n"
-            f"CAPITAL ${cap:,.0f}</code>\n{L}\n"
-            f"<i>Active Auto-Trade dans ⚙️ SETTINGS pour l'exécution auto.</i>",
-            _back_keyboard(),
-        )
+        await edit(f"<b>⏳ EXÉCUTION...</b>\n{L}", None)
+        try:
+            from config.settings import settings as _s
+            from paperclip_bridge import get_pending_signals
+            sim = getattr(_s, "SIMULATION_MODE", True)
+            # Find matching signal for rich metadata
+            sig_match: dict = {"market_id": market_id, "side": side, "recommended_outcome": side}
+            try:
+                for sig in (get_pending_signals() or []):
+                    mid = sig.get("market_id") or sig.get("conditionId") or ""
+                    if mid.startswith(market_id) or market_id.startswith(mid[:20]):
+                        sig_match = sig
+                        break
+            except Exception:
+                pass
+            price = float(sig_match.get("polymarket_price") or 0.5)
+            kelly = float(sig_match.get("kelly_fraction") or 0.05)
+            cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0) or 1000.0
+            size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
+            question = (sig_match.get("question") or market_id)[:50]
+            if sim:
+                # Paper trade
+                from monitoring.paper_portfolio import record_paper_trade
+                paper_sig = {
+                    "market_id": market_id,
+                    "question": question,
+                    "side": side,
+                    "polymarket_price": price,
+                    "edge_pct": sig_match.get("edge_pct"),
+                    "confidence": sig_match.get("confidence"),
+                }
+                ok = record_paper_trade(paper_sig)
+                if ok:
+                    await edit(
+                        f"<b>✅ PAPER TRADE ENREGISTRÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                        f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>",
+                        _back_keyboard(),
+                    )
+                else:
+                    await edit(
+                        f"<b>⚠️ NON AJOUTÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"<i>Position déjà ouverte ou slots pleins (max 5)</i>",
+                        _back_keyboard(),
+                    )
+            else:
+                # Live order
+                from execution.order_manager import OrderManager, OrderConfig
+                mgr = OrderManager()
+                cfg = OrderConfig(
+                    market_id=market_id,
+                    outcome=side,
+                    side="BUY",
+                    size_usd=size_usd,
+                    limit_price=price,
+                )
+                order_id = await mgr.place_limit_order(cfg)
+                if order_id:
+                    await edit(
+                        f"<b>✅ ORDRE PLACÉ</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
+                        f"Order: <code>{order_id}</code>\n{L}",
+                        _back_keyboard(),
+                    )
+                else:
+                    await edit(
+                        f"<b>❌ ÉCHEC ORDRE</b>\n{L}\n"
+                        f"<b>{question}</b>\n"
+                        f"<i>Vérifiez POLYMARKET_PRIVATE_KEY et les logs.</i>",
+                        _back_keyboard(),
+                    )
+        except Exception as e:
+            log.exception("buy_ callback: %s", e)
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", _back_keyboard())
+        return
+
+    if data.startswith("pass_"):
+        await edit(f"<b>❌ SIGNAL PASSÉ</b>\n{L}\n<i>Signal ignoré.</i>", _scan_keyboard())
         return
 
     if data.startswith("ignore_"):
@@ -1566,6 +1743,56 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await edit(f"<b>❌ EXIT ÉCHOUÉ</b>\n{L}\n<code>{e}</code>", _main_keyboard())
             return
         await edit(f"<b>✕ EXIT EXÉCUTÉ</b>\n{L}\n<i>Position soldée.</i>", _main_keyboard())
+        return
+
+    # ── Onboarding callbacks ──
+    RISK_PROFILES = {
+        "onboard_risk_conservateur": ("conservateur", 0.10, 3),
+        "onboard_risk_quantitatif":  ("quantitatif",  0.25, 5),
+        "onboard_risk_degen":        ("degen",         0.50, 10),
+    }
+    if data in RISK_PROFILES:
+        profile_name, kelly, max_pos = RISK_PROFILES[data]
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        await _save_user_field(chat_id, risk_profile=profile_name, kelly_pct=kelly, max_positions=max_pos)
+        ls97  = os.getenv("LS_CHECKOUT_97",  "https://t.me/nexus_capital_bot")
+        ls197 = os.getenv("LS_CHECKOUT_197", "https://t.me/nexus_capital_bot")
+        ls297 = os.getenv("LS_CHECKOUT_297", "https://t.me/nexus_capital_bot")
+        await edit(
+            f"<b>✅ Profil {profile_name.upper()} sauvegardé</b>\n{L}\n"
+            f"<code>Kelly     {int(kelly*100)}%\n"
+            f"Max pos   {max_pos}</code>\n"
+            f"{L}\n"
+            f"<b>Étape 4/4</b> — Choisis ton abonnement :\n\n"
+            f"<b>€97/mois</b> — Signaux Telegram + dashboard\n"
+            f"<b>€197/mois</b> — Full Auto-trade ⚡\n"
+            f"<b>€297 once</b> — Lifetime License ♾️\n\n"
+            f"<i>Ou démarre avec 7 jours gratuits ↓</i>",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("€97/mois — Signal Intel", url=ls97)],
+                [InlineKeyboardButton("⚡ €197/mois — Full Auto", url=ls197)],
+                [InlineKeyboardButton("♾️ €297 — Lifetime", url=ls297)],
+                [InlineKeyboardButton("🎁 Essai 7j gratuit", callback_data="onboard_start_trial")],
+            ]),
+        )
+        return
+
+    if data == "onboard_start_trial":
+        chat_id = str(q.from_user.id if q.from_user else "0")
+        ok = await _start_trial(chat_id)
+        if ok:
+            token, _ = await _upsert_user_token(chat_id)
+            dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-capital-eight.vercel.app").rstrip("/")
+            link = f"{dashboard_url}?token={token}" if token else dashboard_url
+            await edit(
+                f"<b>🎉 Essai gratuit activé — 7 jours</b>\n{L}\n"
+                f"Tu reçois maintenant les signaux NEXUS BET.\n\n"
+                f"🔐 Dashboard privé :\n<code>{link}</code>\n{L}\n"
+                f"<i>Tape /start pour accéder au menu.</i>",
+                _back_keyboard(),
+            )
+        else:
+            await edit(f"<b>❌ Erreur activation</b>\n{L}\n<i>Contacte le support.</i>", _back_keyboard())
         return
 
         # ── Settings ──
@@ -1782,6 +2009,254 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # POLLER
 # ══════════════════════════════════════════════
 
+# ══════════════════════════════════════════════
+# ONBOARDING + TRIAL + BROADCAST
+# ══════════════════════════════════════════════
+
+TRIAL_DAYS = 7
+
+
+def _risk_profile_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛡️ Conservateur", callback_data="onboard_risk_conservateur")],
+        [InlineKeyboardButton("📊 Quantitatif", callback_data="onboard_risk_quantitatif")],
+        [InlineKeyboardButton("🎲 Degen", callback_data="onboard_risk_degen")],
+    ])
+
+
+def _payment_keyboard() -> InlineKeyboardMarkup:
+    ls97 = os.getenv("LS_CHECKOUT_97", "https://t.me/nexus_capital_bot")
+    ls197 = os.getenv("LS_CHECKOUT_197", "https://t.me/nexus_capital_bot")
+    ls297 = os.getenv("LS_CHECKOUT_297", "https://t.me/nexus_capital_bot")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("€97/mois — Signal Intel", url=ls97)],
+        [InlineKeyboardButton("⚡ €197/mois — Full Auto", url=ls197)],
+        [InlineKeyboardButton("♾️ €297 — Lifetime", url=ls297)],
+        [InlineKeyboardButton("🎁 Essai 7 jours gratuit", callback_data="onboard_start_trial")],
+    ])
+
+
+async def _is_new_user(chat_id: str) -> bool:
+    """Returns True if the user doesn't exist yet in Supabase."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "id", "limit": "1"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            return r.status_code == 200 and not r.json()
+    except Exception:
+        return False
+
+
+async def _start_trial(chat_id: str) -> bool:
+    """Creates user row with 7-day trial in Supabase. Returns True on success."""
+    from datetime import datetime, timezone, timedelta
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.post(
+                f"{url}/rest/v1/users",
+                headers={
+                    "apikey": key, "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=ignore-duplicates,return=minimal",
+                },
+                json={
+                    "telegram_chat_id": chat_id,
+                    "is_active": True,
+                    "is_trial": True,
+                    "trial_ends_at": trial_ends,
+                    "plan": "trial",
+                },
+            )
+            return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
+
+
+async def _check_trial_status(chat_id: str) -> dict:
+    """Returns {exists, is_active, is_trial, days_left, expired, plan}."""
+    from datetime import datetime, timezone
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    default = {"exists": False, "is_active": False, "is_trial": False, "days_left": 0, "expired": False, "plan": "free"}
+    if not url or not key:
+        return default
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"telegram_chat_id": f"eq.{chat_id}", "select": "is_active,is_trial,trial_ends_at,plan", "limit": "1"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if r.status_code != 200 or not r.json():
+                return default
+            row = r.json()[0]
+            is_trial = bool(row.get("is_trial"))
+            is_active = bool(row.get("is_active"))
+            plan = row.get("plan", "free")
+            days_left = 0
+            expired = False
+            if is_trial:
+                exp = row.get("trial_ends_at")
+                if exp:
+                    try:
+                        exp_dt = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+                        if exp_dt.tzinfo is None:
+                            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                        delta = (exp_dt - datetime.now(timezone.utc)).days
+                        days_left = max(0, delta)
+                        expired = delta < 0
+                        if expired:
+                            is_active = False
+                    except Exception:
+                        pass
+            return {"exists": True, "is_active": is_active, "is_trial": is_trial, "days_left": days_left, "expired": expired, "plan": plan}
+    except Exception:
+        return default
+
+
+async def _save_user_field(chat_id: str, **fields) -> bool:
+    """Upsert fields into Supabase users table."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.post(
+                f"{url}/rest/v1/users",
+                headers={
+                    "apikey": key, "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                },
+                json={"telegram_chat_id": chat_id, **fields},
+            )
+            return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
+
+
+async def _get_active_chat_ids() -> list[str]:
+    """Returns list of telegram_chat_id for all is_active=true users (for broadcast)."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.get(
+                f"{url}/rest/v1/users",
+                params={"is_active": "eq.true", "select": "telegram_chat_id", "limit": "500"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if r.status_code == 200:
+                return [row["telegram_chat_id"] for row in r.json() if row.get("telegram_chat_id")]
+    except Exception:
+        pass
+    return []
+
+
+async def broadcast_signal(bot, signal: dict) -> int:
+    """
+    Send a signal card to ALL active subscribers.
+    Returns the number of messages sent successfully.
+    """
+    chat_ids = await _get_active_chat_ids()
+    if not chat_ids:
+        # Fallback to single TELEGRAM_CHAT_ID
+        fallback = os.getenv("TELEGRAM_CHAT_ID")
+        if fallback:
+            chat_ids = [fallback]
+    edge = float(signal.get("edge_pct") or 0)
+    question = (signal.get("question") or signal.get("market_id") or "?")[:72]
+    side = signal.get("side", "YES")
+    price = float(signal.get("polymarket_price") or 0.5)
+    strength = signal.get("signal_strength", "BUY")
+    icon = "⚡" if "STRONG" in str(strength) else "▲"
+    cat = _detect_category(question)
+    text = (
+        f"{icon} <b>SIGNAL · {cat}</b>\n{L}\n"
+        f"<b>{question}</b>\n"
+        f"<code>SIDE    {side}\n"
+        f"PRICE   {price*100:.1f}%\n"
+        f"EDGE    +{edge:.1f}pts\n"
+        f"FORCE   {strength}</code>\n"
+        f"{L}\n<i>Via NEXUS BET Intelligence</i>"
+    )
+    sent = 0
+    for cid in chat_ids:
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            log.debug("broadcast to %s failed: %s", cid, e)
+    return sent
+
+
+async def send_daily_report(bot) -> None:
+    """Send daily P&L report to all active subscribers."""
+    import json as _json
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parent.parent
+    # Gather paper portfolio stats
+    try:
+        from monitoring.paper_portfolio import get_paper_summary
+        pp = get_paper_summary()
+    except Exception:
+        pp = {}
+    # Gather signal stats
+    signals_today = 0
+    try:
+        p = root / "paperclip_pending_signals.json"
+        if p.exists():
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date().isoformat()
+            d = _json.loads(p.read_text(encoding="utf-8"))
+            for s in (d.get("signals", []) if isinstance(d, dict) else []):
+                ts = s.get("created_at") or s.get("last_scan_ts")
+                if ts and str(ts)[:10] == today:
+                    signals_today += 1
+            if signals_today == 0:
+                signals_today = len(d.get("signals", [])) if isinstance(d, dict) else 0
+    except Exception:
+        pass
+    pnl = pp.get("total_pnl", 0)
+    wr = pp.get("win_rate", 0)
+    invested = pp.get("invested", 0)
+    open_count = len(pp.get("open_trades", []))
+    text = (
+        f"<b>📊 RAPPORT DU JOUR — NEXUS BET</b>\n{L}\n"
+        f"<code>Signaux détectés : {signals_today}\n"
+        f"Positions ouvertes: {open_count}\n"
+        f"Investi (paper)   : ${invested:.2f}\n"
+        f"P&L total         : {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+        f"Win rate          : {wr:.0f}%</code>\n"
+        f"{L}\n<i>NEXUS BET · Rapport automatique 21h00 UTC</i>"
+    )
+    chat_ids = await _get_active_chat_ids()
+    if not chat_ids:
+        fallback = os.getenv("TELEGRAM_CHAT_ID")
+        if fallback:
+            chat_ids = [fallback]
+    for cid in chat_ids:
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+        except Exception as e:
+            log.debug("daily report to %s failed: %s", cid, e)
+
+
 async def close_telegram_session(token: str) -> bool:
     """Delete webhook + clear pending updates. Prevents 409 when switching to polling."""
     import httpx
@@ -1838,8 +2313,7 @@ async def run_forever() -> None:
     """
     Run Telegram poller using low-level async API (no run_polling event loop).
     Compatible with asyncio.gather() in main.py.
-    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry.
-    On Conflict: never stop/shutdown the old app — build a completely new one.
+    Handles 409 Conflict (Railway rolling deploy overlap) with infinite retry + backoff.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
@@ -1849,7 +2323,10 @@ async def run_forever() -> None:
     for _log in ("telegram", "telegram.ext"):
         logging.getLogger(_log).setLevel(logging.ERROR)
 
-    conflict_attempt = 0
+    # Aggressively clear any previous session before starting
+    await close_telegram_session(token)
+    await asyncio.sleep(5)  # let old Railway instance fully terminate
+
     app = build_application(token)
     try:
         await app.initialize()
@@ -1868,14 +2345,13 @@ async def run_forever() -> None:
             BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
         ])
 
-        # Delete any existing webhook and drop pending updates before polling
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        await asyncio.sleep(5)
-
         log.info("Telegram poller démarré (async-native, no run_polling)")
+        # Infinite retry for Conflict — rebuild Application on each conflict (PTB v21 updater not restartable)
         while True:
+            conflict_attempt = 0
+            _app = app
             try:
-                await app.updater.start_polling(
+                await _app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                 )
@@ -1894,17 +2370,28 @@ async def run_forever() -> None:
 
                 if is_conflict:
                     conflict_attempt += 1
-                    log.warning("Telegram Conflict #%d — new Application in 15s", conflict_attempt)
-                    # Do NOT stop/shutdown old app — just abandon it and build fresh
-                    await asyncio.sleep(15)
+                    wait = min(10 + conflict_attempt * 5, 30)
+                    log.warning(
+                        "Telegram Conflict #%d — wait %ds, rebuild app, retry",
+                        conflict_attempt, wait,
+                    )
+                    # Gracefully stop current app before rebuilding
+                    try:
+                        await _app.updater.stop()
+                        await _app.stop()
+                        await _app.shutdown()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(wait)
+                    await close_telegram_session(token)
+                    await asyncio.sleep(3)
+                    # Rebuild fresh Application (PTB v21 updater cannot be restarted)
                     app = build_application(token)
                     await app.initialize()
                     await app.start()
-                    await app.bot.delete_webhook(drop_pending_updates=True)
-                    await asyncio.sleep(5)
                     continue
                 else:
-                    raise
+                    raise  # non-conflict errors propagate up
     except asyncio.CancelledError:
         log.info("Telegram poller arrêté")
         raise
