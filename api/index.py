@@ -4,12 +4,14 @@ Serves Bloomberg-style dashboard + API endpoints with Supabase data.
 Auth: token dans ?token= requis pour les endpoints API (sauf /health et dashboard HTML).
 Performance: timeout 5s, cache market 60s.
 """
+import hashlib
+import hmac
 import json
 import os
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -530,6 +532,87 @@ def _get_market_types():
     }
 
 
+def _ls_checkout_url(plan: str, telegram_chat_id: str = "") -> str | None:
+    """
+    Returns Lemon Squeezy checkout URL for a given plan (97/197/297).
+    Appends checkout[custom][telegram_chat_id] param so the webhook knows who to activate.
+    """
+    env_key = f"LS_CHECKOUT_{plan}"
+    base_url = os.getenv(env_key, "")
+    if not base_url:
+        return None
+    if telegram_chat_id:
+        sep = "&" if "?" in base_url else "?"
+        base_url += sep + urlencode({"checkout[custom][telegram_chat_id]": telegram_chat_id})
+    return base_url
+
+
+def _ls_verify_signature(body: bytes, signature: str) -> bool:
+    """Verify Lemon Squeezy webhook HMAC-SHA256 signature."""
+    secret = os.getenv("LS_WEBHOOK_SECRET", "")
+    if not secret:
+        return True  # skip if not configured (dev mode)
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature.lower().lstrip("sha256="))
+
+
+def _ls_activate_user(telegram_chat_id: str, plan: str, order_id: str) -> bool:
+    """Set is_active=True + plan in Supabase for the given Telegram chat_id."""
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key or not telegram_chat_id:
+        return False
+    try:
+        body = json.dumps({
+            "telegram_chat_id": telegram_chat_id,
+            "is_active": True,
+            "is_trial": False,
+            "plan": plan,
+            "ls_order_id": order_id,
+        }).encode()
+        req = Request(
+            f"{url}/rest/v1/users",
+            data=body,
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
+            method="POST",
+        )
+        with urlopen(req, timeout=8) as r:
+            return r.status in (200, 201, 204)
+    except Exception:
+        return False
+
+
+def _send_telegram_welcome(telegram_chat_id: str, plan: str) -> None:
+    """Send activation welcome message via Telegram Bot API."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token or not telegram_chat_id:
+        return
+    plan_label = {"97": "Signal Intel", "197": "Full Auto ⚡", "297": "Lifetime ♾️"}.get(str(plan), plan)
+    msg = (
+        f"✅ <b>Abonnement activé — {plan_label}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"Bienvenue dans NEXUS BET.\n"
+        f"Tape /start pour accéder à tous les signaux.\n"
+        f"Tape /access pour ton dashboard privé."
+    )
+    try:
+        body = json.dumps({"chat_id": telegram_chat_id, "text": msg, "parse_mode": "HTML"}).encode()
+        req = Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urlopen(req, timeout=8)
+    except Exception:
+        pass
+
+
 def _get_dashboard_html():
     p = Path(__file__).resolve().parent / "dashboard.html"
     if p.exists():
@@ -627,6 +710,31 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "market_not_found", "id": rest}).encode())
                 return
 
+        # Lemon Squeezy checkout redirect (public — no auth needed)
+        if path == "/api/checkout":
+            qs = parse_qs(full_path.split("?", 1)[1]) if "?" in full_path else {}
+            plan = (qs.get("plan", [""])[0] or "").strip()
+            chat_id = (qs.get("chat_id", [""])[0] or "").strip()
+            if plan not in ("97", "197", "297"):
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "plan must be 97, 197 or 297"}).encode())
+                return
+            checkout_url = _ls_checkout_url(plan, chat_id)
+            if not checkout_url:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": f"LS_CHECKOUT_{plan} not configured"}).encode())
+                return
+            self.send_response(302)
+            self.send_header("Location", checkout_url)
+            self.end_headers()
+            return
+
         # Public track-record endpoints (accessible without auth for sales page proof)
         if token == "public":
             if path == "/api/track-record":
@@ -698,6 +806,63 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps({"error": "not_found", "path": path}).encode())
+
+    def do_POST(self):
+        """Handle POST requests — Lemon Squeezy webhook."""
+        full_path = self.path or "/"
+        path = full_path.split("?")[0] or "/"
+
+        if path == "/api/webhook":
+            # Read body
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b""
+            signature = self.headers.get("X-Signature", "") or self.headers.get("x-signature", "")
+
+            # Verify HMAC signature
+            if not _ls_verify_signature(body, signature):
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "invalid_signature"}).encode())
+                return
+
+            try:
+                payload = json.loads(body.decode())
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            event_name = payload.get("meta", {}).get("event_name", "")
+            # Lemon Squeezy event: order_created → activate user
+            if event_name in ("order_created", "subscription_created", "subscription_payment_success"):
+                meta = payload.get("meta", {})
+                custom = meta.get("custom_data", {}) or {}
+                telegram_chat_id = str(custom.get("telegram_chat_id", "")).strip()
+                data_obj = payload.get("data", {})
+                attrs = data_obj.get("attributes", {}) if isinstance(data_obj, dict) else {}
+                order_id = str(data_obj.get("id", "")) if isinstance(data_obj, dict) else ""
+                # Determine plan from variant price
+                first_item = (attrs.get("first_order_item") or {}) if isinstance(attrs, dict) else {}
+                price_cents = int(first_item.get("price", 0) or 0)
+                if price_cents >= 29700:
+                    plan = "297"
+                elif price_cents >= 19700:
+                    plan = "197"
+                else:
+                    plan = "97"
+                if telegram_chat_id:
+                    _ls_activate_user(telegram_chat_id, plan, order_id)
+                    _send_telegram_welcome(telegram_chat_id, plan)
+
+            self._json_response({"ok": True})
+            return
+
+        # Fallback for unknown POST paths
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "not_found"}).encode())
 
     def do_OPTIONS(self):
         """CORS preflight for browser fetch from dashboard."""
