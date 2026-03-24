@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from core.claude_limiter import claude_call_with_limit
 
 log = logging.getLogger("nexus.swarm")
 
@@ -81,33 +82,39 @@ def _get_persona_for_agent(i: int) -> dict[str, str]:
 
 
 async def _call_llm(api_key: str | None, model: str, system: str, user: str) -> str:
-    """Appel Claude API (Anthropic)."""
+    """Appel Claude API — throttled via shared claude_call_with_limit."""
     if not api_key:
-        # Mode mock : vote aléatoire pour tests
         import random
         vote = "YES" if random.random() > 0.3 else "NO"
         return f"{vote}. Mock reasoning: no API key configured."
     base = "https://api.anthropic.com/v1/messages"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            base,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": 256,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
-        )
-        resp.raise_for_status()
-        content = resp.json().get("content", [])
-        if content and isinstance(content[0], dict):
-            return content[0].get("text", "")
-    return ""
+
+    async def _do_call():
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                base,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 256,
+                    "system": system,
+                    "messages": [{"role": "user", "content": user}],
+                },
+            )
+            if resp.status_code == 429:
+                raise Exception("429")
+            resp.raise_for_status()
+            content = resp.json().get("content", [])
+            if content and isinstance(content[0], dict):
+                return content[0].get("text", "")
+            return ""
+
+    result = await claude_call_with_limit(_do_call)
+    return result if result is not None else "Agent indisponible"
 
 
 def _parse_vote(text: str) -> str:
