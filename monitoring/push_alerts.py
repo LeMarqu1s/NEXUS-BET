@@ -69,9 +69,16 @@ async def push_sniper_alert(signal) -> None:
         return
 
     users = await get_active_subscribers()
+    # Fallback : si Supabase vide ou non configuré → toujours alerter TELEGRAM_CHAT_ID
+    fallback_id = os.getenv("TELEGRAM_CHAT_ID")
     if not users:
-        log.debug("push_sniper_alert: aucun abonné actif")
-        return
+        if fallback_id:
+            log.info("push_sniper_alert: no subscribers in DB — using TELEGRAM_CHAT_ID fallback")
+            users = [{"telegram_chat_id": fallback_id}]
+        else:
+            log.warning("push_sniper_alert: no subscribers and TELEGRAM_CHAT_ID not set — alert dropped")
+            return
+    log.info("push_sniper_alert: sending to %d subscriber(s) | signals=%s", len(users), signal.signals)
 
     kelly_usd = calculate_kelly(signal)
     target_pct = (signal.target_price / signal.price - 1) * 100
@@ -120,6 +127,44 @@ async def push_sniper_alert(signal) -> None:
             "push_sniper_alert: sent to %d/%d subscribers | signals=%s",
             ok, len(tasks), signal.signals,
         )
+    await bot.close()
+
+
+async def push_auto_snipe_notification(signal, order_id: str | None) -> None:
+    """
+    Notification post-exécution quand AUTO_SNIPE=true.
+    Différente de push_sniper_alert : indique que l'ordre est déjà placé.
+    """
+    from telegram import Bot
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return
+    users = await get_active_subscribers()
+    fallback_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not users and fallback_id:
+        users = [{"telegram_chat_id": fallback_id}]
+    if not users:
+        return
+
+    safe_question = html.escape(signal.question[:60])
+    status = f"✅ ORDER <code>{html.escape(str(order_id))}</code>" if order_id else "❌ ÉCHEC ORDRE"
+    L = "━━━━━━━━━━━━━━━"
+    message = (
+        f"⚡ <b>SNIPE EXÉCUTÉ</b>\n{L}\n"
+        f"<b>{safe_question}</b>\n\n"
+        f"<code>"
+        f"PRIX    {signal.price:.3f}\n"
+        f"TARGET  {signal.target_price:.3f} (+{(signal.target_price/signal.price-1)*100:.0f}%)\n"
+        f"STOP    {signal.stop_price:.3f} (-{(1-signal.stop_price/signal.price)*100:.0f}%)"
+        f"</code>\n{L}\n"
+        f"{status}"
+    )
+
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, u.get("telegram_chat_id", ""), message, None)
+             for u in users if u.get("telegram_chat_id")]
+    await asyncio.gather(*tasks, return_exceptions=True)
     await bot.close()
 
 

@@ -267,18 +267,28 @@ class PolymarketSniper:
     # ── Signal detected ───────────────────────────────────────────────────────
 
     async def _on_signal_detected(self, signal: SniperSignal) -> None:
-        """Publie l'alerte + exécution auto si AUTO_SNIPE=true."""
-        try:
-            from monitoring.push_alerts import push_sniper_alert
-            await push_sniper_alert(signal)
-        except Exception as e:
-            log.error("push_sniper_alert failed: %s", e)
+        """AUTO_SNIPE=true → exécute l'ordre PUIS notifie.
+           AUTO_SNIPE=false → push alerte avec bouton SNIPE."""
+        auto_snipe = os.getenv("AUTO_SNIPE", "false").lower() == "true"
+        if auto_snipe:
+            # 1. Exécuter immédiatement
+            order_id = await self._execute_entry(signal)
+            # 2. Notifier "exécuté"
+            try:
+                from monitoring.push_alerts import push_auto_snipe_notification
+                await push_auto_snipe_notification(signal, order_id)
+            except Exception as e:
+                log.error("push_auto_snipe_notification failed: %s", e)
+        else:
+            # Envoyer l'alerte avec bouton SNIPE / PASS
+            try:
+                from monitoring.push_alerts import push_sniper_alert
+                await push_sniper_alert(signal)
+            except Exception as e:
+                log.error("push_sniper_alert failed: %s", e)
 
-        if os.getenv("AUTO_SNIPE", "false").lower() == "true":
-            await self._execute_entry(signal)
-
-    async def _execute_entry(self, signal: SniperSignal) -> None:
-        """Exécute l'entrée automatique (AUTO_SNIPE=true)."""
+    async def _execute_entry(self, signal: SniperSignal) -> str | None:
+        """Exécute l'entrée automatique (AUTO_SNIPE=true). Retourne order_id ou None."""
         try:
             from config.settings import settings as _s
             from execution.order_manager import OrderManager, OrderConfig
@@ -301,8 +311,10 @@ class PolymarketSniper:
                 log.info("AUTO_SNIPE order placed: %s size=$%.0f", order_id, size_usd)
             else:
                 log.warning("AUTO_SNIPE: order failed for %s", signal.market_id[:20])
+            return order_id
         except Exception as e:
             log.error("_execute_entry: %s", e)
+            return None
 
     # ── Boucle principale ─────────────────────────────────────────────────────
 
