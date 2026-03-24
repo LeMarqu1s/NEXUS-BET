@@ -1,11 +1,17 @@
 import asyncio
 import logging
+import os
+import sys
 import time
 from dotenv import load_dotenv
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s - %(message)s")
 log = logging.getLogger("NEXUS")
+
+if os.environ.get("PAUSE_BOT", "").strip().lower() == "true":
+    log.info("Bot is paused (PAUSE_BOT=true), exiting gracefully")
+    sys.exit(0)
 
 
 async def run_scanner():
