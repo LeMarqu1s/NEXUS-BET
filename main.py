@@ -36,6 +36,34 @@ async def run_telegram():
             await asyncio.sleep(5)
 
 
+async def run_position_monitor():
+    """Background task: TP/SL monitor + paper portfolio sync every 60s."""
+    from execution.order_manager import OrderManager
+    om = OrderManager()
+    while True:
+        try:
+            # Sync paper portfolio from signals
+            try:
+                from monitoring.paper_portfolio import sync_from_signals
+                added = sync_from_signals()
+                if added:
+                    log.info("Paper portfolio: +%d new trades synced", added)
+            except Exception as e:
+                log.debug("Paper portfolio sync: %s", e)
+            await om.monitor_open_positions(interval_sec=60.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Position monitor crashed: %s, restart in 30s", e)
+            await asyncio.sleep(30)
+        finally:
+            try:
+                await om.client.close()
+            except Exception:
+                pass
+            om = OrderManager()
+
+
 async def main():
     log.info("NEXUS BET starting...")
 
@@ -54,10 +82,11 @@ async def main():
 
     scanner_task = asyncio.create_task(run_scanner(), name="scanner")
     telegram_task = asyncio.create_task(run_telegram(), name="telegram")
+    monitor_task = asyncio.create_task(run_position_monitor(), name="position_monitor")
     stop_task = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
-        [scanner_task, telegram_task, stop_task],
+        [scanner_task, telegram_task, monitor_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 

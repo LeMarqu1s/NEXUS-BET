@@ -98,3 +98,81 @@ class OrderManager:
         """Stop TP/SL monitor loop."""
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
+
+    async def monitor_open_positions(self, interval_sec: float = 60.0) -> None:
+        """
+        Background loop: checks open Supabase positions every interval_sec.
+        Auto-sells at TP (+40%) or SL (-30%) and sends Telegram alert.
+        """
+        import logging
+        import os
+        import httpx
+        log = logging.getLogger(__name__)
+
+        tp_pct = settings.EARLY_EXIT_TP_PCT
+        sl_pct = settings.EARLY_EXIT_SL_PCT
+
+        async def _send_telegram(msg: str) -> None:
+            token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+            if not token or not chat_id:
+                return
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as c:
+                    await c.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                    )
+            except Exception:
+                pass
+
+        while True:
+            await asyncio.sleep(interval_sec)
+            try:
+                from monitoring.trade_logger import TradeLogger
+                logger_inst = TradeLogger()
+                positions = logger_inst.get_positions() or []
+                for pos in positions:
+                    market_id = pos.get("market_id") or pos.get("conditionId") or ""
+                    side = pos.get("side", "YES")
+                    entry_price = float(pos.get("avg_entry_price") or pos.get("entry_price") or 0)
+                    if not market_id or entry_price <= 0:
+                        continue
+                    try:
+                        current_price = await self.client.get_mid_price(market_id, side)
+                    except Exception:
+                        current_price = None
+                    if current_price is None:
+                        continue
+                    pct_change = (current_price - entry_price) / entry_price
+                    if pct_change >= tp_pct:
+                        trigger = "TP"
+                        emoji = "💰"
+                    elif pct_change <= -sl_pct:
+                        trigger = "SL"
+                        emoji = "🛑"
+                    else:
+                        continue
+                    # Place sell order
+                    sell_cfg = OrderConfig(
+                        market_id=market_id,
+                        outcome=side,
+                        side="SELL",
+                        size_usd=float(pos.get("cost_basis_usd") or pos.get("size_usd") or 10.0),
+                        limit_price=current_price,
+                    )
+                    order_id = await self.place_limit_order(sell_cfg)
+                    pnl = (current_price - entry_price) * float(pos.get("shares") or sell_cfg.size_usd / entry_price)
+                    question = (pos.get("question") or market_id)[:60]
+                    msg = (
+                        f"{emoji} <b>AUTO {trigger} — {question}</b>\n"
+                        f"Entry: {entry_price*100:.1f}%  →  Exit: {current_price*100:.1f}%\n"
+                        f"P&L: {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+                        f"Order: {order_id or 'SIMULATION'}"
+                    )
+                    await _send_telegram(msg)
+                    log.info("AUTO %s triggered: %s pnl=%.2f", trigger, market_id[:20], pnl)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("monitor_open_positions error: %s", e)
