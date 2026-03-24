@@ -516,16 +516,40 @@ async def _get_whales_text() -> str:
                 })
         whales = sorted(whales, key=lambda x: -x["amount"])[:6]
         if not whales:
-            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$1 000 récent.</i>\n{L}"
+            base = f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$1 000 récent.</i>\n{L}"
+        else:
+            lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
+            for w in whales:
+                lines.append(
+                    f"<b>${w['amount']:,.0f}</b>  {w['outcome']}\n"
+                    f"<code>{w['title']}</code>"
+                )
+            lines.append(f"\n{L}")
+            base = "\n".join(lines)
 
-        lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
-        for w in whales:
-            lines.append(
-                f"<b>${w['amount']:,.0f}</b>  {w['outcome']}\n"
-                f"<code>{w['title']}</code>"
-            )
-        lines.append(f"\n{L}")
-        return "\n".join(lines)
+        # Section mouvements coordonnés (sybil detector) — jamais bloque si erreur
+        coord_section = ""
+        try:
+            from data.sybil_detector import scan_coordinated_activity
+            coord = await scan_coordinated_activity()
+            if coord:
+                parts = [f"\n<b>🕵️ MOUVEMENTS COORDONNÉS</b>\n{L}"]
+                for s in coord[:3]:
+                    if s["action"] == "FOLLOW":
+                        tag = "🟢 FOLLOW"
+                    elif s["action"] == "FADE":
+                        tag = "🔴 FADE"
+                    else:
+                        tag = "👀 WATCH"
+                    parts.append(
+                        f"{tag}  <b>{s['wallets_count']} wallets</b> · <b>${s['coordinated_volume']:,.0f}</b>\n"
+                        f"<code>{s['market'][:45]}</code>  @{s['entry_price']:.2f}"
+                    )
+                coord_section = "\n".join(parts)
+        except Exception as e:
+            log.debug("sybil_detector in whales: %s", e)
+
+        return base + coord_section
     except Exception as e:
         log.exception("Whales failed: %s", e)
         return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<code>ERREUR — {e}</code>"
