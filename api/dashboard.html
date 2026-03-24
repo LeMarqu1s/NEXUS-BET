@@ -158,6 +158,7 @@
         <span id="bot-mode-label">LIVE</span>
       </span>
       <span>📡 <span id="market-count">—</span> marchés</span>
+      <span id="last-signal-label" style="font-size:0.72rem;color:var(--text-secondary)">Signal: —</span>
       <span id="utc-time" style="font-family:'IBM Plex Mono',monospace;font-size:0.75rem">—</span>
     </div>
     <nav class="nav">
@@ -519,6 +520,13 @@
         pnlEl.className = 'val data-font ' + (pnl >= 0 ? 'green' : 'red');
         document.getElementById('ov-positions').textContent = (positions || []).length;
         document.getElementById('ov-signals').textContent = signals?.signals?.length ?? 0;
+        // Last signal time
+        const lastTs = signals?.last_scan_ts;
+        if (lastTs) {
+          const diffMin = Math.floor((Date.now() / 1000 - lastTs) / 60);
+          const lbl = diffMin < 1 ? '<1 min ago' : diffMin < 60 ? diffMin + ' min ago' : Math.floor(diffMin/60) + 'h ago';
+          document.getElementById('last-signal-label').textContent = 'Signal: ' + lbl;
+        }
         if (!knownIds.has('init-bot')) {
           knownIds.add('init-bot');
           activityItems.unshift({ ts: 'now', text: '⚡ [' + utcTime().slice(0,8) + '] Bot démarré — scanner actif sur ' + mc + ' marchés Polymarket', id: 'init-bot' });
