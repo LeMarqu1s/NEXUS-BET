@@ -242,6 +242,16 @@ class _SettingsProxy:
         return os.getenv("UNUSUAL_WHALES_API_KEY") or ""
 
     @property
+    def EARLY_EXIT_TP_PCT(self) -> float:
+        """Take-profit automatique — défaut +40%."""
+        return _get_env_float("EARLY_EXIT_TP_PCT", 0.40)
+
+    @property
+    def EARLY_EXIT_SL_PCT(self) -> float:
+        """Stop-loss automatique — défaut -30%."""
+        return _get_env_float("EARLY_EXIT_SL_PCT", 0.30)
+
+    @property
     def DEBUG(self) -> bool:
         return _get_env_bool("DEBUG", False)
 

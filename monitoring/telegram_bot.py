@@ -417,7 +417,7 @@ async def _get_positions_detail(context: ContextTypes.DEFAULT_TYPE | None = None
         await pm.close()
         lines.append(f"\n{L}")
         kb = InlineKeyboardMarkup([
-            *[[InlineKeyboardButton(f"✕ EXIT #{i+1}", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
+            *[[InlineKeyboardButton(f"💰 Exit Now #{i+1}", callback_data=f"exit_req_{i}")] for i in range(len(pos_list))],
             [InlineKeyboardButton("← PORTFOLIO", callback_data="btn_portfolio")],
         ])
         if context:
