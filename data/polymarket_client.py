@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Optional
 from decimal import Decimal
 import httpx
@@ -19,6 +20,15 @@ from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
 from py_clob_client.order_builder.constants import BUY
 
 from config.settings import settings
+
+
+def _sanitize_private_key(raw: str) -> str:
+    """Strip whitespace/quotes and ensure 0x prefix."""
+    key = raw.strip().strip('"').strip("'").strip()
+    if key and not key.startswith("0x"):
+        log.warning("POLYMARKET_PRIVATE_KEY missing 0x prefix — prepending automatically")
+        key = "0x" + key
+    return key
 
 
 class PolymarketClient:
@@ -34,12 +44,22 @@ class PolymarketClient:
     def _get_client(self) -> ClobClient:
         """Get or create sync CLOB client (used for blocking calls in thread)."""
         if self._client is None:
+            raw_key = os.getenv("POLYMARKET_PRIVATE_KEY") or settings.POLYMARKET_PRIVATE_KEY or ""
+            key = _sanitize_private_key(raw_key)
+            log.info(
+                "CLOB init — key present: %s | length: %d | has_0x: %s",
+                bool(key), len(key), key.startswith("0x") if key else False,
+            )
+            if not key:
+                raise ValueError("POLYMARKET_PRIVATE_KEY is empty — cannot init CLOB client")
             self._client = ClobClient(
                 host=self.host,
-                key=settings.POLYMARKET_PRIVATE_KEY,
+                key=key,
                 chain_id=self.chain_id,
             )
+            log.info("CLOB client created, deriving API credentials...")
             self._api_creds = self._client.create_or_derive_api_creds()
+            log.info("CLOB API creds derived: api_key=%s", getattr(self._api_creds, "api_key", "?")[:8] if self._api_creds else "None")
             self._client.set_api_creds(self._api_creds)
         return self._client
 
@@ -168,7 +188,8 @@ class PolymarketClient:
                 signed = client.create_and_sign_order(order_args, OrderType.GTC)
                 resp = client.post_order(signed)
                 return resp if isinstance(resp, dict) else {"orderId": str(resp)}
-            except Exception:
+            except Exception as e:
+                log.error("CLOB place_limit_order failed: %s: %s", type(e).__name__, e)
                 return None
 
         loop = asyncio.get_event_loop()

@@ -97,8 +97,35 @@ async def run_position_monitor():
             om = OrderManager()
 
 
+async def test_clob_connection() -> bool:
+    """Verify CLOB connectivity and key validity at startup. Logs exact errors."""
+    import os
+    from py_clob_client.client import ClobClient
+    raw_key = os.getenv("POLYMARKET_PRIVATE_KEY", "").strip().strip('"').strip("'").strip()
+    log.info("CLOB test — key present: %s | length: %d", bool(raw_key), len(raw_key))
+    if raw_key and not raw_key.startswith("0x"):
+        log.warning("CLOB test — key does NOT start with 0x, will prepend")
+        raw_key = "0x" + raw_key
+    if not raw_key:
+        log.error("CLOB test — POLYMARKET_PRIVATE_KEY is empty, skipping CLOB test")
+        return False
+    try:
+        client = ClobClient(
+            host="https://clob.polymarket.com",
+            key=raw_key,
+            chain_id=137,
+        )
+        api_creds = client.create_or_derive_api_creds()
+        log.info("CLOB test — connected OK, api_key=%s", str(getattr(api_creds, "api_key", "?"))[:8])
+        return True
+    except Exception as e:
+        log.error("CLOB test — connection FAILED: %s: %s", type(e).__name__, e)
+        return False
+
+
 async def main():
     log.info("NEXUS BET starting...")
+    await test_clob_connection()
 
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
