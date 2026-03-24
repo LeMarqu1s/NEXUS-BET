@@ -583,7 +583,7 @@ async def _get_whales_text() -> str:
             size = float(t.get("size") or 0)
             price = float(t.get("price") or 0)
             amt = size * price
-            if amt >= 1000:
+            if amt >= 50000:
                 whales.append({
                     "title": (t.get("title") or t.get("slug", "?"))[:40],
                     "side": str(t.get("side", "?")).upper(),
@@ -592,7 +592,7 @@ async def _get_whales_text() -> str:
                 })
         whales = sorted(whales, key=lambda x: -x["amount"])[:6]
         if not whales:
-            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$1 000 récent.</i>\n{L}"
+            return f"<b>🐋 WHALE TRACKER</b>\n{L}\n<i>Aucun trade &gt;$50 000 récent.</i>\n{L}"
 
         lines = [f"<b>🐋 WHALE TRACKER</b>\n{L}\n"]
         for w in whales:

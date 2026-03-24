@@ -327,7 +327,7 @@ def _get_price_history(condition_id: str) -> list:
 
 def _compute_whale_activity(trades: list) -> dict:
     """Calcule whale_activity depuis les trades."""
-    LARGE_THRESHOLD = 1000
+    LARGE_THRESHOLD = 50000
     large = [t for t in trades if float(t.get("amount", 0)) >= LARGE_THRESHOLD]
     buy_amount = sum(t["amount"] for t in large if str(t.get("side", "")).upper() in ("YES", "BUY"))
     sell_amount = sum(t["amount"] for t in large if str(t.get("side", "")).upper() in ("NO", "SELL"))
