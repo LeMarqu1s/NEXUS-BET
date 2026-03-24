@@ -316,6 +316,34 @@ async def _get_scan_text() -> str:
         return f"<b>📡 MARKET SCANNER</b>\n{L}\n<code>ERREUR — {e}</code>"
 
 
+async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
+    """Fetch live YES prices from Gamma API for open paper positions (parallel, 3s timeout)."""
+    result: dict[str, float] = {}
+    if not market_ids:
+        return result
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            tasks = [client.get(f"https://gamma-api.polymarket.com/markets/{mid}") for mid in market_ids[:5]]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            for mid, r in zip(market_ids[:5], responses):
+                if isinstance(r, Exception):
+                    continue
+                try:
+                    data = r.json()
+                    m = data[0] if isinstance(data, list) and data else data
+                    if not isinstance(m, dict):
+                        continue
+                    prices = m.get("outcomePrices", ["0.5", "0.5"])
+                    if isinstance(prices, str):
+                        prices = json.loads(prices)
+                    result[mid] = float(prices[0])
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return result
+
+
 async def _get_portfolio_text() -> str:
     try:
         balance = await _get_balance()
@@ -333,17 +361,65 @@ async def _get_portfolio_text() -> str:
         pnl_sign = "+" if pnl_today >= 0 else ""
         pnl_icon = "▲" if pnl_today >= 0 else "▼"
 
+        # Paper portfolio with live prices
+        paper_section = ""
+        try:
+            from monitoring.paper_portfolio import get_paper_summary
+            pp_data = _load_paper_trades_json()
+            open_ids = [t.get("market_id", "") for t in pp_data if t.get("status") == "OPEN" and t.get("market_id")]
+            live_prices = await _fetch_paper_prices(open_ids) if open_ids else {}
+            pp = get_paper_summary(current_prices=live_prices)
+            open_trades = pp.get("open_trades", [])
+            pp_pnl = pp.get("total_pnl", 0)
+            pp_pnl_pct = pp.get("total_pnl_pct", 0)
+            pp_wr = pp.get("win_rate", 0)
+            pp_invested = pp.get("invested", 0)
+            pp_free = pp.get("free", 0)
+            sign = "+" if pp_pnl >= 0 else ""
+            icon = "▲" if pp_pnl >= 0 else "▼"
+            paper_section = (
+                f"\n{L}\n<b>📄 PAPER SIM — $50</b>\n"
+                f"<code>INVESTI   ${pp_invested:.2f}  LIBRE ${pp_free:.2f}\n"
+                f"P&L       {icon}{sign}${abs(pp_pnl):.2f} ({sign}{pp_pnl_pct:.1f}%)\n"
+                f"WIN RATE  {pp_wr:.0f}%  POSITIONS {len(open_trades)}</code>"
+            )
+            if open_trades:
+                paper_section += f"\n<code>"
+                for t in open_trades[:3]:
+                    q = (t.get("question") or t.get("market_id", "?"))[:28]
+                    s = t.get("side", "?")
+                    ep = float(t.get("entry_price") or 0)
+                    cp = float(t.get("current_price") or ep)
+                    p = float(t.get("pnl_pct") or 0)
+                    pi = "▲" if p >= 0 else "▼"
+                    paper_section += f"\n{q[:28]}\n{s} @{ep:.2f}→{cp:.2f} {pi}{abs(p):.1f}%"
+                paper_section += "</code>"
+        except Exception as pe:
+            log.debug("Paper portfolio in portfolio text: %s", pe)
+
         return (
             f"<b>💰 PORTFOLIO</b>\n{L}\n"
             f"<code>BALANCE   ${balance:,.2f} USDC\n"
             f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
             f"POSITIONS {len(positions)} ouvertes\n"
             f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
-            f"{L}"
+            f"{L}{paper_section}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
         return f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — {e}</code>"
+
+
+def _load_paper_trades_json() -> list:
+    """Load open trades list from paper_trades.json (sync helper)."""
+    try:
+        p = Path(__file__).resolve().parent.parent / "logs" / "paper_trades.json"
+        if not p.exists():
+            return []
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data.get("trades", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
 
 
 async def _fetch_market_meta(market_id: str) -> tuple[str, int]:

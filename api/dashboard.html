@@ -223,11 +223,39 @@
 
     <div id="portfolio" class="page">
       <div class="grid-4">
-        <div class="glass-card metric"><h3>Balance USDC</h3><div class="val data-font" id="port-balance">—</div></div>
+        <div class="glass-card metric live"><h3>Balance USDC</h3><div class="val data-font" id="port-balance">—</div></div>
         <div class="glass-card metric"><h3>P&L Total</h3><div class="val data-font" id="port-pnl">—</div></div>
         <div class="glass-card metric"><h3>Win Rate</h3><div class="val data-font" id="port-wr">—</div></div>
         <div class="glass-card metric"><h3>Trades ouverts</h3><div class="val data-font" id="port-open">—</div></div>
       </div>
+
+      <!-- Funds Management -->
+      <div class="glass-card" style="border-color:rgba(0,200,83,0.25)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
+          <div>
+            <h3 style="margin-bottom:4px">💼 GESTION DES FONDS — POLYMARKET</h3>
+            <div style="font-size:0.85rem;color:var(--text-secondary)">Déposez ou retirez des USDC directement sur Polymarket</div>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <a href="https://polymarket.com/deposit" target="_blank" rel="noopener"
+               style="padding:10px 20px;background:rgba(0,200,83,0.15);border:1px solid rgba(0,200,83,0.4);border-radius:8px;color:var(--green);text-decoration:none;font-size:0.85rem;font-family:'IBM Plex Mono',monospace;font-weight:600;transition:all 0.2s"
+               onmouseover="this.style.background='rgba(0,200,83,0.25)'" onmouseout="this.style.background='rgba(0,200,83,0.15)'">
+              ↑ DÉPOSER USDC
+            </a>
+            <a href="https://polymarket.com/withdraw" target="_blank" rel="noopener"
+               style="padding:10px 20px;border:1px solid var(--dark-border);border-radius:8px;color:var(--text-secondary);text-decoration:none;font-size:0.85rem;font-family:'IBM Plex Mono',monospace;transition:all 0.2s"
+               onmouseover="this.style.borderColor='var(--glass-border)';this.style.color='var(--text-primary)'" onmouseout="this.style.borderColor='var(--dark-border)';this.style.color='var(--text-secondary)'">
+              ↓ RETIRER
+            </a>
+            <a href="https://polymarket.com/portfolio" target="_blank" rel="noopener"
+               style="padding:10px 20px;border:1px solid var(--glass-border);border-radius:8px;color:var(--gold);text-decoration:none;font-size:0.85rem;font-family:'IBM Plex Mono',monospace;transition:all 0.2s"
+               onmouseover="this.style.background='rgba(184,150,62,0.1)'" onmouseout="this.style.background='transparent'">
+              🔗 POLYMARKET
+            </a>
+          </div>
+        </div>
+      </div>
+
       <div class="glass-card">
         <h3>POSITIONS OUVERTES</h3>
         <div id="port-positions"></div>
@@ -805,9 +833,22 @@
 
         const openT = pp.open_trades || [];
         document.getElementById('paper-open-trades').innerHTML = openT.length
-          ? `<div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Positions ouvertes (${openT.length}/${pp.capital > 0 ? 5 : 0})</div>
-             <table><thead><tr><th>Question</th><th>Side</th><th>Entry</th><th>Size</th><th>P&L %</th></tr></thead><tbody>
-             ${openT.map(t => `<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(t.question || t.market_id || '').slice(0, 45)}</td><td>${t.side || '—'}</td><td>${((t.entry_price || 0) * 100).toFixed(1)}%</td><td>$${(t.size_usd || 0).toFixed(2)}</td><td class="${(t.pnl_pct || 0) >= 0 ? 'positive' : 'negative'}">${(t.pnl_pct || 0) >= 0 ? '+' : ''}${(t.pnl_pct || 0).toFixed(1)}%</td></tr>`).join('')}
+          ? `<div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Positions ouvertes (${openT.length}/5)</div>
+             <table><thead><tr><th>Question</th><th>Side</th><th>Entry</th><th>Current</th><th>Size</th><th>P&L %</th></tr></thead><tbody>
+             ${openT.map(t => {
+               const pnl = t.pnl_pct || 0;
+               const entry = (t.entry_price || 0) * 100;
+               const cur = (t.current_price || t.entry_price || 0) * 100;
+               const isLive = Math.abs(cur - entry) > 0.1;
+               return `<tr>
+                 <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(t.question || t.market_id || '').slice(0, 40)}</td>
+                 <td>${t.side || '—'}</td>
+                 <td>${entry.toFixed(1)}%</td>
+                 <td style="color:${isLive ? (cur > entry ? 'var(--green)' : 'var(--red)') : 'var(--text-secondary)'}">${cur.toFixed(1)}%${isLive ? '' : ' <span style="font-size:0.6rem;opacity:0.5">est.</span>'}</td>
+                 <td>$${(t.size_usd || 0).toFixed(2)}</td>
+                 <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}%</td>
+               </tr>`;
+             }).join('')}
              </tbody></table>`
           : '<div style="padding:16px 0;color:var(--text-secondary);font-size:0.9rem">Aucune position paper ouverte — en attente de signaux.</div>';
 
