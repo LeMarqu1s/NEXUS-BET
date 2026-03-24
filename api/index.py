@@ -452,6 +452,65 @@ def _get_market_object(condition_id_or_slug: str) -> dict | None:
     return result
 
 
+def _get_paper_portfolio():
+    """Lit logs/paper_trades.json et calcule le résumé paper portfolio ($50 simulation)."""
+    p = Path(DATA_ROOT) / "logs" / "paper_trades.json"
+    data = _load_json(str(p), {"trades": []})
+    trades = data.get("trades", []) if isinstance(data, dict) else []
+
+    PAPER_CAPITAL = float(os.getenv("PAPER_CAPITAL_USD", "50"))
+    TRADE_SIZE_USD = PAPER_CAPITAL / 5  # MAX_POSITIONS = 5
+
+    open_trades: list = []
+    closed_trades: list = []
+    total_invested = 0.0
+    total_current = 0.0
+    closed_pnl = 0.0
+
+    for t in trades:
+        entry = float(t.get("entry_price") or 0)
+        shares = float(t.get("shares") or 0)
+        size = float(t.get("size_usd") or TRADE_SIZE_USD)
+        if t.get("status") == "OPEN":
+            current_val = entry * shares  # no live prices in Vercel context
+            pnl_usd = current_val - size
+            pnl_pct = (pnl_usd / size * 100) if size > 0 else 0.0
+            total_invested += size
+            total_current += current_val
+            open_trades.append({
+                **t,
+                "current_price": entry,
+                "current_val": round(current_val, 4),
+                "pnl_usd": round(pnl_usd, 4),
+                "pnl_pct": round(pnl_pct, 2),
+            })
+        else:
+            pnl = float(t.get("pnl_usd") or 0)
+            closed_pnl += pnl
+            closed_trades.append(t)
+
+    unrealized_pnl = total_current - total_invested
+    total_pnl = unrealized_pnl + closed_pnl
+    wins = sum(1 for t in closed_trades if float(t.get("pnl_usd") or 0) > 0)
+    total_closed = len(closed_trades)
+
+    return {
+        "capital": PAPER_CAPITAL,
+        "invested": round(total_invested, 2),
+        "free": round(PAPER_CAPITAL - total_invested, 2),
+        "current_value": round(total_current, 2),
+        "unrealized_pnl": round(unrealized_pnl, 2),
+        "closed_pnl": round(closed_pnl, 2),
+        "total_pnl": round(total_pnl, 2),
+        "total_pnl_pct": round((total_pnl / PAPER_CAPITAL * 100) if PAPER_CAPITAL > 0 else 0, 1),
+        "open_trades": sorted(open_trades, key=lambda x: -abs(x["pnl_pct"])),
+        "closed_trades": sorted(closed_trades, key=lambda x: -(x.get("closed_at") or 0))[:5],
+        "wins": wins,
+        "total_closed": total_closed,
+        "win_rate": round((wins / total_closed * 100) if total_closed > 0 else 0, 0),
+    }
+
+
 def _get_market_types():
     """Stats des signaux par type depuis paperclip_pending_signals.json."""
     p = Path(DATA_ROOT) / "paperclip_pending_signals.json"
@@ -624,6 +683,9 @@ class handler(BaseHTTPRequestHandler):
             return
         if path == "/api/track-record":
             self._json_response(_get_track_record())
+            return
+        if path == "/api/paper-portfolio":
+            self._json_response(_get_paper_portfolio())
             return
         if path == "/api/market-types":
             self._json_response(_get_market_types())

@@ -235,6 +235,22 @@
         <h3>HISTORIQUE DES TRADES</h3>
         <div id="port-history"></div>
       </div>
+
+      <!-- Paper Portfolio $50 simulation -->
+      <div class="glass-card" style="border-top:2px solid var(--gold);margin-top:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h3 style="color:var(--gold);font-size:0.75rem">📄 PAPER PORTFOLIO — SIMULATION $50</h3>
+          <span style="font-size:0.7rem;color:var(--text-secondary);font-family:'IBM Plex Mono',monospace;background:rgba(184,150,62,0.1);border:1px solid var(--glass-border);padding:3px 10px;border-radius:12px">SIM MODE</span>
+        </div>
+        <div class="grid-4" style="margin-bottom:16px">
+          <div class="glass-card metric" style="margin-bottom:0"><h3>Capital</h3><div class="val data-font" id="paper-capital" style="font-size:1.4rem">—</div></div>
+          <div class="glass-card metric" style="margin-bottom:0"><h3>Investi</h3><div class="val data-font" id="paper-invested" style="font-size:1.4rem">—</div></div>
+          <div class="glass-card metric" style="margin-bottom:0"><h3>P&L Total</h3><div class="val data-font" id="paper-pnl" style="font-size:1.4rem">—</div></div>
+          <div class="glass-card metric" style="margin-bottom:0"><h3>Win Rate</h3><div class="val data-font" id="paper-wr" style="font-size:1.4rem">—</div></div>
+        </div>
+        <div id="paper-open-trades"></div>
+        <div id="paper-closed-trades"></div>
+      </div>
     </div>
 
     <div id="debates" class="page">
@@ -299,24 +315,63 @@
         <div id="perf-best"></div>
       </div>
 
-      <!-- CTA Section -->
-      <div class="glass-card" style="text-align:center;padding:40px 24px;border-color:var(--glass-border)">
-        <div class="title-font" style="font-size:2rem;color:var(--gold);margin-bottom:12px">REJOINS NEXUS BET</div>
-        <p style="color:var(--text-secondary);margin-bottom:24px;font-size:0.95rem">Accède aux signaux en temps réel · Suivi de portfolio · Auto-trade</p>
-        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-          <div style="padding:16px 28px;border:1px solid var(--glass-border);border-radius:12px;min-width:160px">
-            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€97<span style="font-size:0.9rem;color:var(--text-secondary)">/mois</span></div>
-            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Signal Intel</div>
+      <!-- CTA Section — Pricing -->
+      <div class="glass-card" style="padding:48px 24px;border-color:var(--glass-border)">
+        <div style="text-align:center;margin-bottom:32px">
+          <div class="title-font" style="font-size:2.2rem;color:var(--gold);margin-bottom:8px">REJOINS NEXUS BET</div>
+          <p style="color:var(--text-secondary);font-size:0.95rem;max-width:520px;margin:0 auto">Accès aux signaux IA en temps réel · Dashboard privé · Auto-trade sur Polymarket</p>
+        </div>
+        <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;align-items:stretch">
+          <!-- Plan Signal Intel -->
+          <div style="padding:28px 24px;border:1px solid var(--dark-border);border-radius:16px;min-width:220px;max-width:260px;display:flex;flex-direction:column;gap:12px">
+            <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.15em">Signal Intel</div>
+            <div class="title-font" style="font-size:2.2rem;color:var(--text-primary)">€97<span style="font-size:0.95rem;font-family:Inter,sans-serif;font-weight:400;color:var(--text-secondary)">/mois</span></div>
+            <hr style="border:none;border-top:1px solid var(--dark-border)">
+            <ul style="list-style:none;display:flex;flex-direction:column;gap:8px;font-size:0.85rem;color:var(--text-secondary)">
+              <li>✓ &nbsp;Signaux live (Telegram)</li>
+              <li>✓ &nbsp;Edge + kelly calculés</li>
+              <li>✓ &nbsp;Dashboard privé</li>
+              <li>✓ &nbsp;Track record vérifié</li>
+              <li style="color:var(--dark-border)">✗ &nbsp;Auto-trade</li>
+              <li style="color:var(--dark-border)">✗ &nbsp;Priority support</li>
+            </ul>
+            <a href="https://t.me/nexus_capital_bot" target="_blank" rel="noopener" style="margin-top:auto;display:block;padding:12px;text-align:center;border:1px solid var(--glass-border);border-radius:10px;color:var(--gold);text-decoration:none;font-size:0.85rem;transition:all 0.2s" onmouseover="this.style.background='rgba(184,150,62,0.08)'" onmouseout="this.style.background='transparent'">Démarrer →</a>
           </div>
-          <div style="padding:16px 28px;background:rgba(184,150,62,0.1);border:1px solid var(--gold);border-radius:12px;min-width:160px">
-            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€197<span style="font-size:0.9rem;color:var(--text-secondary)">/mois</span></div>
-            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Full Auto ⚡</div>
+          <!-- Plan Full Auto (featured) -->
+          <div style="padding:28px 24px;background:rgba(184,150,62,0.07);border:1px solid var(--gold);border-radius:16px;min-width:220px;max-width:260px;display:flex;flex-direction:column;gap:12px;position:relative">
+            <div style="position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--gold);color:var(--dark-bg);font-size:0.65rem;font-weight:700;padding:3px 12px;border-radius:20px;letter-spacing:0.1em;white-space:nowrap">⚡ POPULAIRE</div>
+            <div style="font-size:0.7rem;color:var(--gold);text-transform:uppercase;letter-spacing:0.15em">Full Auto</div>
+            <div class="title-font" style="font-size:2.2rem;color:var(--gold)">€197<span style="font-size:0.95rem;font-family:Inter,sans-serif;font-weight:400;color:var(--text-secondary)">/mois</span></div>
+            <hr style="border:none;border-top:1px solid rgba(184,150,62,0.25)">
+            <ul style="list-style:none;display:flex;flex-direction:column;gap:8px;font-size:0.85rem;color:var(--text-secondary)">
+              <li style="color:var(--text-primary)">✓ &nbsp;Tout Signal Intel</li>
+              <li style="color:var(--text-primary)">✓ &nbsp;Auto-trade Polymarket</li>
+              <li style="color:var(--text-primary)">✓ &nbsp;TP/SL automatiques</li>
+              <li style="color:var(--text-primary)">✓ &nbsp;Swarm 20 agents IA</li>
+              <li>✓ &nbsp;Priority support</li>
+              <li>✓ &nbsp;Accès anticipé features</li>
+            </ul>
+            <a href="https://t.me/nexus_capital_bot" target="_blank" rel="noopener" style="margin-top:auto;display:block;padding:12px;text-align:center;background:var(--gold);border-radius:10px;color:var(--dark-bg);text-decoration:none;font-size:0.85rem;font-weight:600">Commencer maintenant ⚡</a>
           </div>
-          <div style="padding:16px 28px;border:1px solid var(--glass-border);border-radius:12px;min-width:160px">
-            <div class="title-font" style="font-size:1.6rem;color:var(--gold)">€297<span style="font-size:0.9rem;color:var(--text-secondary)"> once</span></div>
-            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px">Lifetime License</div>
+          <!-- Plan Lifetime -->
+          <div style="padding:28px 24px;border:1px solid var(--dark-border);border-radius:16px;min-width:220px;max-width:260px;display:flex;flex-direction:column;gap:12px">
+            <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.15em">Lifetime</div>
+            <div class="title-font" style="font-size:2.2rem;color:var(--text-primary)">€297<span style="font-size:0.95rem;font-family:Inter,sans-serif;font-weight:400;color:var(--text-secondary)"> once</span></div>
+            <hr style="border:none;border-top:1px solid var(--dark-border)">
+            <ul style="list-style:none;display:flex;flex-direction:column;gap:8px;font-size:0.85rem;color:var(--text-secondary)">
+              <li style="color:var(--text-primary)">✓ &nbsp;Tout Full Auto</li>
+              <li style="color:var(--text-primary)">✓ &nbsp;Accès à vie</li>
+              <li style="color:var(--text-primary)">✓ &nbsp;Toutes les mises à jour</li>
+              <li>✓ &nbsp;Discord VIP</li>
+              <li>✓ &nbsp;Config personnalisée</li>
+              <li>✓ &nbsp;Appel onboarding 1:1</li>
+            </ul>
+            <a href="https://t.me/nexus_capital_bot" target="_blank" rel="noopener" style="margin-top:auto;display:block;padding:12px;text-align:center;border:1px solid var(--glass-border);border-radius:10px;color:var(--gold);text-decoration:none;font-size:0.85rem;transition:all 0.2s" onmouseover="this.style.background='rgba(184,150,62,0.08)'" onmouseout="this.style.background='transparent'">Accès lifetime →</a>
           </div>
         </div>
+        <p style="text-align:center;margin-top:28px;font-size:0.8rem;color:var(--text-secondary)">
+          Paiement sécurisé · Résiliation à tout moment · Support via Telegram
+        </p>
       </div>
     </div>
   </main>
@@ -333,7 +388,7 @@
     const API = '';
     let activityItems = [];
     let knownIds = new Set();
-    const REFRESH_MS = 5000;
+    const REFRESH_MS = 10000;
 
     function getToken() {
       const params = new URLSearchParams(window.location.search);
@@ -696,11 +751,12 @@
 
     async function loadPortfolio() {
       try {
-        const [wallet, positions, trades, trackRecord] = await Promise.all([
+        const [wallet, positions, trades, trackRecord, paper] = await Promise.all([
           fetchApi('/api/wallet').catch(() => ({})),
           fetchApi('/api/positions').catch(() => []),
           fetchApi('/api/trades').catch(() => []),
           fetchApi('/api/track-record').catch(() => ({})),
+          fetchApi('/api/paper-portfolio').catch(() => ({})),
         ]);
         const tr = trackRecord || {};
         document.getElementById('port-balance').textContent = '$' + (wallet?.value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
@@ -726,6 +782,34 @@
               return `<tr><td>${(t.created_at || '').slice(0, 16)}</td><td>${(t.market_id || '').slice(0, 20)}...</td><td>${t.side}</td><td>$${parseFloat(t.amount_usd || 0).toFixed(2)}</td><td>—</td><td class="${p >= 0 ? 'positive' : 'negative'}">$${p.toFixed(2)}</td><td>${t.edge_pct ?? '—'}%</td></tr>`;
             }).join('')}</tbody></table>`
           : '<div class="glass-card" style="padding:32px;text-align:center;color:var(--text-secondary)"><span style="font-size:1rem">📊 Aucun trade exécuté — mode simulation actif</span></div>';
+
+        // Paper Portfolio section
+        const pp = paper || {};
+        document.getElementById('paper-capital').textContent = '$' + (pp.capital ?? 50).toFixed(2);
+        const ppInvEl = document.getElementById('paper-invested');
+        ppInvEl.textContent = '$' + (pp.invested ?? 0).toFixed(2);
+        const ppPnl = pp.total_pnl ?? 0;
+        const ppPnlPct = pp.total_pnl_pct ?? 0;
+        const ppPnlEl = document.getElementById('paper-pnl');
+        ppPnlEl.textContent = (ppPnl >= 0 ? '+' : '') + '$' + ppPnl.toFixed(2) + ' (' + (ppPnl >= 0 ? '+' : '') + ppPnlPct + '%)';
+        ppPnlEl.className = 'val data-font ' + (ppPnl >= 0 ? 'green' : 'red') + '" style="font-size:1.1rem';
+        document.getElementById('paper-wr').textContent = (pp.win_rate ?? 0) + '%';
+
+        const openT = pp.open_trades || [];
+        document.getElementById('paper-open-trades').innerHTML = openT.length
+          ? `<div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">Positions ouvertes (${openT.length}/${pp.capital > 0 ? 5 : 0})</div>
+             <table><thead><tr><th>Question</th><th>Side</th><th>Entry</th><th>Size</th><th>P&L %</th></tr></thead><tbody>
+             ${openT.map(t => `<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(t.question || t.market_id || '').slice(0, 45)}</td><td>${t.side || '—'}</td><td>${((t.entry_price || 0) * 100).toFixed(1)}%</td><td>$${(t.size_usd || 0).toFixed(2)}</td><td class="${(t.pnl_pct || 0) >= 0 ? 'positive' : 'negative'}">${(t.pnl_pct || 0) >= 0 ? '+' : ''}${(t.pnl_pct || 0).toFixed(1)}%</td></tr>`).join('')}
+             </tbody></table>`
+          : '<div style="padding:16px 0;color:var(--text-secondary);font-size:0.9rem">Aucune position paper ouverte — en attente de signaux.</div>';
+
+        const closedT = (pp.closed_trades || []).slice(0, 5);
+        document.getElementById('paper-closed-trades').innerHTML = closedT.length
+          ? `<div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.1em;margin:16px 0 8px">Derniers trades clôturés (${pp.total_closed || 0} total · ${pp.wins || 0} wins)</div>
+             <table><thead><tr><th>Question</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L $</th></tr></thead><tbody>
+             ${closedT.map(t => `<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(t.question || t.market_id || '').slice(0, 40)}</td><td>${t.side || '—'}</td><td>${((t.entry_price || 0) * 100).toFixed(1)}%</td><td>${((t.exit_price || 0) * 100).toFixed(1)}%</td><td class="${(t.pnl_usd || 0) >= 0 ? 'positive' : 'negative'}">${(t.pnl_usd || 0) >= 0 ? '+' : ''}$${(t.pnl_usd || 0).toFixed(2)}</td></tr>`).join('')}
+             </tbody></table>`
+          : '';
       } catch (e) {
         document.getElementById('port-positions').innerHTML = '<div style="color:var(--red)">Erreur: ' + e.message + '</div>';
       }
