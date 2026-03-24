@@ -1,0 +1,2 @@
+# Vercel API — index.py uses only Python stdlib (json, urllib, pathlib, os)
+# No external packages required.

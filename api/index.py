@@ -479,6 +479,9 @@ def _get_dashboard_html():
 
 
 class handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # suppress default BaseHTTPRequestHandler stderr logging on Vercel
+
     def _unauthorized(self):
         self.send_response(401)
         self.send_header("Content-Type", "application/json")
@@ -489,12 +492,12 @@ class handler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self):
-        path = self.path.split("?")[0]
-        full_path = self.path
+        full_path = self.path or "/"
+        path = full_path.split("?")[0] or "/"
         token = _get_query_token(full_path)
 
         # Public : dashboard HTML, /health, /api/market/* (données Polymarket publiques)
-        if path in ("/", "/dashboard", "/index.html"):
+        if path in ("/", "", "/dashboard", "/index.html", "/dashboard.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -629,6 +632,17 @@ class handler(BaseHTTPRequestHandler):
             self._json_response(_get_top_markets())
             return
         self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "not_found", "path": path}).encode())
+
+    def do_OPTIONS(self):
+        """CORS preflight for browser fetch from dashboard."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def _json_response(self, data):

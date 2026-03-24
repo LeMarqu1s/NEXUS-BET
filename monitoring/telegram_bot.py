@@ -1797,21 +1797,18 @@ async def run_forever() -> None:
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
-        # Infinite retry for Conflict errors — Railway deploy overlap can last 30-60s
-        conflict_attempt = 0
+        # Infinite retry for Conflict — rebuild Application on each conflict (PTB v21 updater not restartable)
         while True:
+            conflict_attempt = 0
+            _app = app
             try:
-                await app.updater.start_polling(
+                await _app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                 )
                 log.info("Bot is now listening for messages...")
-                conflict_attempt = 0  # reset on success
-                try:
-                    while True:
-                        await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    raise
+                while True:
+                    await asyncio.sleep(1)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1824,21 +1821,26 @@ async def run_forever() -> None:
 
                 if is_conflict:
                     conflict_attempt += 1
-                    # Backoff: 15s, 20s, 25s, 30s, 30s, ... (Railway overlap typically resolves in 30-60s)
-                    wait = min(15 + (conflict_attempt - 1) * 5, 30)
+                    wait = min(10 + conflict_attempt * 5, 30)
                     log.warning(
-                        "Telegram Conflict #%d (Railway deploy overlap) — deleteWebhook + retry in %ds",
+                        "Telegram Conflict #%d — wait %ds, rebuild app, retry",
                         conflict_attempt, wait,
                     )
+                    # Gracefully stop current app before rebuilding
+                    try:
+                        await _app.updater.stop()
+                        await _app.stop()
+                        await _app.shutdown()
+                    except Exception:
+                        pass
                     await asyncio.sleep(wait)
                     await close_telegram_session(token)
                     await asyncio.sleep(3)
-                    # Try to stop/restart updater to clear state
-                    try:
-                        await app.updater.stop()
-                    except Exception:
-                        pass
-                    continue  # infinite retry for conflicts
+                    # Rebuild fresh Application (PTB v21 updater cannot be restarted)
+                    app = build_application(token)
+                    await app.initialize()
+                    await app.start()
+                    continue
                 else:
                     raise  # non-conflict errors propagate up
     except asyncio.CancelledError:
