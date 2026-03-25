@@ -261,7 +261,12 @@ async def _get_scan_text() -> str:
         mins = "—"
         if last_scan_ts:
             delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
-            mins = f"{delta // 60}m ago" if delta >= 60 else "&lt;1m ago"
+            if delta < 60:
+                mins = f"{delta}s ago"
+            elif delta < 3600:
+                mins = f"{delta // 60}m {delta % 60}s ago"
+            else:
+                mins = f"{delta // 3600}h ago"
 
         signals = get_pending_signals()
         if not signals:
