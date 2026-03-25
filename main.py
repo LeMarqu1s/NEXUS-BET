@@ -138,6 +138,12 @@ async def run_sniper():
 
 
 async def main():
+    # ── Architecture IA ────────────────────────────────────────────────────────
+    # Boucles temps réel (sniper, scanner) : ZÉRO appel Claude/Anthropic.
+    # IA autorisée uniquement dans :
+    #   • run_daily_report()  → rapport à 21h00 UTC (hors loop)
+    #   • /agents Telegram    → lecture JSON ai_debates_log (aucun appel live)
+    # ──────────────────────────────────────────────────────────────────────────
     log.info("NEXUS BET starting...")
     await test_clob_connection()
 

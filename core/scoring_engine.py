@@ -408,88 +408,15 @@ class NexusScoringEngine:
 
     def _get_fair_value_claude(self, market_data: dict[str, Any]) -> Optional[float]:
         """
-        Fair value estimate from Claude AI — DISABLED: called in scan loop, causes 429 spam.
-        Scanner must work without Claude. Claude is only for agent debates.
+        Claude désactivé du loop temps réel (évite les 429).
+        Rôle IA : rapports quotidiens + /agents uniquement.
         """
         return None
-        from config.settings import settings as _settings
-        api_key = _settings.ANTHROPIC_API_KEY
-        if not api_key:
-            return None
-        question = (market_data.get("question") or "")[:120].strip()
-        if not question:
-            return None
-
-        # Check cache
-        cache_key = question[:80]
-        now = time.time()
-        if cache_key in NexusScoringEngine._claude_cache:
-            ts, val = NexusScoringEngine._claude_cache[cache_key]
-            if now - ts < CLAUDE_CACHE_TTL:
-                return val
-
-        pm_price = self._extract_pm_yes_price(market_data)
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    val = pool.submit(
-                        asyncio.run, self._claude_fair_value_async(api_key, question, pm_price)
-                    ).result(timeout=15)
-            else:
-                val = asyncio.run(self._claude_fair_value_async(api_key, question, pm_price))
-            if val is not None:
-                NexusScoringEngine._claude_cache[cache_key] = (now, val)
-            return val
-        except Exception:
-            return None
 
     @staticmethod
     async def _claude_fair_value_async(api_key: str, question: str, pm_price: float) -> Optional[float]:
-        """Call Claude Haiku to estimate fair probability — throttled via shared limiter."""
-        try:
-            async def _do_call():
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": "claude-haiku-4-5-20251001",
-                            "max_tokens": 80,
-                            "system": "You are a prediction market analyst. Return ONLY valid JSON, no other text.",
-                            "messages": [{"role": "user", "content": (
-                                f'Prediction market: "{question}"\n'
-                                f'Current Polymarket price YES: {pm_price:.2f}\n'
-                                "Estimate the true probability of YES based on your knowledge. "
-                                "Consider base rates, current events, and market context.\n"
-                                'Reply ONLY with JSON: {"fair": <0.01-0.99>, "confidence": <0.5-0.85>}'
-                            )}],
-                        },
-                    )
-                    if resp.status_code == 429:
-                        raise Exception("429")
-                    resp.raise_for_status()
-                    return resp.json().get("content", [{}])[0].get("text", "")
-
-            text = await claude_call_with_limit(_do_call)
-            if not text or text == "Agent indisponible":
-                return None
-            parsed = json.loads(text)
-            fair = float(parsed.get("fair", pm_price))
-            fair = max(0.01, min(0.99, fair))
-            log.info("CLAUDE FAIR: %s → fair=%.2f (poly=%.2f)", question[:50], fair, pm_price)
-            return fair
-        except Exception as e:
-            log.debug("claude_fair_value: %s", e)
-            return None
+        """Stub — Claude retiré du loop scanner."""
+        return None
 
     def _score_binary_sport(
         self,
@@ -713,72 +640,15 @@ class NexusScoringEngine:
 
     def _calc_news_sentiment_score(self, market_data: dict[str, Any]) -> float:
         """
-        News sentiment via Claude — DISABLED: called in scan loop, causes 429 spam.
-        Scanner must work without Claude. Returns neutral 0.5.
+        Claude retiré du loop temps réel (429 fixes).
+        Retourne un score neutre — IA réservée aux rapports /agents.
         """
         return 0.5
-        from config.settings import settings as _settings
-        api_key = _settings.ANTHROPIC_API_KEY
-        if not api_key:
-            return 0.5
-
-        question = (market_data.get("question") or "")[:120]
-        if not question:
-            return 0.5
-
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(asyncio.run, self._sentiment_async(api_key, question)).result(timeout=20)
-            else:
-                return asyncio.run(self._sentiment_async(api_key, question))
-        except Exception:
-            return 0.5
 
     @staticmethod
     async def _sentiment_async(api_key: str, question: str) -> float:
-        try:
-            async def _do_call():
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": "claude-sonnet-4-20250514",
-                            "max_tokens": 50,
-                            "system": "Return ONLY valid JSON. No other text.",
-                            "messages": [{"role": "user", "content": (
-                                f'Polymarket question: "{question}". '
-                                "Rate the bullish sentiment for YES outcome from 0.0 (very bearish) "
-                                "to 1.0 (very bullish) based on current public knowledge. "
-                                'Reply ONLY: {"score": <float>}'
-                            )}],
-                        },
-                    )
-                    if resp.status_code == 429:
-                        raise Exception("429")
-                    resp.raise_for_status()
-                    return resp.json().get("content", [{}])[0].get("text", "")
-
-            text = await claude_call_with_limit(_do_call)
-            if not text or text == "Agent indisponible":
-                return 0.5
-            parsed = json.loads(text)
-            score = float(parsed.get("score", 0.5))
-            return max(0.0, min(1.0, score))
-        except Exception as e:
-            log.debug("news_sentiment: %s", e)
-            return 0.5
+        """Stub — Claude retiré du loop scanner."""
+        return 0.5
 
     # ------------------------------------------------------------------
     # Pilier 4 — Whale Modifier (Polymarket whale tracker)
