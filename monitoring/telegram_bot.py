@@ -404,7 +404,7 @@ async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
 
 
 async def _fetch_live_positions(addr: str) -> list[dict]:
-    """Positions ouvertes depuis data-api.polymarket.com."""
+    """Positions depuis data-api.polymarket.com."""
     try:
         async with httpx.AsyncClient(timeout=8.0) as c:
             r = await c.get(
@@ -419,6 +419,44 @@ async def _fetch_live_positions(addr: str) -> list[dict]:
     return []
 
 
+async def _fetch_clob_price(token_id: str) -> float | None:
+    """Prix sell actuel depuis CLOB (position ouverte)."""
+    if not token_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(
+                "https://clob.polymarket.com/price",
+                params={"token_id": token_id, "side": "sell"},
+            )
+            if r.status_code == 200:
+                price = float((r.json() or {}).get("price") or 0)
+                return price if 0 < price <= 1 else None
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_gamma_question(condition_id: str) -> str:
+    """Question réelle du marché depuis Gamma API (conditionId)."""
+    if not condition_id:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            r = await c.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"conditionId": condition_id},
+            )
+            if r.status_code == 200:
+                data = r.json()
+                m = data[0] if isinstance(data, list) and data else {}
+                q = (m.get("question") or m.get("title") or "").strip()
+                return q[:60] if q else ""
+    except Exception:
+        pass
+    return ""
+
+
 async def _get_portfolio_text(telegram_id: int | None = None) -> str:
     try:
         # Balance + live positions depuis Polymarket API (adresse per-user si dispo)
@@ -428,32 +466,92 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         live_section = ""
         if relayer_addr:
             try:
-                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=6.0)
+                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=8.0)
                 if live_pos:
-                    live_pnl_total = 0.0
-                    live_lines = []
-                    for p in live_pos[:8]:
-                        outcome = html.escape(str(p.get("outcome") or p.get("title") or "?")[:35])
-                        size = float(p.get("size") or p.get("currentValue") or 0)
-                        entry = float(p.get("avgPrice") or p.get("buyPrice") or 0)
-                        current = float(p.get("currentPrice") or p.get("price") or entry)
-                        pnl_pct = ((current - entry) / entry * 100) if entry > 0 else 0
-                        pnl_usd = (current - entry) * size / current if entry > 0 and current > 0 else 0
-                        live_pnl_total += pnl_usd
-                        icon = "▲" if pnl_pct >= 0 else "▼"
-                        sign = "+" if pnl_pct >= 0 else ""
-                        live_lines.append(
-                            f"{outcome}\n"
-                            f"  @{entry:.3f}→{current:.3f} {icon}{sign}{pnl_pct:.1f}%  ${size:.1f}"
-                        )
-                    total_icon = "▲" if live_pnl_total >= 0 else "▼"
-                    total_sign = "+" if live_pnl_total >= 0 else ""
-                    live_section = (
-                        f"\n{L}\n<b>📊 POSITIONS LIVE ({len(live_pos)})</b>\n"
-                        f"<code>P&L TOTAL  {total_icon}{total_sign}${abs(live_pnl_total):.2f}\n"
-                        + "\n".join(live_lines)
-                        + "</code>"
+                    # Enrichit chaque position en parallèle : question Gamma + prix CLOB
+                    async def _enrich(p: dict) -> dict:
+                        cid = p.get("conditionId") or p.get("condition_id") or ""
+                        token_id = p.get("asset") or p.get("tokenId") or p.get("token_id") or ""
+                        is_resolved = bool(p.get("resolved") or p.get("redeemable"))
+                        # Nom réel du marché
+                        question = await _fetch_gamma_question(cid)
+                        if not question:
+                            question = (p.get("title") or p.get("market") or cid)[:55]
+                        # Prix courant
+                        if is_resolved:
+                            current_price = float(p.get("currentPrice") or p.get("price") or 0)
+                        else:
+                            clob_price = await _fetch_clob_price(token_id)
+                            current_price = clob_price if clob_price is not None else float(
+                                p.get("currentPrice") or p.get("price") or
+                                p.get("avgPrice") or 0
+                            )
+                        return {**p, "_question": question, "_current": current_price,
+                                "_resolved": is_resolved}
+
+                    enriched = await asyncio.gather(
+                        *[_enrich(p) for p in live_pos[:8]], return_exceptions=True
                     )
+
+                    open_lines, closed_lines = [], []
+                    open_pnl, closed_pnl = 0.0, 0.0
+                    wins, total_resolved = 0, 0
+
+                    for ep in enriched:
+                        if isinstance(ep, Exception):
+                            continue
+                        q = html.escape(ep["_question"][:38])
+                        size  = float(ep.get("size") or 0)          # shares
+                        entry = float(ep.get("avgPrice") or ep.get("avg_price") or 0)
+                        cur   = ep["_current"]
+                        outcome_raw = (ep.get("outcome") or "").strip().upper()
+
+                        if ep["_resolved"]:
+                            # P&L résolu : formule exacte selon outcome
+                            if outcome_raw in ("YES", "1", "TRUE"):
+                                pnl = size * (1.0 - entry)
+                            else:
+                                pnl = -(size * entry)
+                            pnl_pct = (pnl / (size * entry) * 100) if entry > 0 and size > 0 else 0
+                            closed_pnl += pnl
+                            total_resolved += 1
+                            if pnl > 0:
+                                wins += 1
+                            icon = "▲" if pnl >= 0 else "▼"
+                            sign = "+" if pnl >= 0 else ""
+                            closed_lines.append(
+                                f"{q}\n"
+                                f"  {outcome_raw} RÉSOLU  {icon}{sign}${abs(pnl):.2f}"
+                            )
+                        else:
+                            # P&L non-résolu : prix CLOB vs entry
+                            pnl = size * (cur - entry) if entry > 0 else 0
+                            pnl_pct = ((cur - entry) / entry * 100) if entry > 0 else 0
+                            open_pnl += pnl
+                            icon = "▲" if pnl_pct >= 0 else "▼"
+                            sign = "+" if pnl_pct >= 0 else ""
+                            open_lines.append(
+                                f"{q}\n"
+                                f"  @{entry:.3f}→{cur:.3f}  {icon}{sign}{pnl_pct:.1f}%  ${abs(pnl):.2f}"
+                            )
+
+                    wr_str = (f"  WIN RATE  {wins}/{total_resolved} ({wins*100//total_resolved}%)\n"
+                              if total_resolved > 0 else "")
+                    total_pnl = open_pnl + closed_pnl
+                    total_icon = "▲" if total_pnl >= 0 else "▼"
+                    total_sign = "+" if total_pnl >= 0 else ""
+                    n_open = len(open_lines)
+                    n_closed = len(closed_lines)
+
+                    live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
+                    live_section += f"P&L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
+                    if open_lines:
+                        live_section += f"\n── OUVERTES ({n_open}) ──\n"
+                        live_section += "\n".join(open_lines)
+                    if closed_lines:
+                        live_section += f"\n── RÉSOLUES ({n_closed}) ──\n"
+                        live_section += "\n".join(closed_lines)
+                    live_section += "</code>"
             except Exception as lpe:
                 log.debug("live positions error: %s", lpe)
 
