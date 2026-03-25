@@ -297,6 +297,39 @@ async def _send_report(stats: dict, changes: list[str], cfg: dict[str, float]) -
         log.error("auto_optimizer: rapport Telegram: %s", e)
 
 
+async def _insert_optimizer_run(
+    signals_analyzed: int,
+    adjustments_made: int,
+    config_snapshot: dict[str, float],
+) -> None:
+    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "signals_analyzed": signals_analyzed,
+        "adjustments_made": adjustments_made,
+        "config_snapshot": config_snapshot,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(
+                f"{url}/rest/v1/optimizer_runs",
+                headers={
+                    "apikey": key,
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                json=payload,
+            )
+            if r.status_code not in (200, 201):
+                log.warning("optimizer_runs insert: %s %s", r.status_code, (r.text or "")[:200])
+    except Exception as e:
+        log.warning("_insert_optimizer_run: %s", e)
+
+
 # ── Boucle principale ─────────────────────────────────────────────────────────
 
 async def run_auto_optimizer() -> None:
@@ -308,6 +341,9 @@ async def run_auto_optimizer() -> None:
     await asyncio.sleep(300)
 
     while True:
+        signals_analyzed = 0
+        adjustments_made = 0
+        config_snapshot = load_optimizer_config()
         try:
             log.info("Auto-optimizer : démarrage du cycle (7 jours de signaux Supabase)…")
             signals = await _fetch_supabase_signals(days=7)
@@ -317,6 +353,9 @@ async def run_auto_optimizer() -> None:
                 stats = await _compute_trigger_stats(signals)
                 cfg = load_optimizer_config()
                 new_cfg, changes = _adjust_thresholds(stats, cfg)
+                signals_analyzed = len(signals)
+                adjustments_made = len(changes)
+                config_snapshot = dict(new_cfg)
 
                 if changes:
                     save_optimizer_config(new_cfg)
@@ -341,5 +380,6 @@ async def run_auto_optimizer() -> None:
         except Exception as e:
             log.error("Auto-optimizer erreur: %s", e)
 
+        await _insert_optimizer_run(signals_analyzed, adjustments_made, config_snapshot)
         log.info("Auto-optimizer : prochain cycle dans 6h")
         await asyncio.sleep(LOOP_INTERVAL)
