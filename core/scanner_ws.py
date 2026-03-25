@@ -27,6 +27,7 @@ MARKETS_REFRESH_INTERVAL = 60.0
 GAMMA_MARKETS_LIMIT = 200
 GAMMA_FETCH_TIMEOUT = 15.0
 WS_FAIL_THRESHOLD = 3
+WS_TOP_MARKETS = 20       # Focus WS subscription on top N most liquid markets (<500ms signals)
 
 
 def _mid_from_book(bids: list, asks: list) -> Optional[float]:
@@ -137,6 +138,30 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
         logger.info("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
     except Exception as e:
         logger.warning("_write_scan_ts failed: %s", e)
+
+
+def _top_token_ids(token_to_market: dict, n: int = WS_TOP_MARKETS) -> list[str]:
+    """Return token_ids for the top N markets by volume24hr (most liquid → fastest signals)."""
+    # Group tokens by market (conditionId or object identity)
+    market_groups: dict[str, tuple[dict, list[str]]] = {}
+    for token_id, (market, _side) in token_to_market.items():
+        key = market.get("conditionId") or market.get("id") or str(id(market))
+        if key not in market_groups:
+            market_groups[key] = (market, [])
+        market_groups[key][1].append(token_id)
+
+    # Sort by volume (highest first)
+    sorted_groups = sorted(
+        market_groups.values(),
+        key=lambda x: float(x[0].get("volume24hr") or x[0].get("volume") or 0),
+        reverse=True,
+    )
+
+    # Collect token_ids for top N markets
+    result: list[str] = []
+    for market, tids in sorted_groups[:n]:
+        result.extend(tids)
+    return result
 
 
 class WebSocketScanner:
@@ -353,7 +378,9 @@ class WebSocketScanner:
             await self._run_polling_fallback()
             return
 
-        asset_ids = list(self._token_to_market.keys())
+        # Focus on top N most liquid markets for <500ms reaction time
+        top_ids = _top_token_ids(self._token_to_market, WS_TOP_MARKETS)
+        asset_ids = top_ids if top_ids else list(self._token_to_market.keys())
         subscribe_msg = json.dumps({
             "assets_ids": asset_ids,
             "type": "market",
@@ -364,7 +391,7 @@ class WebSocketScanner:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(WS_URL, heartbeat=30) as ws:
                     await ws.send_str(subscribe_msg)
-                    logger.info("Connected to WS — subscribed to %d assets", len(asset_ids))
+                    logger.info("Connected to WS — top %d liquid markets (%d tokens)", WS_TOP_MARKETS, len(asset_ids))
                     self._ws_fail_count = 0
 
                     last_ping = time.monotonic()
@@ -441,8 +468,37 @@ class WebSocketScanner:
                         logger.warning("WebSocket on_signal error: %s", e)
 
             elif event_type == "price_change":
-                # price_change can have price level updates; for full book we rely on book
-                pass
+                # price_change: react immediately (<500ms) to price level updates
+                entry = self._token_to_market.get(asset_id)
+                if not entry:
+                    return
+                market, side = entry
+                # Extract new price from changes array
+                changes = obj.get("changes") or []
+                new_price: float | None = None
+                for change in changes:
+                    c_side = (change.get("side") or "").lower()
+                    if c_side in ("buy", "bid", "sell", "ask"):
+                        try:
+                            new_price = float(change.get("price") or 0) or None
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                price = new_price or _extract_market_price(market, side)
+                if price and 0.01 < price < 0.99:
+                    ob: dict = {"bids": [], "asks": []}
+                    sig = self.edge_engine.compute_edge(market, asset_id, side, price, ob)
+                    if sig:
+                        n_markets = len(self._token_to_market) // 2
+                        _write_scan_ts(n_markets, [sig])
+                        if self.on_signal:
+                            try:
+                                if asyncio.iscoroutinefunction(self.on_signal):
+                                    await self.on_signal(sig)
+                                else:
+                                    self.on_signal(sig)
+                            except Exception as e:
+                                logger.debug("price_change on_signal: %s", e)
         except Exception as e:
             logger.debug("WebSocket message parse error: %s", e)
 

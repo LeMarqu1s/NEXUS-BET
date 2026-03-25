@@ -183,8 +183,41 @@ def _get_market_count() -> int:
     return 0
 
 
-async def _get_balance() -> float:
-    relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS")
+async def _get_user_wallet_address(telegram_id: int | None) -> str:
+    """Retourne l'adresse Polygon de l'utilisateur : Supabase d'abord, puis RELAYER_API_KEY_ADDRESS."""
+    if telegram_id:
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if url and key:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(
+                        f"{url}/rest/v1/users",
+                        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                        params={
+                            "telegram_chat_id": f"eq.{telegram_id}",
+                            "select": "wallet_address",
+                            "limit": "1",
+                        },
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if isinstance(rows, list) and rows:
+                            addr = (rows[0].get("wallet_address") or "").strip()
+                            if POLYGON_ADDRESS_PATTERN.match(addr):
+                                log.info("Fetching portfolio for %s...", addr[:8])
+                                return addr
+            except Exception as e:
+                log.debug("_get_user_wallet_address(%s): %s", telegram_id, e)
+    # Fallback env
+    fallback = os.getenv("RELAYER_API_KEY_ADDRESS", "").strip()
+    if fallback:
+        log.info("Fetching portfolio for %s... (env fallback)", fallback[:8])
+    return fallback
+
+
+async def _get_balance(addr: str | None = None) -> float:
+    relayer_addr = addr or os.getenv("RELAYER_API_KEY_ADDRESS")
     if not relayer_addr:
         return _get_capital()
     try:
@@ -227,6 +260,46 @@ def _detect_category(question: str) -> str:
     return "MARKET"
 
 
+def _cat_emoji(question: str) -> str:
+    """Map market question to a relevant category emoji."""
+    q = question.lower()
+    if any(k in q for k in ("nba", "ncaa", "basketball")):
+        return "🏀"
+    if any(k in q for k in ("nfl", "super bowl", "touchdown")):
+        return "🏈"
+    if any(k in q for k in ("soccer", "fifa", "premier league", "champions league", "mls", "la liga", "bundesliga")):
+        return "⚽"
+    if any(k in q for k in ("mlb", "baseball", "world series")):
+        return "⚾"
+    if any(k in q for k in ("nhl", "hockey", "stanley cup")):
+        return "🏒"
+    if any(k in q for k in ("tennis", "wimbledon", "us open", "french open", "australian open", "atp", "wta")):
+        return "🎾"
+    if any(k in q for k in ("ufc", "boxing", "mma", " fight ")):
+        return "🥊"
+    if any(k in q for k in ("golf", "pga", "masters tournament")):
+        return "⛳"
+    if any(k in q for k in ("trump", "biden", "election", "president", "senate", "congress", "republican", "democrat", "harris", "white house")):
+        return "🇺🇸"
+    if any(k in q for k in ("btc", "bitcoin")):
+        return "₿"
+    if any(k in q for k in ("eth", "ethereum")):
+        return "⟠"
+    if any(k in q for k in ("crypto", "sol", "solana", "bnb", "xrp", "doge", "defi", "nft", "blockchain")):
+        return "🪙"
+    if any(k in q for k in ("oil", "crude", "brent", "wti", "petroleum", "opec")):
+        return "🛢️"
+    if any(k in q for k in ("gold", "silver", "commodity")):
+        return "🥇"
+    if any(k in q for k in ("fed", "rate", "inflation", "cpi", "fomc", "gdp", "recession", "macro", "powell")):
+        return "📉"
+    if any(k in q for k in ("ai ", "artificial intelligence", "openai", "gpt", "llm", "chatgpt")):
+        return "🤖"
+    if any(k in q for k in ("war", "ukraine", "russia", "nato", "military", "ceasefire")):
+        return "⚔️"
+    return "📊"
+
+
 async def _get_start_text() -> str:
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
     mode = "SIM" if sim else "LIVE"
@@ -261,7 +334,12 @@ async def _get_scan_text() -> str:
         mins = "—"
         if last_scan_ts:
             delta = int(datetime.now(timezone.utc).timestamp()) - last_scan_ts
-            mins = f"{delta // 60}m ago" if delta >= 60 else "&lt;1m ago"
+            if delta < 60:
+                mins = f"{delta}s ago"
+            elif delta < 3600:
+                mins = f"{delta // 60}m {delta % 60}s ago"
+            else:
+                mins = f"{delta // 3600}h ago"
 
         signals = get_pending_signals()
         if not signals:
@@ -281,20 +359,20 @@ async def _get_scan_text() -> str:
         if not signals:
             return (
                 f"<b>📡 MARKET SCANNER</b>\n{L}\n"
-                f"<code>MARCHÉS   {n_assets}\n"
-                f"SIGNAUX   0\n"
-                f"EDGE MIN  {threshold}%\n"
-                f"SCAN      {mins}</code>\n"
+                f"<code>🌐 Marchés    {n_assets}\n"
+                f"🎯 Signaux    0\n"
+                f"📊 Edge min   {threshold}%\n"
+                f"🕐 Scan       {mins}</code>\n"
                 f"{L}\n"
-                f"<i>Aucun signal ≥{threshold}% · prochain scan dans 30s</i>"
+                f"<i>⏳ Aucun signal ≥{threshold}% · prochain scan dans 30s</i>"
             )
 
         lines = [
             f"<b>📡 MARKET SCANNER</b>\n{L}\n"
-            f"<code>MARCHÉS   {n_assets}\n"
-            f"SIGNAUX   {n_signals}\n"
-            f"EDGE MIN  {threshold}%\n"
-            f"SCAN      {mins}</code>\n"
+            f"<code>🌐 Marchés    {n_assets}\n"
+            f"🎯 Signaux    {n_signals}\n"
+            f"📊 Edge min   {threshold}%\n"
+            f"🕐 Scan       {mins}</code>\n"
             f"{L}"
         ]
         from config.settings import settings as _s
@@ -302,7 +380,7 @@ async def _get_scan_text() -> str:
         sim = getattr(_s, "SIMULATION_MODE", True)
         mode_label = "PAPER" if sim else "LIVE"
         kb_rows: list = []
-        for s in signals[:5]:
+        for i, s in enumerate(signals[:5], 1):
             mid = s.get("market_id") or s.get("conditionId") or ""
             q = (s.get("question") or str(mid))[:42]
             side = s.get("recommended_outcome") or s.get("side", "YES")
@@ -311,12 +389,14 @@ async def _get_scan_text() -> str:
             conf = float(s.get("confidence", 0))
             kelly = float(s.get("kelly_fraction") or 0.05)
             size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
-            tag = "⚡ STRONG BUY" if s.get("signal_strength") == "STRONG_BUY" else "🟢 BUY"
-            cat = _detect_category(q)
+            is_strong = s.get("signal_strength") == "STRONG_BUY"
+            tag_emoji = "⚡" if is_strong else "🟢"
+            cat_e = _cat_emoji(q)
+            conf_icon = "🔥" if conf >= 0.80 else "✅" if conf >= 0.60 else "⚠️"
             lines.append(
-                f"\n{tag} · {cat}\n"
-                f"<b>{q}</b>\n"
-                f"{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}"
+                f"\n{tag_emoji} <b>SIGNAL #{i}</b> {cat_e}\n"
+                f"<b>{html.escape(q)}</b>\n"
+                f"<code>{side} @ ${price:.2f}  EDGE {edge:+.1f}%  {conf_icon} {_conf_label(conf)}</code>"
             )
             if mid:
                 cb_buy = f"buy_{mid[:38]}|{side}"
@@ -366,7 +446,7 @@ async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
 
 
 async def _fetch_live_positions(addr: str) -> list[dict]:
-    """Positions ouvertes depuis data-api.polymarket.com."""
+    """Positions depuis data-api.polymarket.com."""
     try:
         async with httpx.AsyncClient(timeout=8.0) as c:
             r = await c.get(
@@ -381,41 +461,142 @@ async def _fetch_live_positions(addr: str) -> list[dict]:
     return []
 
 
-async def _get_portfolio_text() -> str:
+async def _fetch_clob_price(token_id: str) -> float | None:
+    """Prix sell actuel depuis CLOB (position ouverte)."""
+    if not token_id:
+        return None
     try:
-        # Balance + live positions depuis Polymarket API
-        relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS", "").strip()
-        balance = await _get_balance()
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(
+                "https://clob.polymarket.com/price",
+                params={"token_id": token_id, "side": "sell"},
+            )
+            if r.status_code == 200:
+                price = float((r.json() or {}).get("price") or 0)
+                return price if 0 < price <= 1 else None
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_gamma_question(condition_id: str) -> str:
+    """Question réelle du marché depuis Gamma API (conditionId)."""
+    if not condition_id:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            r = await c.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"conditionId": condition_id},
+            )
+            if r.status_code == 200:
+                data = r.json()
+                m = data[0] if isinstance(data, list) and data else {}
+                q = (m.get("question") or m.get("title") or "").strip()
+                return q[:60] if q else ""
+    except Exception:
+        pass
+    return ""
+
+
+async def _get_portfolio_text(telegram_id: int | None = None) -> str:
+    try:
+        # Balance + live positions depuis Polymarket API (adresse per-user si dispo)
+        relayer_addr = await _get_user_wallet_address(telegram_id)
+        balance = await _get_balance(relayer_addr)
 
         live_section = ""
         if relayer_addr:
             try:
-                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=6.0)
+                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=8.0)
                 if live_pos:
-                    live_pnl_total = 0.0
-                    live_lines = []
-                    for p in live_pos[:8]:
-                        outcome = html.escape(str(p.get("outcome") or p.get("title") or "?")[:35])
-                        size = float(p.get("size") or p.get("currentValue") or 0)
-                        entry = float(p.get("avgPrice") or p.get("buyPrice") or 0)
-                        current = float(p.get("currentPrice") or p.get("price") or entry)
-                        pnl_pct = ((current - entry) / entry * 100) if entry > 0 else 0
-                        pnl_usd = (current - entry) * size / current if entry > 0 and current > 0 else 0
-                        live_pnl_total += pnl_usd
-                        icon = "▲" if pnl_pct >= 0 else "▼"
-                        sign = "+" if pnl_pct >= 0 else ""
-                        live_lines.append(
-                            f"{outcome}\n"
-                            f"  @{entry:.3f}→{current:.3f} {icon}{sign}{pnl_pct:.1f}%  ${size:.1f}"
-                        )
-                    total_icon = "▲" if live_pnl_total >= 0 else "▼"
-                    total_sign = "+" if live_pnl_total >= 0 else ""
-                    live_section = (
-                        f"\n{L}\n<b>📊 POSITIONS LIVE ({len(live_pos)})</b>\n"
-                        f"<code>P&L TOTAL  {total_icon}{total_sign}${abs(live_pnl_total):.2f}\n"
-                        + "\n".join(live_lines)
-                        + "</code>"
+                    # Enrichit chaque position en parallèle : question Gamma + prix CLOB
+                    async def _enrich(p: dict) -> dict:
+                        cid = p.get("conditionId") or p.get("condition_id") or ""
+                        token_id = p.get("asset") or p.get("tokenId") or p.get("token_id") or ""
+                        is_resolved = bool(p.get("resolved") or p.get("redeemable"))
+                        # Nom réel du marché
+                        question = await _fetch_gamma_question(cid)
+                        if not question:
+                            question = (p.get("title") or p.get("market") or cid)[:55]
+                        # Prix courant
+                        if is_resolved:
+                            current_price = float(p.get("currentPrice") or p.get("price") or 0)
+                        else:
+                            clob_price = await _fetch_clob_price(token_id)
+                            current_price = clob_price if clob_price is not None else float(
+                                p.get("currentPrice") or p.get("price") or
+                                p.get("avgPrice") or 0
+                            )
+                        return {**p, "_question": question, "_current": current_price,
+                                "_resolved": is_resolved}
+
+                    enriched = await asyncio.gather(
+                        *[_enrich(p) for p in live_pos[:8]], return_exceptions=True
                     )
+
+                    open_lines, closed_lines = [], []
+                    open_pnl, closed_pnl = 0.0, 0.0
+                    wins, total_resolved = 0, 0
+
+                    for ep in enriched:
+                        if isinstance(ep, Exception):
+                            continue
+                        q = html.escape(ep["_question"][:38])
+                        size  = float(ep.get("size") or 0)          # shares
+                        entry = float(ep.get("avgPrice") or ep.get("avg_price") or 0)
+                        cur   = ep["_current"]
+                        outcome_raw = (ep.get("outcome") or "").strip().upper()
+
+                        if ep["_resolved"]:
+                            # P&L résolu : formule exacte selon outcome
+                            if outcome_raw in ("YES", "1", "TRUE"):
+                                pnl = size * (1.0 - entry)
+                            else:
+                                pnl = -(size * entry)
+                            pnl_pct = (pnl / (size * entry) * 100) if entry > 0 and size > 0 else 0
+                            closed_pnl += pnl
+                            total_resolved += 1
+                            if pnl > 0:
+                                wins += 1
+                            icon = "▲" if pnl >= 0 else "▼"
+                            sign = "+" if pnl >= 0 else ""
+                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
+                            cat_e = _cat_emoji(ep["_question"])
+                            closed_lines.append(
+                                f"{cat_e} {q}\n"
+                                f"  {pnl_dot} {outcome_raw} RÉSOLU  {sign}${abs(pnl):.2f}"
+                            )
+                        else:
+                            # P&L non-résolu : prix CLOB vs entry
+                            pnl = size * (cur - entry) if entry > 0 else 0
+                            pnl_pct = ((cur - entry) / entry * 100) if entry > 0 else 0
+                            open_pnl += pnl
+                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
+                            sign = "+" if pnl_pct >= 0 else ""
+                            cat_e = _cat_emoji(ep["_question"])
+                            open_lines.append(
+                                f"{cat_e} {q}\n"
+                                f"  {pnl_dot} @{entry:.3f}→{cur:.3f}  {sign}{pnl_pct:.1f}%  ${abs(pnl):.2f}"
+                            )
+
+                    wr_str = (f"  WIN RATE  {wins}/{total_resolved} ({wins*100//total_resolved}%)\n"
+                              if total_resolved > 0 else "")
+                    total_pnl = open_pnl + closed_pnl
+                    total_icon = "▲" if total_pnl >= 0 else "▼"
+                    total_sign = "+" if total_pnl >= 0 else ""
+                    n_open = len(open_lines)
+                    n_closed = len(closed_lines)
+
+                    live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
+                    live_section += f"P&L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
+                    if open_lines:
+                        live_section += f"\n── OUVERTES ({n_open}) ──\n"
+                        live_section += "\n".join(open_lines)
+                    if closed_lines:
+                        live_section += f"\n── RÉSOLUES ({n_closed}) ──\n"
+                        live_section += "\n".join(closed_lines)
+                    live_section += "</code>"
             except Exception as lpe:
                 log.debug("live positions error: %s", lpe)
 
@@ -469,13 +650,26 @@ async def _get_portfolio_text() -> str:
         except Exception as pe:
             log.debug("Paper portfolio in portfolio text: %s", pe)
 
+        # Compound tracker section
+        compound_section = ""
+        try:
+            from core.compounder import get_compound_section
+            compound_section = get_compound_section(
+                win_rate=win_rate if win_rate > 0 else 60.0,
+                avg_return=15.0,
+            )
+        except Exception as ce:
+            log.debug("compounder section: %s", ce)
+
+        pnl_arrow = "📈" if pnl_today >= 0 else "📉"
+        wins_str = f"{wins}/{max(total_closed, 1)}"
         return (
-            f"<b>💰 PORTFOLIO</b>\n{L}\n"
-            f"<code>BALANCE   ${balance:,.2f} USDC\n"
-            f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
-            f"POSITIONS {len(positions)} ouvertes\n"
-            f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
-            f"{L}{live_section}{paper_section}"
+            f"<b>💰 PORTFOLIO LIVE</b>\n{L}\n"
+            f"💵 Balance    <b>${balance:,.2f}</b> USDC\n"
+            f"{pnl_arrow} P&amp;L        <b>{pnl_icon}{pnl_sign}${abs(pnl_today):.2f}</b> ({pnl_sign}{pnl_pct:.1f}%)\n"
+            f"🎯 Win Rate   <b>{wins_str} ({win_rate:.0f}%)</b>\n"
+            f"📊 Positions  <b>{len(positions)} ouvertes</b>\n"
+            f"{L}{live_section}{paper_section}{compound_section}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
@@ -928,7 +1122,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await _ack_then_reply(update, _get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", _portfolio_keyboard())
+        tg_id = update.effective_user.id if update.effective_user else None
+        await _ack_then_reply(update, lambda: _get_portfolio_text(tg_id), f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", _portfolio_keyboard())
     except Exception as e:
         log.exception("cmd_portfolio: %s", e)
         await _safe_reply(update, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — réessayez</code>", _portfolio_keyboard())
@@ -982,6 +1177,102 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         log.exception("cmd_scan: %s", e)
         await _safe_reply(update, _scan_fallback(), _scan_keyboard())
+
+
+async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/strategy — Claude analyse ton portfolio et donne des recommandations."""
+    try:
+        tg_id = update.effective_user.id if update.effective_user else None
+        await _safe_reply(update, f"🤖 <b>STRATÈGE CLAUDE</b>\n{L}\n<i>Analyse en cours…</i>", None)
+
+        # Gather context
+        relayer_addr = await _get_user_wallet_address(tg_id)
+        balance = await _get_balance(relayer_addr)
+        live_pos: list[dict] = []
+        if relayer_addr:
+            try:
+                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=6.0)
+            except Exception:
+                pass
+
+        # Enrich positions with names
+        async def _enrich_quick(p: dict) -> dict:
+            cid = p.get("conditionId") or ""
+            q = await _fetch_gamma_question(cid) if cid else ""
+            if not q:
+                q = p.get("title") or cid
+            return {**p, "_question": q, "_current": float(p.get("currentPrice") or p.get("avgPrice") or 0)}
+
+        if live_pos:
+            enriched = await asyncio.gather(*[_enrich_quick(p) for p in live_pos[:5]], return_exceptions=True)
+            live_pos = [e for e in enriched if not isinstance(e, Exception)]
+
+        # Recent signals
+        from paperclip_bridge import get_pending_signals
+        signals = get_pending_signals()[:5]
+
+        # Win rate from paper trades
+        win_rate = 0.0
+        try:
+            from monitoring.paper_portfolio import get_paper_summary
+            pp = get_paper_summary()
+            win_rate = float(pp.get("win_rate") or 0)
+        except Exception:
+            pass
+
+        # Risk profile from Supabase
+        risk_profile = "conservative"
+        try:
+            url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+            if tg_id and url and key:
+                async with httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(
+                        f"{url}/rest/v1/users",
+                        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                        params={"telegram_chat_id": f"eq.{tg_id}", "select": "risk_profile", "limit": "1"},
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if rows:
+                            risk_profile = rows[0].get("risk_profile") or "conservative"
+        except Exception:
+            pass
+
+        from api.strategist import get_strategy
+        advice = await asyncio.wait_for(
+            get_strategy(
+                balance=balance,
+                positions=live_pos,
+                recent_signals=signals,
+                win_rate=win_rate,
+                risk_profile=risk_profile,
+            ),
+            timeout=25.0,
+        )
+
+        msg = f"🤖 <b>STRATÈGE CLAUDE</b>\n{L}\n{html.escape(advice)}"
+        await _safe_reply(update, msg, _back_keyboard())
+    except asyncio.TimeoutError:
+        await _safe_reply(update, f"🤖 <b>STRATÈGE</b>\n{L}\n<i>⏱️ Timeout — réessaie</i>", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_strategy: %s", e)
+        await _safe_reply(update, f"🤖 <b>STRATÈGE</b>\n{L}\n<code>ERREUR — {e}</code>", _back_keyboard())
+
+
+async def cmd_selftest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/selftest — simule 10 signaux, calcule P&L attendu vs réel."""
+    try:
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<i>⏳ Test sur 10 marchés en cours…</i>", None)
+        from core.self_tester import run_selftest, selftest_to_telegram
+        result = await asyncio.wait_for(run_selftest(), timeout=30.0)
+        msg = selftest_to_telegram(result)
+        await _safe_reply(update, msg, _back_keyboard())
+    except asyncio.TimeoutError:
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<i>⏱️ Timeout (30s) — réessaie</i>", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_selftest: %s", e)
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<code>ERREUR — {e}</code>", _back_keyboard())
 
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1686,7 +1977,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_portfolio":
         await edit(f"<b>💰 LOADING...</b>\n{L}", None)
-        text = await _safe_get(_get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
+        tg_id = q.from_user.id if q.from_user else None
+        text = await _safe_get(lambda: _get_portfolio_text(tg_id), f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _portfolio_keyboard())
         return
 
@@ -2503,6 +2795,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("strategy", cmd_strategy))
+    app.add_handler(CommandHandler("selftest", cmd_selftest))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(

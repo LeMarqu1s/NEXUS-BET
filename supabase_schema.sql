@@ -188,3 +188,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS polymarket_api_key_enc TEXT;        -
 ALTER TABLE users ADD COLUMN IF NOT EXISTS capital_allocated FLOAT DEFAULT 50;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_profile TEXT DEFAULT 'conservative';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_snipe BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_address TEXT;               -- Polygon/Polymarket address (0x...)
