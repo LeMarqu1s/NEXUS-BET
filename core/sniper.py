@@ -32,6 +32,13 @@ MOMENTUM_THRESHOLD = 0.05   # 5%
 MOMENTUM_WINDOW_POINTS = 12 # 2min / 10s = 12 points
 SPREAD_THRESHOLD = 0.08     # 8%
 WHALE_THRESHOLD_USD = 10_000
+MIN_SIGNALS_REQUIRED = 2    # Confluence : au moins 2 signaux pour trader
+
+# ── Anti-overtrading ──────────────────────────────────────────────────────────
+MAX_CONCURRENT_POSITIONS = 3
+MAX_TRADES_PER_HOUR = 5
+COOLDOWN_BETWEEN_TRADES = 120   # secondes (même que _alert_cooldown)
+MIN_FREE_CAPITAL_PCT = 0.30     # 30% du capital doit rester libre
 
 
 # ── Dataclass signal ──────────────────────────────────────────────────────────
@@ -64,7 +71,9 @@ class PolymarketSniper:
         self.active_positions: dict[str, float] = {}
         # token_id → timestamp dernière alerte (évite les doublons)
         self._last_alert: dict[str, float] = {}
-        self._alert_cooldown = 120  # secondes entre deux alertes sur le même token
+        self._alert_cooldown = COOLDOWN_BETWEEN_TRADES
+        # Anti-overtrading: timestamps des trades placés dans la dernière heure
+        self._trades_hour: deque = deque()  # timestamps des auto-snipe exécutés
 
     # ── Historique ────────────────────────────────────────────────────────────
 
@@ -221,6 +230,12 @@ class PolymarketSniper:
             if not signals:
                 return None
 
+            # Confluence : requiert au minimum MIN_SIGNALS_REQUIRED confirmations
+            if len(signals) < MIN_SIGNALS_REQUIRED:
+                log.debug("Confluence insuffisante (%d/%d) pour %s",
+                          len(signals), MIN_SIGNALS_REQUIRED, token_id[:16])
+                return None
+
             self._last_alert[token_id] = time.time()
             market_id = str(market.get("conditionId") or market.get("id") or token_id)
             question = html.escape(str(market.get("question") or market_id)[:80])
@@ -264,15 +279,87 @@ class PolymarketSniper:
             log.warning("_fetch_markets: %s", e)
             return []
 
+    # ── Anti-overtrading ─────────────────────────────────────────────────────
+
+    def _can_trade(self) -> tuple[bool, str]:
+        """Vérifie les limites anti-overtrading. Retourne (ok, raison si bloqué)."""
+        now = time.time()
+        # Purge trades > 1h
+        while self._trades_hour and now - self._trades_hour[0] > 3600:
+            self._trades_hour.popleft()
+        # Limite horaire
+        if len(self._trades_hour) >= MAX_TRADES_PER_HOUR:
+            return False, f"MAX_TRADES_PER_HOUR={MAX_TRADES_PER_HOUR} atteint"
+        # Positions simultanées
+        if len(self.active_positions) >= MAX_CONCURRENT_POSITIONS:
+            return False, f"MAX_CONCURRENT_POSITIONS={MAX_CONCURRENT_POSITIONS} atteint"
+        # Capital libre
+        try:
+            from config.settings import settings as _s
+            cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0)
+            invested = sum(cap * 0.10 for _ in self.active_positions)  # approx
+            free_pct = 1.0 - (invested / cap) if cap > 0 else 1.0
+            if free_pct < MIN_FREE_CAPITAL_PCT:
+                return False, f"Capital libre {free_pct*100:.0f}% < {MIN_FREE_CAPITAL_PCT*100:.0f}%"
+        except Exception:
+            pass
+        return True, ""
+
+    async def _should_auto_snipe(self) -> bool:
+        """Retourne True seulement si AUTO_SNIPE=true EN VAR ENV
+        ET qu'au moins un utilisateur Supabase actif a auto_snipe=true.
+        Double vérification pour éviter l'exécution accidentelle."""
+        if os.getenv("AUTO_SNIPE", "false").lower() != "true":
+            return False
+        # Vérification Supabase : au moins 1 user actif avec auto_snipe=true
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if not url or not key:
+            log.warning("AUTO_SNIPE=true mais Supabase non configuré — auto-exécution bloquée")
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as c:
+                r = await c.get(
+                    f"{url}/rest/v1/users",
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                    params={
+                        "auto_snipe": "eq.true",
+                        "is_active": "eq.true",
+                        "select": "telegram_chat_id",
+                        "limit": "1",
+                    },
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        return True
+                    log.info("AUTO_SNIPE=true (env) mais aucun user Supabase avec auto_snipe=true — alertes uniquement")
+                    return False
+        except Exception as e:
+            log.debug("_should_auto_snipe Supabase check: %s", e)
+        return False
+
     # ── Signal detected ───────────────────────────────────────────────────────
 
     async def _on_signal_detected(self, signal: SniperSignal) -> None:
-        """AUTO_SNIPE=true → exécute l'ordre PUIS notifie.
-           AUTO_SNIPE=false → push alerte avec bouton SNIPE."""
-        auto_snipe = os.getenv("AUTO_SNIPE", "false").lower() == "true"
+        """AUTO_SNIPE : vérifie env ET Supabase avant toute exécution.
+           AUTO_SNIPE=false (env) → push alerte uniquement, jamais d'ordre."""
+        auto_snipe = await self._should_auto_snipe()
         if auto_snipe:
+            # Vérification anti-overtrading avant d'exécuter
+            can, reason = self._can_trade()
+            if not can:
+                log.info("AUTO_SNIPE bloqué (%s) — alerte envoyée à la place", reason)
+                try:
+                    from monitoring.push_alerts import push_sniper_alert
+                    await push_sniper_alert(signal)
+                except Exception as e:
+                    log.error("push_sniper_alert failed: %s", e)
+                return
             # 1. Exécuter immédiatement
             order_id = await self._execute_entry(signal)
+            if order_id:
+                self._trades_hour.append(time.time())
             # 2. Notifier "exécuté"
             try:
                 from monitoring.push_alerts import push_auto_snipe_notification
