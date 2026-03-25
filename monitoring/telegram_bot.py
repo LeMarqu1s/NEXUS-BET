@@ -934,6 +934,40 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _safe_reply(update, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — réessayez</code>", _portfolio_keyboard())
 
 
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /backtest {market_slug_or_id} {days}
+    Exemple : /backtest will-trump-win-2024 7
+    """
+    L_ = "━━━━━━━━━━━━━━━"
+    args = (context.args or [])
+    if not args:
+        await _safe_reply(
+            update,
+            f"<b>📊 BACKTEST</b>\n{L_}\n"
+            f"<i>Usage : /backtest &lt;market_id_ou_slug&gt; [jours]\n"
+            f"Exemple : /backtest will-trump-win 7</i>",
+        )
+        return
+    market_slug = args[0]
+    try:
+        days = int(args[1]) if len(args) > 1 else 7
+        days = max(1, min(days, 30))
+    except ValueError:
+        days = 7
+
+    await _safe_reply(update, f"<b>⏳ Backtest en cours...</b>\n{L_}\n<code>{html.escape(market_slug[:50])} — {days}j</code>")
+    try:
+        from core.backtester import run_backtest
+        result = await asyncio.wait_for(run_backtest(market_slug, days), timeout=25.0)
+        await _safe_reply(update, result.to_telegram())
+    except asyncio.TimeoutError:
+        await _safe_reply(update, f"<b>⏱ TIMEOUT</b>\n{L_}\n<i>L'API Polymarket met trop de temps à répondre.</i>")
+    except Exception as e:
+        log.exception("cmd_backtest: %s", e)
+        await _safe_reply(update, f"<b>❌ ERREUR BACKTEST</b>\n{L_}\n<code>{html.escape(str(e)[:80])}</code>")
+
+
 def _scan_fallback() -> str:
     n = _get_market_count()
     return (
@@ -2468,6 +2502,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("activate", cmd_activate))
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -2513,6 +2548,7 @@ async def run_forever() -> None:
             BotCommand("settings", "⚙️ Configurer le bot"),
             BotCommand("exit", "🔴 Sortir d'une position"),
             BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
+            BotCommand("backtest", "📊 Backtester un marché"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
