@@ -57,7 +57,6 @@ def _main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("💰 PORTFOLIO", callback_data="btn_portfolio"),
         ],
         [
-            InlineKeyboardButton("🧠 AGENTS", callback_data="btn_agents"),
             InlineKeyboardButton("🐋 WHALES", callback_data="btn_whales"),
         ],
         [
@@ -354,9 +353,10 @@ async def _get_scan_text() -> str:
                         pass
 
         n_assets = _get_market_count()
-        n_signals = len(signals)
+        filtered_signals = [s for s in signals if float(s.get("edge_pct", 0)) >= threshold]
+        n_signals = len(filtered_signals)
 
-        if not signals:
+        if not filtered_signals:
             return (
                 f"<b>📡 MARKET SCANNER</b>\n{L}\n"
                 f"<code>🌐 Marchés    {n_assets}\n"
@@ -380,7 +380,7 @@ async def _get_scan_text() -> str:
         sim = getattr(_s, "SIMULATION_MODE", True)
         mode_label = "PAPER" if sim else "LIVE"
         kb_rows: list = []
-        for i, s in enumerate(signals[:5], 1):
+        for i, s in enumerate(filtered_signals[:5], 1):
             mid = s.get("market_id") or s.get("conditionId") or ""
             q = (s.get("question") or str(mid))[:42]
             side = s.get("recommended_outcome") or s.get("side", "YES")
@@ -415,6 +415,42 @@ async def _get_scan_text() -> str:
     except Exception as e:
         log.exception("Scan failed: %s", e)
         return f"<b>📡 MARKET SCANNER</b>\n{L}\n<code>ERREUR — {e}</code>"
+
+
+def _trade_pnl_usd(t: dict) -> float:
+    for k in ("pnl", "pnl_usd", "realizedPnl", "cashPnl"):
+        v = t.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
+def _trade_date_iso(t: dict) -> str:
+    ts = t.get("timestamp", t.get("created_at", t.get("blockTimestamp")))
+    if ts is None:
+        return ""
+    if isinstance(ts, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(ts), tz=timezone.utc).date().isoformat()
+        except (OSError, ValueError, OverflowError):
+            return ""
+    s = str(ts).strip().replace("Z", "+00:00")
+    if not s:
+        return ""
+    try:
+        if "T" in s:
+            dt = datetime.fromisoformat(s.replace(" ", "T"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.date().isoformat()
+        if len(s) >= 10:
+            return datetime.fromisoformat(s[:10]).date().isoformat()
+    except ValueError:
+        pass
+    return s[:10] if len(s) >= 10 else ""
 
 
 async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
@@ -600,17 +636,37 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
             except Exception as lpe:
                 log.debug("live positions error: %s", lpe)
 
-        from monitoring.trade_logger import trade_logger
-        positions = trade_logger.get_positions()
-        trades = trade_logger.get_recent_trades(limit=100)
+        api_wallet = (os.getenv("RELAYER_API_KEY_ADDRESS") or "").strip()
+        positions: list = []
+        trades: list = []
+        if api_wallet:
+            try:
+                async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                    pr = await client.get(
+                        "https://data-api.polymarket.com/positions",
+                        params={"user": api_wallet},
+                    )
+                    if pr.status_code == 200:
+                        raw = pr.json()
+                        positions = raw if isinstance(raw, list) else []
+                    tr = await client.get(
+                        "https://data-api.polymarket.com/trades",
+                        params={"user": api_wallet, "size": 100},
+                    )
+                    if tr.status_code == 200:
+                        raw_t = tr.json()
+                        trades = raw_t if isinstance(raw_t, list) else []
+            except Exception as api_p:
+                log.debug("portfolio Polymarket API: %s", api_p)
 
         today = datetime.now(timezone.utc).date().isoformat()
-        pnl_today = sum(float(t.get("pnl") or 0) for t in trades if str(t.get("created_at", ""))[:10] == today)
+        pnl_today = sum(_trade_pnl_usd(t) for t in trades if _trade_date_iso(t) == today)
         cap = _get_capital() or 1
         pnl_pct = (pnl_today / cap * 100) if cap > 0 else 0
-        wins = sum(1 for t in trades if float(t.get("pnl") or 0) > 0)
-        total_closed = sum(1 for t in trades if t.get("status") in ("FILLED", "CLOSED"))
+        wins = sum(1 for t in trades if _trade_pnl_usd(t) > 0)
+        total_closed = sum(1 for t in trades if t.get("status") in ("FILLED", "CLOSED")) or len(trades)
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
+        n_pos = sum(1 for p in positions if float(p.get("size", 0) or 0) > 0)
         pnl_sign = "+" if pnl_today >= 0 else ""
         pnl_icon = "▲" if pnl_today >= 0 else "▼"
 
@@ -668,7 +724,7 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
             f"💵 Balance    <b>${balance:,.2f}</b> USDC\n"
             f"{pnl_arrow} P&amp;L        <b>{pnl_icon}{pnl_sign}${abs(pnl_today):.2f}</b> ({pnl_sign}{pnl_pct:.1f}%)\n"
             f"🎯 Win Rate   <b>{wins_str} ({win_rate:.0f}%)</b>\n"
-            f"📊 Positions  <b>{len(positions)} ouvertes</b>\n"
+            f"📊 Positions  <b>{n_pos} ouvertes</b>\n"
             f"{L}{live_section}{paper_section}{compound_section}"
         )
     except Exception as e:
