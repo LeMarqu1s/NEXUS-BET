@@ -613,6 +613,136 @@ def _send_telegram_welcome(telegram_chat_id: str, plan: str) -> None:
         pass
 
 
+def _get_public_stats() -> dict:
+    """Collecte les stats publiques depuis paper_trades.json et paperclip_pending_signals.json."""
+    stats = {
+        "win_rate_30d": 0, "total_pnl": 0.0, "total_trades": 0,
+        "best_trade": None, "active_signals": 0, "last_updated": "—",
+    }
+    try:
+        p = Path(DATA_ROOT) / "logs" / "paper_trades.json"
+        if p.exists():
+            from datetime import datetime, timezone, timedelta
+            data = json.loads(p.read_text(encoding="utf-8"))
+            trades = data.get("trades", [])
+            cutoff = time.time() - 30 * 86400
+            recent = [t for t in trades if float(t.get("closed_at") or 0) >= cutoff and t.get("status") == "CLOSED"]
+            wins = sum(1 for t in recent if float(t.get("pnl_usd") or 0) > 0)
+            stats["total_pnl"]    = round(sum(float(t.get("pnl_usd") or 0) for t in recent), 2)
+            stats["total_trades"] = len(recent)
+            stats["win_rate_30d"] = round(wins / len(recent) * 100) if recent else 0
+            best = max(recent, key=lambda t: float(t.get("pnl_usd") or 0), default=None)
+            if best:
+                stats["best_trade"] = {
+                    "question": (best.get("question") or "?")[:60],
+                    "pnl": round(float(best.get("pnl_usd") or 0), 2),
+                    "pnl_pct": round(float(best.get("pnl_pct") or 0), 1),
+                }
+            stats["last_updated"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    except Exception:
+        pass
+    try:
+        sig_file = Path(DATA_ROOT) / "paperclip_pending_signals.json"
+        if sig_file.exists():
+            d = json.loads(sig_file.read_text(encoding="utf-8"))
+            stats["active_signals"] = len(d.get("signals", []))
+    except Exception:
+        pass
+    return stats
+
+
+def _get_results_html() -> str:
+    """Page publique de résultats NEXUS BET — proof of concept pour clients."""
+    stats = _get_public_stats()
+    wr   = stats["win_rate_30d"]
+    pnl  = stats["total_pnl"]
+    n    = stats["total_trades"]
+    best = stats["best_trade"]
+    sigs = stats["active_signals"]
+    upd  = stats["last_updated"]
+
+    pnl_color = "#00c853" if pnl >= 0 else "#ff1744"
+    best_html = ""
+    if best:
+        best_html = f"""
+        <div class="card">
+          <div class="label">🏆 MEILLEUR TRADE (30 jours)</div>
+          <div class="value">{best['question']}</div>
+          <div class="sub" style="color:#00c853">+${best['pnl']:.2f} (+{best['pnl_pct']:.1f}%)</div>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>NEXUS BET — Résultats Live</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', monospace; }}
+    .hero {{ background: linear-gradient(135deg, #1a1a2e 0%, #0d0d1a 100%);
+             padding: 48px 24px; text-align: center; border-bottom: 1px solid #2a2a3e; }}
+    .hero h1 {{ font-size: 2.4rem; color: #ffd700; letter-spacing: 2px; }}
+    .hero p {{ color: #888; margin-top: 8px; font-size: 0.95rem; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+             gap: 16px; max-width: 900px; margin: 40px auto; padding: 0 24px; }}
+    .card {{ background: #111; border: 1px solid #222; border-radius: 12px; padding: 24px; }}
+    .label {{ font-size: 0.75rem; color: #666; letter-spacing: 1px; margin-bottom: 8px; }}
+    .value {{ font-size: 2rem; font-weight: bold; color: #ffd700; }}
+    .sub   {{ font-size: 0.85rem; color: #888; margin-top: 4px; }}
+    .cta   {{ text-align: center; margin: 40px auto 60px; }}
+    .btn   {{ display: inline-block; background: #ffd700; color: #000;
+              font-weight: bold; font-size: 1.1rem; padding: 16px 40px;
+              border-radius: 50px; text-decoration: none; letter-spacing: 1px;
+              transition: transform 0.2s; }}
+    .btn:hover {{ transform: scale(1.04); }}
+    .footer {{ text-align: center; color: #333; font-size: 0.75rem; padding: 24px; }}
+    .badge {{ display: inline-block; background: #00c853; color: #000;
+              font-size: 0.65rem; padding: 2px 8px; border-radius: 4px;
+              font-weight: bold; letter-spacing: 1px; margin-left: 8px; }}
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>⚡ NEXUS BET</h1>
+    <p>Bot de trading automatique sur Polymarket — résultats en temps réel</p>
+    <span class="badge">LIVE</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">🎯 WIN RATE (30 JOURS)</div>
+      <div class="value">{wr}%</div>
+      <div class="sub">{n} trades analysés</div>
+    </div>
+    <div class="card">
+      <div class="label">💰 P&L TOTAL (30 JOURS)</div>
+      <div class="value" style="color:{pnl_color}">{'+' if pnl >= 0 else ''}${pnl:.2f}</div>
+      <div class="sub">simulation capital $50</div>
+    </div>
+    <div class="card">
+      <div class="label">⚡ SIGNAUX ACTIFS</div>
+      <div class="value">{sigs}</div>
+      <div class="sub">marchés analysés en continu</div>
+    </div>
+    {best_html}
+  </div>
+
+  <div class="cta">
+    <p style="color:#888; margin-bottom:24px; font-size:0.9rem">
+      Rejoins NEXUS BET et accède aux signaux en temps réel sur Telegram
+    </p>
+    <a href="https://t.me/nexusbet_bot" class="btn">🚀 Rejoindre pour €97/mois</a>
+  </div>
+
+  <div class="footer">
+    Mis à jour: {upd} &nbsp;·&nbsp; Trading sur marchés de prédiction Polymarket &nbsp;·&nbsp;
+    Résultats en paper trading (simulation)
+  </div>
+</body>
+</html>"""
+
+
 def _get_dashboard_html():
     p = Path(__file__).resolve().parent / "dashboard.html"
     if p.exists():
@@ -646,6 +776,22 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(_get_dashboard_html().encode("utf-8"))
             return
+        # ── PUBLIC RESULTS PAGE (no auth) ─────────────────────────────────────
+        if path in ("/results", "/results.html"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.end_headers()
+            self.wfile.write(_get_results_html().encode("utf-8"))
+            return
+
+        if path == "/api/public-stats":
+            # JSON endpoint for public stats (CORS-open, no auth)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            stats = _get_public_stats()
+            self._json_response(stats)
+            return
+
         if path == "/health":
             try:
                 uptime = 0.0
