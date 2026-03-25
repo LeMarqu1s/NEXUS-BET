@@ -577,9 +577,10 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
                 avg = float(p.get("avgPrice", 0) or p.get("avg_price", 0) or 0)
                 cur = float(p.get("curPrice", 0) or p.get("currentPrice", 0) or avg)
                 cat_e = _cat_emoji(str(raw_q))
+                status_lbl = "⏳ EN SETTLEMENT" if cur < 0.05 else "🟢"
                 open_lines.append(
                     f"{cat_e} {q}\n"
-                    f"  🟢 {out}  sz {sz:.2f} @{avg:.3f}→{cur:.3f}"
+                    f"  {status_lbl} {out}  sz {sz:.2f} @{avg:.3f}→{cur:.3f}"
                 )
             closed_lines: list[str] = []
             for t in sell_trades[:8]:
