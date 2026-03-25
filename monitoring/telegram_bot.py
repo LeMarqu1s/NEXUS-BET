@@ -446,18 +446,22 @@ async def _fetch_paper_prices(market_ids: list[str]) -> dict[str, float]:
 
 
 async def _fetch_live_positions(addr: str) -> list[dict]:
-    """Positions depuis data-api.polymarket.com."""
+    """Positions depuis data-api.polymarket.com — log raw response."""
     try:
         async with httpx.AsyncClient(timeout=8.0) as c:
             r = await c.get(
                 "https://data-api.polymarket.com/positions",
                 params={"user": addr, "sizeThreshold": "0.01"},
             )
+            log.info("Wallet address used: %s | positions API status: %d", addr, r.status_code)
             if r.status_code == 200:
                 data = r.json()
-                return data if isinstance(data, list) else []
+                positions = data if isinstance(data, list) else []
+                # Log raw response for debugging (first 3 positions)
+                log.info("Raw positions from API: %s", str(positions[:3])[:800])
+                return positions
     except Exception as e:
-        log.debug("_fetch_live_positions: %s", e)
+        log.warning("_fetch_live_positions(%s): %s", addr, e)
     return []
 
 
@@ -480,9 +484,14 @@ async def _fetch_clob_price(token_id: str) -> float | None:
 
 
 async def _fetch_gamma_question(condition_id: str) -> str:
-    """Question réelle du marché depuis Gamma API (conditionId)."""
+    """
+    Question réelle du marché depuis Gamma API.
+    Vérifie que le conditionId retourné correspond exactement — évite de
+    prendre le premier résultat quand Gamma ne filtre pas correctement.
+    """
     if not condition_id:
         return ""
+    cid_norm = condition_id.lower().strip()
     try:
         async with httpx.AsyncClient(timeout=4.0) as c:
             r = await c.get(
@@ -491,11 +500,23 @@ async def _fetch_gamma_question(condition_id: str) -> str:
             )
             if r.status_code == 200:
                 data = r.json()
-                m = data[0] if isinstance(data, list) and data else {}
-                q = (m.get("question") or m.get("title") or "").strip()
-                return q[:60] if q else ""
-    except Exception:
-        pass
+                if not isinstance(data, list) or not data:
+                    return ""
+                # BUG 1 FIX: vérifier que le résultat correspond bien au conditionId demandé
+                for m in data:
+                    if (m.get("conditionId") or "").lower().strip() == cid_norm:
+                        q = (m.get("question") or m.get("title") or "").strip()
+                        if q:
+                            log.info("Position conditionId: %s → market: %s", condition_id[:16], q[:50])
+                            return q[:60]
+                # Aucun match exact → ne pas utiliser un résultat non correspondant
+                log.warning(
+                    "_fetch_gamma_question: conditionId %s not found in %d results (first: conditionId=%s)",
+                    condition_id[:16], len(data),
+                    (data[0].get("conditionId") or "?")[:16],
+                )
+    except Exception as e:
+        log.debug("_fetch_gamma_question(%s): %s", condition_id[:16], e)
     return ""
 
 
@@ -506,19 +527,29 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         balance = await _get_balance(relayer_addr)
 
         live_section = ""
+        _live_pnl: dict = {}   # captures live Polymarket P&L for header sync (BUG 3 fix)
         if relayer_addr:
             try:
                 live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=8.0)
                 if live_pos:
                     # Enrichit chaque position en parallèle : question Gamma + prix CLOB
                     async def _enrich(p: dict) -> dict:
-                        cid = p.get("conditionId") or p.get("condition_id") or ""
-                        token_id = p.get("asset") or p.get("tokenId") or p.get("token_id") or ""
+                        cid = (p.get("conditionId") or p.get("condition_id") or "").strip()
+                        token_id = (p.get("asset") or p.get("tokenId") or p.get("token_id") or "").strip()
                         is_resolved = bool(p.get("resolved") or p.get("redeemable"))
-                        # Nom réel du marché
-                        question = await _fetch_gamma_question(cid)
+
+                        # BUG 1 FIX: utiliser le titre de la réponse positions en priorité
+                        question = (p.get("title") or p.get("question") or "").strip()
+                        if not question and cid:
+                            # Gamma API lookup uniquement si pas de titre direct
+                            question = await _fetch_gamma_question(cid)
                         if not question:
-                            question = (p.get("title") or p.get("market") or cid)[:55]
+                            # Fallback: slug ou market address
+                            question = (p.get("slug") or p.get("market") or cid[:24])[:55]
+                        log.info("Position conditionId: %s | tokenId: %s → market: %s",
+                                 cid[:16] if cid else "N/A",
+                                 token_id[:16] if token_id else "N/A",
+                                 question[:50])
                         # Prix courant
                         if is_resolved:
                             current_price = float(p.get("currentPrice") or p.get("price") or 0)
@@ -588,6 +619,12 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
                     n_open = len(open_lines)
                     n_closed = len(closed_lines)
 
+                    # BUG 3 FIX: capture live P&L so header uses same data as positions section
+                    _live_pnl["total"]   = total_pnl
+                    _live_pnl["wins"]    = wins
+                    _live_pnl["closed"]  = total_resolved
+                    _live_pnl["balance"] = balance
+
                     live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
                     live_section += f"P&amp;L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
                     if open_lines:
@@ -605,12 +642,22 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         trades = trade_logger.get_recent_trades(limit=100)
 
         today = datetime.now(timezone.utc).date().isoformat()
-        pnl_today = sum(float(t.get("pnl") or 0) for t in trades if str(t.get("created_at", ""))[:10] == today)
+        pnl_today_paper = sum(float(t.get("pnl") or 0) for t in trades if str(t.get("created_at", ""))[:10] == today)
         cap = _get_capital() or 1
-        pnl_pct = (pnl_today / cap * 100) if cap > 0 else 0
         wins = sum(1 for t in trades if float(t.get("pnl") or 0) > 0)
         total_closed = sum(1 for t in trades if t.get("status") in ("FILLED", "CLOSED"))
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
+
+        # BUG 3 FIX: header uses live Polymarket P&L when available, not paper trade_logger
+        if _live_pnl:
+            pnl_today    = _live_pnl["total"]
+            wins         = _live_pnl["wins"]
+            total_closed = _live_pnl["closed"]
+        else:
+            pnl_today = pnl_today_paper
+
+        win_rate = (wins / total_closed * 100) if total_closed > 0 else 0
+        pnl_pct  = (pnl_today / cap * 100) if cap > 0 else 0
         pnl_sign = "+" if pnl_today >= 0 else ""
         pnl_icon = "▲" if pnl_today >= 0 else "▼"
 
