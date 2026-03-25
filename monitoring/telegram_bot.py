@@ -542,100 +542,6 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         balance = await _get_balance(relayer_addr)
 
         live_section = ""
-        if relayer_addr:
-            try:
-                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=8.0)
-                if live_pos:
-                    # Enrichit chaque position en parallèle : question Gamma + prix CLOB
-                    async def _enrich(p: dict) -> dict:
-                        cid = p.get("conditionId") or p.get("condition_id") or ""
-                        token_id = p.get("asset") or p.get("tokenId") or p.get("token_id") or ""
-                        is_resolved = bool(p.get("resolved") or p.get("redeemable"))
-                        # Nom réel du marché
-                        question = await _fetch_gamma_question(cid)
-                        if not question:
-                            question = (p.get("title") or p.get("market") or cid)[:55]
-                        # Prix courant
-                        if is_resolved:
-                            current_price = float(p.get("currentPrice") or p.get("price") or 0)
-                        else:
-                            clob_price = await _fetch_clob_price(token_id)
-                            current_price = clob_price if clob_price is not None else float(
-                                p.get("currentPrice") or p.get("price") or
-                                p.get("avgPrice") or 0
-                            )
-                        return {**p, "_question": question, "_current": current_price,
-                                "_resolved": is_resolved}
-
-                    enriched = await asyncio.gather(
-                        *[_enrich(p) for p in live_pos[:8]], return_exceptions=True
-                    )
-
-                    open_lines, closed_lines = [], []
-                    open_pnl, closed_pnl = 0.0, 0.0
-                    wins, total_resolved = 0, 0
-
-                    for ep in enriched:
-                        if isinstance(ep, Exception):
-                            continue
-                        q = html.escape(ep["_question"][:38])
-                        size  = float(ep.get("size") or 0)          # shares
-                        entry = float(ep.get("avgPrice") or ep.get("avg_price") or 0)
-                        cur   = ep["_current"]
-                        outcome_raw = (ep.get("outcome") or "").strip().upper()
-
-                        if ep["_resolved"]:
-                            # P&L résolu : formule exacte selon outcome
-                            if outcome_raw in ("YES", "1", "TRUE"):
-                                pnl = size * (1.0 - entry)
-                            else:
-                                pnl = -(size * entry)
-                            pnl_pct = (pnl / (size * entry) * 100) if entry > 0 and size > 0 else 0
-                            closed_pnl += pnl
-                            total_resolved += 1
-                            if pnl > 0:
-                                wins += 1
-                            icon = "▲" if pnl >= 0 else "▼"
-                            sign = "+" if pnl >= 0 else ""
-                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
-                            cat_e = _cat_emoji(ep["_question"])
-                            closed_lines.append(
-                                f"{cat_e} {q}\n"
-                                f"  {pnl_dot} {outcome_raw} RÉSOLU  {sign}${abs(pnl):.2f}"
-                            )
-                        else:
-                            # P&L non-résolu : prix CLOB vs entry
-                            pnl = size * (cur - entry) if entry > 0 else 0
-                            pnl_pct = ((cur - entry) / entry * 100) if entry > 0 else 0
-                            open_pnl += pnl
-                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
-                            sign = "+" if pnl_pct >= 0 else ""
-                            cat_e = _cat_emoji(ep["_question"])
-                            open_lines.append(
-                                f"{cat_e} {q}\n"
-                                f"  {pnl_dot} @{entry:.3f}→{cur:.3f}  {sign}{pnl_pct:.1f}%  ${abs(pnl):.2f}"
-                            )
-
-                    wr_str = (f"  WIN RATE  {wins}/{total_resolved} ({wins*100//total_resolved}%)\n"
-                              if total_resolved > 0 else "")
-                    total_pnl = open_pnl + closed_pnl
-                    total_icon = "▲" if total_pnl >= 0 else "▼"
-                    total_sign = "+" if total_pnl >= 0 else ""
-                    n_open = len(open_lines)
-                    n_closed = len(closed_lines)
-
-                    live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
-                    live_section += f"P&L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
-                    if open_lines:
-                        live_section += f"\n── OUVERTES ({n_open}) ──\n"
-                        live_section += "\n".join(open_lines)
-                    if closed_lines:
-                        live_section += f"\n── RÉSOLUES ({n_closed}) ──\n"
-                        live_section += "\n".join(closed_lines)
-                    live_section += "</code>"
-            except Exception as lpe:
-                log.debug("live positions error: %s", lpe)
-
         api_wallet = (os.getenv("RELAYER_API_KEY_ADDRESS") or "").strip()
         positions: list = []
         trades: list = []
@@ -658,6 +564,48 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
                         trades = raw_t if isinstance(raw_t, list) else []
             except Exception as api_p:
                 log.debug("portfolio Polymarket API: %s", api_p)
+
+        open_positions = [p for p in positions if float(p.get("size", 0) or 0) > 0]
+        sell_trades = [t for t in trades if str(t.get("side", "")).upper() == "SELL"]
+        if api_wallet and (open_positions or sell_trades):
+            open_lines: list[str] = []
+            for p in open_positions[:8]:
+                raw_q = p.get("title") or p.get("eventSlug") or p.get("conditionId") or p.get("condition_id") or "?"
+                q = html.escape(str(raw_q)[:38])
+                out = str(p.get("outcome") or "?")[:12]
+                sz = float(p.get("size", 0) or 0)
+                avg = float(p.get("avgPrice", 0) or p.get("avg_price", 0) or 0)
+                cur = float(p.get("curPrice", 0) or p.get("currentPrice", 0) or avg)
+                cat_e = _cat_emoji(str(raw_q))
+                open_lines.append(
+                    f"{cat_e} {q}\n"
+                    f"  🟢 {out}  sz {sz:.2f} @{avg:.3f}→{cur:.3f}"
+                )
+            closed_lines: list[str] = []
+            for t in sell_trades[:8]:
+                raw_q = t.get("slug") or t.get("title") or t.get("conditionId") or "?"
+                slug = html.escape(str(raw_q)[:38])
+                out = str(t.get("outcome") or t.get("side") or "?")[:12]
+                price = float(t.get("price", 0) or 0)
+                sz = float(t.get("size", 0) or 0)
+                closed_lines.append(f"🔴 {slug}\n  SELL {out} @ ${price:.2f} sz {sz:.2f}")
+            total_unreal = sum(
+                float(p.get("cashPnl", 0) or p.get("pnl", 0) or 0) for p in open_positions
+            )
+            total_icon = "▲" if total_unreal >= 0 else "▼"
+            total_sign = "+" if total_unreal >= 0 else ""
+            n_open = len(open_positions)
+            n_closed = len(sell_trades)
+
+            live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
+            live_section += f"P&L TOTAL  {total_icon}{total_sign}${abs(total_unreal):.2f}\n"
+            if open_lines:
+                live_section += f"\n── OUVERTES ({n_open}) ──\n"
+                live_section += "\n".join(open_lines)
+            if closed_lines:
+                live_section += f"\n── RÉSOLUES ({n_closed}) ──\n"
+                live_section += "\n".join(closed_lines)
+            live_section += "</code>"
 
         today = datetime.now(timezone.utc).date().isoformat()
         pnl_today = sum(_trade_pnl_usd(t) for t in trades if _trade_date_iso(t) == today)
