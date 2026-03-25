@@ -84,19 +84,41 @@ async def push_sniper_alert(signal) -> None:
     target_pct = (signal.target_price / signal.price - 1) * 100
     stop_pct   = (1 - signal.stop_price / signal.price) * 100
     safe_question = html.escape(signal.question[:60])
-    safe_signals  = " · ".join(html.escape(s) for s in signal.signals)
+    n_triggers = len(signal.signals)
+    safe_signals  = " + ".join(html.escape(s) for s in signal.signals)
+    conf_pct = int(signal.confidence * 100)
+    conf_icon = "🔥" if conf_pct >= 80 else "✅" if conf_pct >= 60 else "⚠️"
+    confluence_bar = "█" * n_triggers + "░" * (4 - n_triggers)
+
+    # Category emoji
+    q_lower = signal.question.lower()
+    if any(k in q_lower for k in ("nba", "ncaa", "basketball")):
+        cat_e = "🏀"
+    elif any(k in q_lower for k in ("soccer", "football", "fifa")):
+        cat_e = "⚽"
+    elif any(k in q_lower for k in ("tennis")):
+        cat_e = "🎾"
+    elif any(k in q_lower for k in ("trump", "election", "president")):
+        cat_e = "🇺🇸"
+    elif any(k in q_lower for k in ("btc", "bitcoin", "eth", "crypto")):
+        cat_e = "₿"
+    elif any(k in q_lower for k in ("oil", "crude")):
+        cat_e = "🛢️"
+    else:
+        cat_e = "📊"
 
     L = "━━━━━━━━━━━━━━━"
     message = (
-        f"⚡ <b>SNIPER ALERT</b>\n{L}\n"
+        f"⚡ <b>SNIPER SIGNAL</b> {cat_e}\n{L}\n"
+        f"🎯 Confluence: <b>{n_triggers}/4</b> [{confluence_bar}]\n"
+        f"📊 {safe_signals}\n\n"
         f"<b>{safe_question}</b>\n\n"
         f"<code>"
         f"PRIX    {signal.price:.3f}\n"
         f"TARGET  {signal.target_price:.3f} (+{target_pct:.0f}%)\n"
         f"STOP    {signal.stop_price:.3f} (-{stop_pct:.0f}%)\n"
-        f"CONF    {signal.confidence * 100:.0f}%"
-        f"</code>\n{L}\n"
-        f"🔍 {safe_signals}"
+        f"CONF    {conf_pct}% {conf_icon}"
+        f"</code>\n{L}"
     )
 
     buttons = InlineKeyboardMarkup([[

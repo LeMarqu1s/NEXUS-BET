@@ -260,6 +260,46 @@ def _detect_category(question: str) -> str:
     return "MARKET"
 
 
+def _cat_emoji(question: str) -> str:
+    """Map market question to a relevant category emoji."""
+    q = question.lower()
+    if any(k in q for k in ("nba", "ncaa", "basketball")):
+        return "🏀"
+    if any(k in q for k in ("nfl", "super bowl", "touchdown")):
+        return "🏈"
+    if any(k in q for k in ("soccer", "fifa", "premier league", "champions league", "mls", "la liga", "bundesliga")):
+        return "⚽"
+    if any(k in q for k in ("mlb", "baseball", "world series")):
+        return "⚾"
+    if any(k in q for k in ("nhl", "hockey", "stanley cup")):
+        return "🏒"
+    if any(k in q for k in ("tennis", "wimbledon", "us open", "french open", "australian open", "atp", "wta")):
+        return "🎾"
+    if any(k in q for k in ("ufc", "boxing", "mma", " fight ")):
+        return "🥊"
+    if any(k in q for k in ("golf", "pga", "masters tournament")):
+        return "⛳"
+    if any(k in q for k in ("trump", "biden", "election", "president", "senate", "congress", "republican", "democrat", "harris", "white house")):
+        return "🇺🇸"
+    if any(k in q for k in ("btc", "bitcoin")):
+        return "₿"
+    if any(k in q for k in ("eth", "ethereum")):
+        return "⟠"
+    if any(k in q for k in ("crypto", "sol", "solana", "bnb", "xrp", "doge", "defi", "nft", "blockchain")):
+        return "🪙"
+    if any(k in q for k in ("oil", "crude", "brent", "wti", "petroleum", "opec")):
+        return "🛢️"
+    if any(k in q for k in ("gold", "silver", "commodity")):
+        return "🥇"
+    if any(k in q for k in ("fed", "rate", "inflation", "cpi", "fomc", "gdp", "recession", "macro", "powell")):
+        return "📉"
+    if any(k in q for k in ("ai ", "artificial intelligence", "openai", "gpt", "llm", "chatgpt")):
+        return "🤖"
+    if any(k in q for k in ("war", "ukraine", "russia", "nato", "military", "ceasefire")):
+        return "⚔️"
+    return "📊"
+
+
 async def _get_start_text() -> str:
     sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
     mode = "SIM" if sim else "LIVE"
@@ -319,20 +359,20 @@ async def _get_scan_text() -> str:
         if not signals:
             return (
                 f"<b>📡 MARKET SCANNER</b>\n{L}\n"
-                f"<code>MARCHÉS   {n_assets}\n"
-                f"SIGNAUX   0\n"
-                f"EDGE MIN  {threshold}%\n"
-                f"SCAN      {mins}</code>\n"
+                f"<code>🌐 Marchés    {n_assets}\n"
+                f"🎯 Signaux    0\n"
+                f"📊 Edge min   {threshold}%\n"
+                f"🕐 Scan       {mins}</code>\n"
                 f"{L}\n"
-                f"<i>Aucun signal ≥{threshold}% · prochain scan dans 30s</i>"
+                f"<i>⏳ Aucun signal ≥{threshold}% · prochain scan dans 30s</i>"
             )
 
         lines = [
             f"<b>📡 MARKET SCANNER</b>\n{L}\n"
-            f"<code>MARCHÉS   {n_assets}\n"
-            f"SIGNAUX   {n_signals}\n"
-            f"EDGE MIN  {threshold}%\n"
-            f"SCAN      {mins}</code>\n"
+            f"<code>🌐 Marchés    {n_assets}\n"
+            f"🎯 Signaux    {n_signals}\n"
+            f"📊 Edge min   {threshold}%\n"
+            f"🕐 Scan       {mins}</code>\n"
             f"{L}"
         ]
         from config.settings import settings as _s
@@ -340,7 +380,7 @@ async def _get_scan_text() -> str:
         sim = getattr(_s, "SIMULATION_MODE", True)
         mode_label = "PAPER" if sim else "LIVE"
         kb_rows: list = []
-        for s in signals[:5]:
+        for i, s in enumerate(signals[:5], 1):
             mid = s.get("market_id") or s.get("conditionId") or ""
             q = (s.get("question") or str(mid))[:42]
             side = s.get("recommended_outcome") or s.get("side", "YES")
@@ -349,12 +389,14 @@ async def _get_scan_text() -> str:
             conf = float(s.get("confidence", 0))
             kelly = float(s.get("kelly_fraction") or 0.05)
             size_usd = max(1.0, round(cap * min(kelly, 0.10), 1))
-            tag = "⚡ STRONG BUY" if s.get("signal_strength") == "STRONG_BUY" else "🟢 BUY"
-            cat = _detect_category(q)
+            is_strong = s.get("signal_strength") == "STRONG_BUY"
+            tag_emoji = "⚡" if is_strong else "🟢"
+            cat_e = _cat_emoji(q)
+            conf_icon = "🔥" if conf >= 0.80 else "✅" if conf >= 0.60 else "⚠️"
             lines.append(
-                f"\n{tag} · {cat}\n"
-                f"<b>{q}</b>\n"
-                f"{side} @ ${price:.2f}  EDGE {edge:.1f}%  CONF {_conf_label(conf)}"
+                f"\n{tag_emoji} <b>SIGNAL #{i}</b> {cat_e}\n"
+                f"<b>{html.escape(q)}</b>\n"
+                f"<code>{side} @ ${price:.2f}  EDGE {edge:+.1f}%  {conf_icon} {_conf_label(conf)}</code>"
             )
             if mid:
                 cb_buy = f"buy_{mid[:38]}|{side}"
@@ -519,20 +561,23 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
                                 wins += 1
                             icon = "▲" if pnl >= 0 else "▼"
                             sign = "+" if pnl >= 0 else ""
+                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
+                            cat_e = _cat_emoji(ep["_question"])
                             closed_lines.append(
-                                f"{q}\n"
-                                f"  {outcome_raw} RÉSOLU  {icon}{sign}${abs(pnl):.2f}"
+                                f"{cat_e} {q}\n"
+                                f"  {pnl_dot} {outcome_raw} RÉSOLU  {sign}${abs(pnl):.2f}"
                             )
                         else:
                             # P&L non-résolu : prix CLOB vs entry
                             pnl = size * (cur - entry) if entry > 0 else 0
                             pnl_pct = ((cur - entry) / entry * 100) if entry > 0 else 0
                             open_pnl += pnl
-                            icon = "▲" if pnl_pct >= 0 else "▼"
+                            pnl_dot = "🟢" if pnl >= 0 else "🔴"
                             sign = "+" if pnl_pct >= 0 else ""
+                            cat_e = _cat_emoji(ep["_question"])
                             open_lines.append(
-                                f"{q}\n"
-                                f"  @{entry:.3f}→{cur:.3f}  {icon}{sign}{pnl_pct:.1f}%  ${abs(pnl):.2f}"
+                                f"{cat_e} {q}\n"
+                                f"  {pnl_dot} @{entry:.3f}→{cur:.3f}  {sign}{pnl_pct:.1f}%  ${abs(pnl):.2f}"
                             )
 
                     wr_str = (f"  WIN RATE  {wins}/{total_resolved} ({wins*100//total_resolved}%)\n"
@@ -605,12 +650,14 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         except Exception as pe:
             log.debug("Paper portfolio in portfolio text: %s", pe)
 
+        pnl_arrow = "📈" if pnl_today >= 0 else "📉"
+        wins_str = f"{wins}/{max(total_closed, 1)}"
         return (
-            f"<b>💰 PORTFOLIO</b>\n{L}\n"
-            f"<code>BALANCE   ${balance:,.2f} USDC\n"
-            f"P&L       {pnl_icon}{pnl_sign}${abs(pnl_today):,.2f} ({pnl_sign}{pnl_pct:.1f}%)\n"
-            f"POSITIONS {len(positions)} ouvertes\n"
-            f"WIN RATE  {win_rate:.0f}% ({wins}/{max(total_closed,1)})</code>\n"
+            f"<b>💰 PORTFOLIO LIVE</b>\n{L}\n"
+            f"💵 Balance    <b>${balance:,.2f}</b> USDC\n"
+            f"{pnl_arrow} P&amp;L        <b>{pnl_icon}{pnl_sign}${abs(pnl_today):.2f}</b> ({pnl_sign}{pnl_pct:.1f}%)\n"
+            f"🎯 Win Rate   <b>{wins_str} ({win_rate:.0f}%)</b>\n"
+            f"📊 Positions  <b>{len(positions)} ouvertes</b>\n"
             f"{L}{live_section}{paper_section}"
         )
     except Exception as e:
