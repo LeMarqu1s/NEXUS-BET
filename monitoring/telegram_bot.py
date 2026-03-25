@@ -1168,6 +1168,87 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _safe_reply(update, _scan_fallback(), _scan_keyboard())
 
 
+async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/strategy — Claude analyse ton portfolio et donne des recommandations."""
+    try:
+        tg_id = update.effective_user.id if update.effective_user else None
+        await _safe_reply(update, f"🤖 <b>STRATÈGE CLAUDE</b>\n{L}\n<i>Analyse en cours…</i>", None)
+
+        # Gather context
+        relayer_addr = await _get_user_wallet_address(tg_id)
+        balance = await _get_balance(relayer_addr)
+        live_pos: list[dict] = []
+        if relayer_addr:
+            try:
+                live_pos = await asyncio.wait_for(_fetch_live_positions(relayer_addr), timeout=6.0)
+            except Exception:
+                pass
+
+        # Enrich positions with names
+        async def _enrich_quick(p: dict) -> dict:
+            cid = p.get("conditionId") or ""
+            q = await _fetch_gamma_question(cid) if cid else ""
+            if not q:
+                q = p.get("title") or cid
+            return {**p, "_question": q, "_current": float(p.get("currentPrice") or p.get("avgPrice") or 0)}
+
+        if live_pos:
+            enriched = await asyncio.gather(*[_enrich_quick(p) for p in live_pos[:5]], return_exceptions=True)
+            live_pos = [e for e in enriched if not isinstance(e, Exception)]
+
+        # Recent signals
+        from paperclip_bridge import get_pending_signals
+        signals = get_pending_signals()[:5]
+
+        # Win rate from paper trades
+        win_rate = 0.0
+        try:
+            from monitoring.paper_portfolio import get_paper_summary
+            pp = get_paper_summary()
+            win_rate = float(pp.get("win_rate") or 0)
+        except Exception:
+            pass
+
+        # Risk profile from Supabase
+        risk_profile = "conservative"
+        try:
+            url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+            if tg_id and url and key:
+                async with httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(
+                        f"{url}/rest/v1/users",
+                        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                        params={"telegram_chat_id": f"eq.{tg_id}", "select": "risk_profile", "limit": "1"},
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if rows:
+                            risk_profile = rows[0].get("risk_profile") or "conservative"
+        except Exception:
+            pass
+
+        from api.strategist import get_strategy
+        advice = await asyncio.wait_for(
+            get_strategy(
+                balance=balance,
+                positions=live_pos,
+                recent_signals=signals,
+                win_rate=win_rate,
+                risk_profile=risk_profile,
+            ),
+            timeout=25.0,
+        )
+
+        msg = f"🤖 <b>STRATÈGE CLAUDE</b>\n{L}\n{html.escape(advice)}"
+        await _safe_reply(update, msg, _back_keyboard())
+    except asyncio.TimeoutError:
+        await _safe_reply(update, f"🤖 <b>STRATÈGE</b>\n{L}\n<i>⏱️ Timeout — réessaie</i>", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_strategy: %s", e)
+        await _safe_reply(update, f"🤖 <b>STRATÈGE</b>\n{L}\n<code>ERREUR — {e}</code>", _back_keyboard())
+
+
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await _ack_then_reply(update, _get_agents_text, f"<b>🧠 AI SWARM</b>\n{L}\n<code>CHARGEMENT...</code>", _back_keyboard())
@@ -2688,6 +2769,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("strategy", cmd_strategy))
+    app.add_handler(CommandHandler("selftest", cmd_selftest))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
