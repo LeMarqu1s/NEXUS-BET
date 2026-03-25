@@ -589,7 +589,7 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
                     n_closed = len(closed_lines)
 
                     live_section = f"\n{L}\n<b>📊 POSITIONS LIVE</b>\n<code>"
-                    live_section += f"P&L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
+                    live_section += f"P&amp;L TOTAL  {total_icon}{total_sign}${abs(total_pnl):.2f}\n{wr_str}"
                     if open_lines:
                         live_section += f"\n── OUVERTES ({n_open}) ──\n"
                         live_section += "\n".join(open_lines)
@@ -633,7 +633,7 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
             paper_section = (
                 f"\n{L}\n<b>📄 PAPER SIM — $50</b>\n"
                 f"<code>INVESTI   ${pp_invested:.2f}  LIBRE ${pp_free:.2f}\n"
-                f"P&L       {icon}{sign}${abs(pp_pnl):.2f} ({sign}{pp_pnl_pct:.1f}%)\n"
+                f"P&amp;L       {icon}{sign}${abs(pp_pnl):.2f} ({sign}{pp_pnl_pct:.1f}%)\n"
                 f"WIN RATE  {pp_wr:.0f}%  POSITIONS {len(open_trades)}</code>"
             )
             if open_trades:
@@ -2737,7 +2737,7 @@ async def send_daily_report(bot) -> None:
         f"<code>Signaux détectés : {signals_today}\n"
         f"Positions ouvertes: {open_count}\n"
         f"Investi (paper)   : ${invested:.2f}\n"
-        f"P&L total         : {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
+        f"P&amp;L total         : {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
         f"Win rate          : {wr:.0f}%</code>\n"
         f"{L}\n<i>NEXUS BET · Rapport automatique 21h00 UTC</i>"
     )
