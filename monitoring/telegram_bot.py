@@ -183,8 +183,41 @@ def _get_market_count() -> int:
     return 0
 
 
-async def _get_balance() -> float:
-    relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS")
+async def _get_user_wallet_address(telegram_id: int | None) -> str:
+    """Retourne l'adresse Polygon de l'utilisateur : Supabase d'abord, puis RELAYER_API_KEY_ADDRESS."""
+    if telegram_id:
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        if url and key:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as c:
+                    r = await c.get(
+                        f"{url}/rest/v1/users",
+                        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                        params={
+                            "telegram_chat_id": f"eq.{telegram_id}",
+                            "select": "wallet_address",
+                            "limit": "1",
+                        },
+                    )
+                    if r.status_code == 200:
+                        rows = r.json()
+                        if isinstance(rows, list) and rows:
+                            addr = (rows[0].get("wallet_address") or "").strip()
+                            if POLYGON_ADDRESS_PATTERN.match(addr):
+                                log.info("Fetching portfolio for %s...", addr[:8])
+                                return addr
+            except Exception as e:
+                log.debug("_get_user_wallet_address(%s): %s", telegram_id, e)
+    # Fallback env
+    fallback = os.getenv("RELAYER_API_KEY_ADDRESS", "").strip()
+    if fallback:
+        log.info("Fetching portfolio for %s... (env fallback)", fallback[:8])
+    return fallback
+
+
+async def _get_balance(addr: str | None = None) -> float:
+    relayer_addr = addr or os.getenv("RELAYER_API_KEY_ADDRESS")
     if not relayer_addr:
         return _get_capital()
     try:
@@ -386,11 +419,11 @@ async def _fetch_live_positions(addr: str) -> list[dict]:
     return []
 
 
-async def _get_portfolio_text() -> str:
+async def _get_portfolio_text(telegram_id: int | None = None) -> str:
     try:
-        # Balance + live positions depuis Polymarket API
-        relayer_addr = os.getenv("RELAYER_API_KEY_ADDRESS", "").strip()
-        balance = await _get_balance()
+        # Balance + live positions depuis Polymarket API (adresse per-user si dispo)
+        relayer_addr = await _get_user_wallet_address(telegram_id)
+        balance = await _get_balance(relayer_addr)
 
         live_section = ""
         if relayer_addr:
@@ -933,7 +966,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await _ack_then_reply(update, _get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", _portfolio_keyboard())
+        tg_id = update.effective_user.id if update.effective_user else None
+        await _ack_then_reply(update, lambda: _get_portfolio_text(tg_id), f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", _portfolio_keyboard())
     except Exception as e:
         log.exception("cmd_portfolio: %s", e)
         await _safe_reply(update, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>ERREUR — réessayez</code>", _portfolio_keyboard())
@@ -1691,7 +1725,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "btn_portfolio":
         await edit(f"<b>💰 LOADING...</b>\n{L}", None)
-        text = await _safe_get(_get_portfolio_text, f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
+        tg_id = q.from_user.id if q.from_user else None
+        text = await _safe_get(lambda: _get_portfolio_text(tg_id), f"<b>💰 PORTFOLIO</b>\n{L}\n<code>CHARGEMENT...</code>", None)()
         await edit(text, _portfolio_keyboard())
         return
 
