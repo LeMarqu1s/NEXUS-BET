@@ -138,7 +138,7 @@ async def run_sniper():
 
 
 async def run_auto_optimizer():
-    """Boucle optimiseur — ajuste les seuils sniper à 03:00 UTC."""
+    """Boucle optimiseur — backteste et ajuste les seuils toutes les 6h."""
     from core.auto_optimizer import run_auto_optimizer as _run
     while True:
         try:
@@ -147,6 +147,19 @@ async def run_auto_optimizer():
             raise
         except Exception as e:
             log.error("Auto-optimizer crashed: %s, restart in 60s", e)
+            await asyncio.sleep(60)
+
+
+async def run_self_tester():
+    """Boucle self-tester — simulation horaire."""
+    from core.self_tester import run_self_tester_loop
+    while True:
+        try:
+            await run_self_tester_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Self-tester crashed: %s, restart in 60s", e)
             await asyncio.sleep(60)
 
 
@@ -173,16 +186,18 @@ async def main():
     except NotImplementedError:
         pass  # Windows fallback
 
-    scanner_task   = asyncio.create_task(run_scanner(), name="scanner")
-    telegram_task  = asyncio.create_task(run_telegram(), name="telegram")
-    monitor_task   = asyncio.create_task(run_position_monitor(), name="position_monitor")
-    report_task    = asyncio.create_task(run_daily_report(), name="daily_report")
-    sniper_task    = asyncio.create_task(run_sniper(), name="sniper")
-    optimizer_task = asyncio.create_task(run_auto_optimizer(), name="auto_optimizer")
-    stop_task      = asyncio.create_task(stop_event.wait(), name="stop")
+    scanner_task    = asyncio.create_task(run_scanner(), name="scanner")
+    telegram_task   = asyncio.create_task(run_telegram(), name="telegram")
+    monitor_task    = asyncio.create_task(run_position_monitor(), name="position_monitor")
+    report_task     = asyncio.create_task(run_daily_report(), name="daily_report")
+    sniper_task     = asyncio.create_task(run_sniper(), name="sniper")
+    optimizer_task  = asyncio.create_task(run_auto_optimizer(), name="auto_optimizer")
+    self_test_task  = asyncio.create_task(run_self_tester(), name="self_tester")
+    stop_task       = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
-        [scanner_task, telegram_task, monitor_task, report_task, sniper_task, optimizer_task, stop_task],
+        [scanner_task, telegram_task, monitor_task, report_task, sniper_task,
+         optimizer_task, self_test_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 

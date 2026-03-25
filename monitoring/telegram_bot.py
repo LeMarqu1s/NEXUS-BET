@@ -650,6 +650,17 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
         except Exception as pe:
             log.debug("Paper portfolio in portfolio text: %s", pe)
 
+        # Compound tracker section
+        compound_section = ""
+        try:
+            from core.compounder import get_compound_section
+            compound_section = get_compound_section(
+                win_rate=win_rate if win_rate > 0 else 60.0,
+                avg_return=15.0,
+            )
+        except Exception as ce:
+            log.debug("compounder section: %s", ce)
+
         pnl_arrow = "📈" if pnl_today >= 0 else "📉"
         wins_str = f"{wins}/{max(total_closed, 1)}"
         return (
@@ -658,7 +669,7 @@ async def _get_portfolio_text(telegram_id: int | None = None) -> str:
             f"{pnl_arrow} P&amp;L        <b>{pnl_icon}{pnl_sign}${abs(pnl_today):.2f}</b> ({pnl_sign}{pnl_pct:.1f}%)\n"
             f"🎯 Win Rate   <b>{wins_str} ({win_rate:.0f}%)</b>\n"
             f"📊 Positions  <b>{len(positions)} ouvertes</b>\n"
-            f"{L}{live_section}{paper_section}"
+            f"{L}{live_section}{paper_section}{compound_section}"
         )
     except Exception as e:
         log.exception("Portfolio failed: %s", e)
@@ -1247,6 +1258,21 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         log.exception("cmd_strategy: %s", e)
         await _safe_reply(update, f"🤖 <b>STRATÈGE</b>\n{L}\n<code>ERREUR — {e}</code>", _back_keyboard())
+
+
+async def cmd_selftest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/selftest — simule 10 signaux, calcule P&L attendu vs réel."""
+    try:
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<i>⏳ Test sur 10 marchés en cours…</i>", None)
+        from core.self_tester import run_selftest, selftest_to_telegram
+        result = await asyncio.wait_for(run_selftest(), timeout=30.0)
+        msg = selftest_to_telegram(result)
+        await _safe_reply(update, msg, _back_keyboard())
+    except asyncio.TimeoutError:
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<i>⏱️ Timeout (30s) — réessaie</i>", _back_keyboard())
+    except Exception as e:
+        log.exception("cmd_selftest: %s", e)
+        await _safe_reply(update, f"🧪 <b>SELF-TEST</b>\n{L}\n<code>ERREUR — {e}</code>", _back_keyboard())
 
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
