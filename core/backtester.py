@@ -161,6 +161,19 @@ async def _find_token_id(market_slug: str) -> tuple[str, str, str]:
                         tokens = json.loads(tokens)
                     yes_tok = tokens[0] if tokens else {}
                     tok_id = (yes_tok.get("token_id") if isinstance(yes_tok, dict) else str(yes_tok)) or ""
+                    # Si token_id vide, refetch le marché complet via conditionId
+                    if not tok_id and mid:
+                        import json
+                        r3 = await c.get(f"{GAMMA_URL}/markets/{mid}")
+                        if r3.status_code == 200:
+                            m2 = r3.json()
+                            m2 = m2[0] if isinstance(m2, list) and m2 else m2
+                            if isinstance(m2, dict):
+                                tokens2 = m2.get("clobTokenIds") or m2.get("tokens") or []
+                                if isinstance(tokens2, str):
+                                    tokens2 = json.loads(tokens2)
+                                yt2 = tokens2[0] if tokens2 else {}
+                                tok_id = (yt2.get("token_id") if isinstance(yt2, dict) else str(yt2)) or ""
                     return mid, tok_id, q
     except Exception as e:
         log.warning("_find_token_id(%s): %s", market_slug, e)
