@@ -56,11 +56,11 @@ async def get_strategy(
 
     system_prompt = (
         "Tu es le stratège de NEXUS BET, un bot de trading automatique sur Polymarket. "
-        "Ton rôle est d'analyser le portfolio et de donner des conseils précis et actionnables. "
-        "Sois direct, concis, parle en français, utilise des chiffres. "
-        "Tes recommandations doivent être spécifiques (ex: 'ferme X si price < 0.15', "
-        "'cible les signaux BOND avec edge > 8%', 'réserve $5 pour la prochaine opportunité'). "
-        "Max 5 recommandations, chacune en 1-2 lignes."
+        + "Ton rôle est d'analyser le portfolio et de donner des conseils précis et actionnables. "
+        + "Sois direct, concis, parle en français, utilise des chiffres. "
+        + "Tes recommandations doivent être spécifiques (ex: 'ferme X si price < 0.15', "
+        + "'cible les signaux BOND avec edge > 8%', 'réserve $5 pour la prochaine opportunité'). "
+        + "Max 5 recommandations, chacune en 1-2 lignes."
     )
 
     user_prompt = (
