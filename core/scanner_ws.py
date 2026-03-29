@@ -322,11 +322,16 @@ class WebSocketScanner:
                 signals_found: list[EdgeSignal] = []
                 trace_count = 0
                 logger.info("Processing %d markets through edge engine", n_markets)
+
+                # Batch fetch all order books in one call instead of N serial calls
+                all_token_ids = [token_id for token_id, _ in items]
+                books_batch = await self.polymarket.get_batch_books(all_token_ids)
+
                 for token_id, (market, side) in items:
                     if not self._running:
                         break
                     try:
-                        ob = await self.polymarket.get_order_book(token_id)
+                        ob = books_batch.get(token_id) or {}
                         price = _extract_market_price(market, side)
                         if price is None:
                             price = _mid_from_book(

@@ -35,8 +35,19 @@ class MarketScanner:
             10,
         )
 
+    @staticmethod
+    def _mid_from_book(ob: dict) -> float | None:
+        """Compute midpoint from an order book dict."""
+        bids = ob.get("bids") or []
+        asks = ob.get("asks") or []
+        best_bid = float(bids[0]["price"]) if bids else None
+        best_ask = float(asks[0]["price"]) if asks else None
+        if best_bid is not None and best_ask is not None:
+            return (best_bid + best_ask) / 2
+        return best_bid or best_ask
+
     async def _scan_once(self) -> list[EdgeSignal]:
-        """Run a single scan pass over markets."""
+        """Run a single scan pass over markets using batch book fetch."""
         signals: list[EdgeSignal] = []
         try:
             markets = await self.polymarket.get_markets(limit=50)
@@ -44,39 +55,46 @@ class MarketScanner:
             logger.warning("Scanner: failed to fetch markets: %s", e)
             return signals
 
+        # Collect all token IDs in one pass
+        market_tokens: list[tuple[dict, str, str, str, str]] = []  # (market, yes_id, no_id, ...)
+        all_token_ids: list[str] = []
         for market in markets:
             try:
                 tokens = market.get("clobTokenIds") or market.get("tokens") or []
-                if isinstance(tokens, list) and len(tokens) >= 2:
-                    # Binary market: YES and NO tokens
-                    yes_token = tokens[0] if isinstance(tokens[0], dict) else {"token_id": tokens[0]}
-                    no_token = tokens[1] if isinstance(tokens[1], dict) else {"token_id": tokens[1]}
-                    yes_id = yes_token.get("token_id") if isinstance(yes_token, dict) else str(yes_token)
-                    no_id = no_token.get("token_id") if isinstance(no_token, dict) else str(no_token)
-                    if not yes_id or not no_id:
-                        continue
-                else:
+                if not isinstance(tokens, list) or len(tokens) < 2:
                     continue
+                yes_tok = tokens[0] if isinstance(tokens[0], dict) else {"token_id": tokens[0]}
+                no_tok = tokens[1] if isinstance(tokens[1], dict) else {"token_id": tokens[1]}
+                yes_id = (yes_tok.get("token_id") if isinstance(yes_tok, dict) else str(yes_tok)) or ""
+                no_id = (no_tok.get("token_id") if isinstance(no_tok, dict) else str(no_tok)) or ""
+                if yes_id and no_id:
+                    market_tokens.append((market, yes_id, no_id))
+                    all_token_ids.extend([yes_id, no_id])
+            except Exception:
+                continue
 
-                ob_yes = await self.polymarket.get_order_book(yes_id)
-                ob_no = await self.polymarket.get_order_book(no_id)
-                price_yes = await self.polymarket.get_midpoint(yes_id) or await self.polymarket.get_price(yes_id)
-                price_no = await self.polymarket.get_midpoint(no_id) or await self.polymarket.get_price(no_id)
+        if not all_token_ids:
+            return signals
+
+        # 1 batch call for all order books instead of N serial calls
+        books = await self.polymarket.get_batch_books(all_token_ids)
+
+        for market, yes_id, no_id in market_tokens:
+            try:
+                ob_yes = books.get(yes_id) or {}
+                ob_no = books.get(no_id) or {}
+                price_yes = self._mid_from_book(ob_yes)
+                price_no = self._mid_from_book(ob_no)
 
                 if price_yes is not None:
-                    sig = self.edge_engine.compute_edge(
-                        market, yes_id, "YES", price_yes, ob_yes
-                    )
+                    sig = self.edge_engine.compute_edge(market, yes_id, "YES", price_yes, ob_yes)
                     if sig:
                         signals.append(sig)
 
                 if price_no is not None:
-                    sig = self.edge_engine.compute_edge(
-                        market, no_id, "NO", price_no, ob_no
-                    )
+                    sig = self.edge_engine.compute_edge(market, no_id, "NO", price_no, ob_no)
                     if sig:
                         signals.append(sig)
-
             except Exception as e:
                 logger.debug("Scanner: error processing market %s: %s", market.get("id"), e)
 

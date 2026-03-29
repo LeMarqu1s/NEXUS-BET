@@ -1418,6 +1418,23 @@ async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _safe_reply(update, f"🎯 <b>MARKET</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
 
 
+async def cmd_emergency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🚨 /emergency — Cancel ALL open orders immediately."""
+    await _safe_reply(update, "🚨 <b>EMERGENCY STOP</b>\nAnnulation de tous les ordres...")
+    try:
+        from data.polymarket_client import PolymarketClient
+        loop = asyncio.get_event_loop()
+        client = PolymarketClient()
+        ok = await loop.run_in_executor(None, client.cancel_all_orders)
+        if ok:
+            await _safe_reply(update, "✅ <b>Tous les ordres annulés.</b>")
+        else:
+            await _safe_reply(update, "⚠️ <b>Échec annulation</b> — vérifier les logs.")
+    except Exception as e:
+        log.error("cmd_emergency: %s", e)
+        await _safe_reply(update, f"❌ <b>Erreur :</b> <code>{e}</code>")
+
+
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
     async def _get():
@@ -2844,6 +2861,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
     app.add_handler(CommandHandler("selftest", cmd_selftest))
+    app.add_handler(CommandHandler("emergency", cmd_emergency))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
