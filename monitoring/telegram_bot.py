@@ -1331,12 +1331,18 @@ async def _get_referral_text(chat_id: str, bot_username: str = "") -> str:
         code = _hl.md5(chat_id.encode()).hexdigest()[:8].upper()
     bot_name = bot_username or os.getenv("TELEGRAM_BOT_USERNAME", "NexusCapitalBot")
     ref_link = f"https://t.me/{bot_name}?start=ref_{code}"
+    commission_pct = int(os.getenv("REFERRAL_COMMISSION_PCT", "20"))
+    earnings_est = referred_count * 9 * commission_pct // 100  # €9/mois × commission
     return (
-        f"🤝 <b>REFERRAL</b>\n{LINE}\n"
-        f"Ton code : <code>{code}</code>\n\n"
-        f"👥 Filleuls actifs : <b>{referred_count}</b>\n\n"
+        f"🤝 <b>AFFILIATION NEXUS BET</b>\n{LINE}\n\n"
+        f"💰 <b>Tu gagnes {commission_pct}% sur chaque abonné que tu ramènes</b>\n"
+        f"<i>Soit ~€{9 * commission_pct // 100}/mois par filleul (abonnement €9/mois)</i>\n\n"
+        f"👥 Filleuls actifs : <b>{referred_count}</b>\n"
+        f"💵 Gains estimés : <b>€{earnings_est}/mois</b>\n\n"
+        f"Ton code : <code>{code}</code>\n"
         f"🔗 Lien :\n<code>{ref_link}</code>\n\n"
-        f"<i>Partage ce lien — chaque abonné via ton lien te rapporte une commission.</i>\n{LINE}"
+        f"<i>Partage sur Discord, X, groupes Polymarket — "
+        f"les paiements sont versés chaque mois.</i>\n{LINE}"
     )
 
 
@@ -1374,6 +1380,23 @@ async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         log.exception("cmd_market: %s", e)
         await _safe_reply(update, f"🎯 <b>MARKET</b>\n{LINE}\nErreur. Réessayez.", _back_keyboard())
+
+
+async def cmd_emergency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """🚨 /emergency — Cancel ALL open orders immediately."""
+    await _safe_reply(update, "🚨 <b>EMERGENCY STOP</b>\nAnnulation de tous les ordres...")
+    try:
+        from data.polymarket_client import PolymarketClient
+        client = PolymarketClient()
+        loop = asyncio.get_event_loop()
+        ok = await loop.run_in_executor(None, client.cancel_all_orders)
+        if ok:
+            await _safe_reply(update, "✅ <b>Tous les ordres annulés.</b>")
+        else:
+            await _safe_reply(update, "⚠️ <b>Échec annulation</b> — vérifier les logs.")
+    except Exception as e:
+        log.error("cmd_emergency: %s", e)
+        await _safe_reply(update, f"❌ <b>Erreur :</b> <code>{e}</code>")
 
 
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2800,8 +2823,9 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
-    app.add_handler(CommandHandler("strategy", cmd_strategy))
-    app.add_handler(CommandHandler("selftest", cmd_selftest))
+    app.add_handler(CommandHandler("strategy",  cmd_strategy))
+    app.add_handler(CommandHandler("selftest",  cmd_selftest))
+    app.add_handler(CommandHandler("emergency", cmd_emergency))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -2836,18 +2860,21 @@ async def run_forever() -> None:
         await app.initialize()
         await app.start()
         await app.bot.set_my_commands([
-            BotCommand("start", "⚡ Menu principal"),
-            BotCommand("access", "🔐 Lien dashboard privé"),
+            BotCommand("start",     "⚡ Menu principal"),
+            BotCommand("access",    "🔐 Lien dashboard privé"),
             BotCommand("portfolio", "💼 Solde et positions ouvertes"),
             BotCommand("scan", "🔍 Derniers signaux détectés"),
             BotCommand("market", "🎯 Fiche Market Object par slug/question"),
             BotCommand("agents", "🤖 Débats IA en cours"),
             BotCommand("whales", "🐳 Tracker les baleines"),
             BotCommand("referral", "🤝 Mon lien d'affiliation"),
-            BotCommand("settings", "⚙️ Configurer le bot"),
-            BotCommand("exit", "🔴 Sortir d'une position"),
-            BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
-            BotCommand("backtest", "📊 Backtester un marché"),
+            BotCommand("settings",  "⚙️ Configurer le bot"),
+            BotCommand("strategy",  "🧠 Conseil stratégique Claude"),
+            BotCommand("backtest",  "📊 Backtester un marché"),
+            BotCommand("selftest",  "🔬 Auto-test du système"),
+            BotCommand("exit",      "🔴 Sortir d'une position"),
+            BotCommand("emergency", "🚨 Annuler tous les ordres"),
+            BotCommand("activate",  "👑 [Admin] Activer un utilisateur"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")

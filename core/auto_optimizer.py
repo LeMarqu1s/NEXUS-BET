@@ -55,31 +55,62 @@ def save_optimizer_config(cfg: dict[str, float]) -> None:
 # ── Fetch signals depuis Supabase ─────────────────────────────────────────────
 
 async def _fetch_supabase_signals(days: int = 7) -> list[dict]:
-    """Récupère les signaux des N derniers jours depuis la table Supabase `signals`."""
+    """
+    Récupère les signaux des N derniers jours.
+    Priorité : Supabase signals table → fallback fichier local paperclip_pending_signals.json.
+    """
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-    if not url or not key:
-        return []
+    if url and key:
+        try:
+            cutoff_iso = datetime.fromtimestamp(
+                time.time() - days * 86400, tz=timezone.utc
+            ).isoformat()
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                r = await c.get(
+                    f"{url}/rest/v1/signals",
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                    params={
+                        "created_at": f"gte.{cutoff_iso}",
+                        "select": "market_id,side,edge_pct,confidence,polymarket_price,signal_strength,created_at",
+                        "limit": "500",
+                        "order": "created_at.desc",
+                    },
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, list) and data:
+                        log.info("optimizer: %d signaux Supabase (%dj)", len(data), days)
+                        return data
+        except Exception as e:
+            log.warning("_fetch_supabase_signals Supabase: %s", e)
+
+    # Fallback : fichier local (dev / Railway sans Supabase)
     try:
-        cutoff_iso = datetime.fromtimestamp(
-            time.time() - days * 86400, tz=timezone.utc
-        ).isoformat()
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.get(
-                f"{url}/rest/v1/signals",
-                headers={"apikey": key, "Authorization": f"Bearer {key}"},
-                params={
-                    "created_at": f"gte.{cutoff_iso}",
-                    "select": "market_id,side,edge_pct,confidence,polymarket_price,signal_strength,created_at",
-                    "limit": "500",
-                    "order": "created_at.desc",
-                },
-            )
-            if r.status_code == 200:
-                data = r.json()
-                return data if isinstance(data, list) else []
+        cutoff_ts = time.time() - days * 86400
+        for p in [_ROOT / "paperclip_pending_signals.json",
+                  _ROOT / "logs" / "paperclip_pending_signals.json"]:
+            if p.exists():
+                d = json.loads(p.read_text(encoding="utf-8"))
+                sigs = d.get("signals", []) if isinstance(d, dict) else []
+                recent = []
+                for s in sigs:
+                    ts = s.get("created_at") or s.get("timestamp")
+                    if ts:
+                        try:
+                            sig_ts = float(ts) if str(ts).replace(".", "").isdigit() else \
+                                     datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+                            if sig_ts >= cutoff_ts:
+                                recent.append(s)
+                        except Exception:
+                            recent.append(s)
+                    else:
+                        recent.append(s)
+                if recent:
+                    log.info("optimizer: %d signaux depuis fichier local (%dj)", len(recent), days)
+                    return recent
     except Exception as e:
-        log.warning("_fetch_supabase_signals: %s", e)
+        log.debug("_fetch_supabase_signals local fallback: %s", e)
     return []
 
 
@@ -245,7 +276,12 @@ def _adjust_thresholds(
 
 # ── Rapport Telegram ──────────────────────────────────────────────────────────
 
-async def _send_report(stats: dict, changes: list[str], cfg: dict[str, float]) -> None:
+async def _send_report(
+    stats: dict,
+    changes: list[str],
+    cfg: dict[str, float],
+    current_capital: float = 50.0,
+) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     if not token:
         return
@@ -261,16 +297,20 @@ async def _send_report(stats: dict, changes: list[str], cfg: dict[str, float]) -
             return
 
         L = "━━━━━━━━━━━━━━━"
-        lines = [f"🤖 <b>Auto-optimisation terminée</b>\n{L}\n"]
+        lines = [
+            f"🤖 <b>RAPPORT AUTO-OPTIMIZER</b>\n{L}\n"
+            f"<code>Capital actuel : ${current_capital:.2f}</code>\n\n"
+        ]
 
         for trigger, s in stats.items():
             if s["total"] == 0:
                 continue
             wr = s["win_rate"]
             icon = "🔥" if wr >= WIN_RATE_LOWER else "✅" if wr >= WIN_RATE_RAISE else "⚠️"
+            avg_hold = f" • hold {s['avg_hold_min']}min" if s.get("avg_hold_min") else ""
             lines.append(
                 f"{icon} <b>{trigger}</b>: {wr:.0f}% WR "
-                f"({s['wins']}/{s['total']}) • retour moy {s['avg_return']:+.1f}%\n"
+                f"({s['wins']}/{s['total']}) • {s['avg_return']:+.1f}%{avg_hold}\n"
             )
 
         lines.append(f"\n{L}\n")
@@ -346,8 +386,20 @@ async def run_auto_optimizer() -> None:
         config_snapshot = load_optimizer_config()
         try:
             log.info("Auto-optimizer : démarrage du cycle (7 jours de signaux Supabase)…")
+
+            # Capital actuel depuis compounder ou env
+            current_capital = 50.0
+            try:
+                from core.compounder import get_state as _compound_state
+                current_capital = float(_compound_state().get("capital", 50.0))
+            except Exception:
+                try:
+                    current_capital = float(os.getenv("PAPER_CAPITAL_USD", "50"))
+                except Exception:
+                    pass
+
             signals = await _fetch_supabase_signals(days=7)
-            log.info("Auto-optimizer : %d signaux récupérés depuis Supabase", len(signals))
+            log.info("Auto-optimizer : %d signaux récupérés | capital $%.2f", len(signals), current_capital)
 
             if signals:
                 stats = await _compute_trigger_stats(signals)
@@ -371,9 +423,9 @@ async def run_auto_optimizer() -> None:
                 else:
                     log.info("Auto-optimizer : aucun ajustement nécessaire")
 
-                await _send_report(stats, changes, new_cfg)
+                await _send_report(stats, changes, new_cfg, current_capital=current_capital)
             else:
-                log.info("Auto-optimizer : aucun signal Supabase — cycle ignoré")
+                log.info("Auto-optimizer : aucun signal — cycle ignoré")
 
         except asyncio.CancelledError:
             raise

@@ -221,6 +221,96 @@ class PolymarketClient:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _fetch)
 
+    async def get_batch_books(self, token_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Batch order books via POST /books — 1 call for N tokens."""
+        if not token_ids:
+            return {}
+        try:
+            payload = [{"token_id": t} for t in token_ids]
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as http:
+                r = await http.post(f"{self.host}/books", json=payload)
+                r.raise_for_status()
+                books = r.json()
+                if isinstance(books, list):
+                    return {b["asset_id"]: b for b in books if "asset_id" in b}
+        except Exception as e:
+            log.debug("get_batch_books failed: %s", e)
+        return {}
+
+    async def get_batch_midpoints(self, token_ids: list[str]) -> dict[str, float]:
+        """Batch midpoints via POST /midpoints — 1 call for N tokens."""
+        if not token_ids:
+            return {}
+        try:
+            payload = [{"token_id": t} for t in token_ids]
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as http:
+                r = await http.post(f"{self.host}/midpoints", json=payload)
+                r.raise_for_status()
+                data = r.json()
+                if isinstance(data, dict):
+                    return {k: float(v) for k, v in data.items() if v is not None}
+        except Exception as e:
+            log.debug("get_batch_midpoints failed: %s", e)
+        return {}
+
+    async def get_spread(self, token_id: str) -> float:
+        """Get bid-ask spread for a token."""
+        try:
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as http:
+                r = await http.get(f"{self.host}/spread", params={"token_id": token_id})
+                r.raise_for_status()
+                return float(r.json().get("spread", 0))
+        except Exception as e:
+            log.debug("get_spread(%s): %s", token_id[:16], e)
+        return 0.0
+
+    async def get_last_trade_price(self, token_id: str) -> Optional[float]:
+        """Get price of the most recent trade for a token."""
+        try:
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as http:
+                r = await http.get(f"{self.host}/last-trade-price", params={"token_id": token_id})
+                r.raise_for_status()
+                val = r.json().get("price")
+                return float(val) if val is not None else None
+        except Exception as e:
+            log.debug("get_last_trade_price(%s): %s", token_id[:16], e)
+        return None
+
+    async def get_price_history(
+        self,
+        token_id: str,
+        interval: str = "1d",
+        fidelity: int = 60,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch price history from CLOB /prices-history.
+        interval: max | 1m | 1w | 1d | 6h | 1h
+        fidelity: granularity in minutes (default 60)
+        Returns list of {"t": unix_timestamp, "p": price}.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as http:
+                r = await http.get(
+                    f"{self.host}/prices-history",
+                    params={"market": token_id, "interval": interval, "fidelity": fidelity},
+                )
+                r.raise_for_status()
+                data = r.json()
+                return data.get("history", []) if isinstance(data, dict) else []
+        except Exception as e:
+            log.debug("get_price_history(%s): %s", token_id[:16], e)
+        return []
+
+    def cancel_all_orders(self) -> bool:
+        """Cancel all open orders. Returns True on success."""
+        try:
+            client = self._get_client()
+            client.cancel_all()
+            return True
+        except Exception as e:
+            log.error("cancel_all_orders failed: %s", e)
+            return False
+
     async def close(self) -> None:
         """Close HTTP client."""
         if self._httpx_client:

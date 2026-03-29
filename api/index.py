@@ -614,33 +614,81 @@ def _send_telegram_welcome(telegram_chat_id: str, plan: str) -> None:
 
 
 def _get_public_stats() -> dict:
-    """Collecte les stats publiques depuis paper_trades.json et paperclip_pending_signals.json."""
+    """
+    Collecte les stats publiques.
+    Priorité : paper_trades.json → fallback Supabase trades table → fallback zéro.
+    """
+    from datetime import datetime, timezone
     stats = {
         "win_rate_30d": 0, "total_pnl": 0.0, "total_trades": 0,
         "best_trade": None, "active_signals": 0, "last_updated": "—",
     }
+
+    recent: list[dict] = []
+
+    # Source 1 — paper_trades.json (prioritaire si données présentes)
     try:
         p = Path(DATA_ROOT) / "logs" / "paper_trades.json"
         if p.exists():
-            from datetime import datetime, timezone, timedelta
             data = json.loads(p.read_text(encoding="utf-8"))
-            trades = data.get("trades", [])
             cutoff = time.time() - 30 * 86400
-            recent = [t for t in trades if float(t.get("closed_at") or 0) >= cutoff and t.get("status") == "CLOSED"]
-            wins = sum(1 for t in recent if float(t.get("pnl_usd") or 0) > 0)
-            stats["total_pnl"]    = round(sum(float(t.get("pnl_usd") or 0) for t in recent), 2)
-            stats["total_trades"] = len(recent)
-            stats["win_rate_30d"] = round(wins / len(recent) * 100) if recent else 0
-            best = max(recent, key=lambda t: float(t.get("pnl_usd") or 0), default=None)
-            if best:
-                stats["best_trade"] = {
-                    "question": (best.get("question") or "?")[:60],
-                    "pnl": round(float(best.get("pnl_usd") or 0), 2),
-                    "pnl_pct": round(float(best.get("pnl_pct") or 0), 1),
-                }
-            stats["last_updated"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+            paper = [
+                t for t in data.get("trades", [])
+                if float(t.get("closed_at") or 0) >= cutoff and t.get("status") == "CLOSED"
+            ]
+            if paper:
+                recent = [
+                    {"pnl_usd": float(t.get("pnl_usd") or 0),
+                     "question": t.get("question") or "?",
+                     "pnl_pct": float(t.get("pnl_pct") or 0)}
+                    for t in paper
+                ]
     except Exception:
         pass
+
+    # Source 2 — Supabase trades table (fallback si paper vide)
+    if not recent:
+        try:
+            url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                   or os.getenv("SUPABASE_SERVICE_KEY")
+                   or os.getenv("SUPABASE_ANON_KEY"))
+            if url and key:
+                from urllib.request import Request as _Req, urlopen as _ul
+                cutoff_iso = datetime.fromtimestamp(
+                    time.time() - 30 * 86400, tz=timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                q = (f"{url}/rest/v1/trades?status=eq.CLOSED"
+                     f"&created_at=gte.{cutoff_iso}&select=pnl_usd,question,pnl_pct"
+                     f"&order=created_at.desc&limit=200")
+                req = _Req(q, headers={"apikey": key, "Authorization": f"Bearer {key}"})
+                with _ul(req, timeout=8) as r:
+                    rows = json.loads(r.read().decode())
+                if isinstance(rows, list) and rows:
+                    recent = [
+                        {"pnl_usd": float(t.get("pnl_usd") or 0),
+                         "question": t.get("question") or "?",
+                         "pnl_pct": float(t.get("pnl_pct") or 0)}
+                        for t in rows
+                    ]
+        except Exception:
+            pass
+
+    # Calcul des stats depuis les données collectées
+    if recent:
+        wins = sum(1 for t in recent if t["pnl_usd"] > 0)
+        stats["total_pnl"]    = round(sum(t["pnl_usd"] for t in recent), 2)
+        stats["total_trades"] = len(recent)
+        stats["win_rate_30d"] = round(wins / len(recent) * 100)
+        best = max(recent, key=lambda t: t["pnl_usd"])
+        stats["best_trade"] = {
+            "question": best["question"][:60],
+            "pnl":      round(best["pnl_usd"], 2),
+            "pnl_pct":  round(best["pnl_pct"], 1),
+        }
+    stats["last_updated"] = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+    # Signaux actifs
     try:
         sig_file = Path(DATA_ROOT) / "paperclip_pending_signals.json"
         if sig_file.exists():
