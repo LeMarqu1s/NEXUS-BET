@@ -2900,14 +2900,17 @@ async def run_forever() -> None:
             BotCommand("access", "🔐 Lien dashboard privé"),
             BotCommand("portfolio", "💼 Solde et positions ouvertes"),
             BotCommand("scan", "🔍 Derniers signaux détectés"),
-            BotCommand("market", "🎯 Fiche Market Object par slug/question"),
+            BotCommand("market", "🎯 Fiche Market par slug/question"),
             BotCommand("agents", "🤖 Débats IA en cours"),
-            BotCommand("whales", "🐳 Tracker les baleines"),
+            BotCommand("whales", "🐳 Tracker les baleines $50k+"),
             BotCommand("referral", "🤝 Mon lien d'affiliation"),
             BotCommand("settings", "⚙️ Configurer le bot"),
-            BotCommand("exit", "🔴 Sortir d'une position"),
-            BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
+            BotCommand("strategy", "🧠 Conseil stratégique Claude"),
             BotCommand("backtest", "📊 Backtester un marché"),
+            BotCommand("selftest", "🔬 Auto-test du système"),
+            BotCommand("exit", "🔴 Sortir d'une position"),
+            BotCommand("emergency", "🚨 Annuler tous les ordres"),
+            BotCommand("activate", "👑 [Admin] Activer un utilisateur"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
