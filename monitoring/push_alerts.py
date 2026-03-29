@@ -118,7 +118,8 @@ async def push_sniper_alert(signal) -> None:
         f"TARGET  {signal.target_price:.3f} (+{target_pct:.0f}%)\n"
         f"STOP    {signal.stop_price:.3f} (-{stop_pct:.0f}%)\n"
         f"CONF    {conf_pct}% {conf_icon}"
-        f"</code>\n{L}"
+        f"</code>\n{L}\n"
+        f"⚠️ <i>Pas un conseil en investissement.</i>"
     )
 
     buttons = InlineKeyboardMarkup([[
