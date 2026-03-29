@@ -310,7 +310,8 @@ async def _get_start_text() -> str:
         f"<i>Prediction Market Intelligence</i>\n"
         f"{L}\n"
         f"{dot} {mode} · {n} marchés · ${balance:,.2f}\n"
-        f"{L}"
+        f"{L}\n"
+        f"⚠️ <i>Outil d'analyse algorithmique — ceci ne constitue pas un conseil en investissement. Les performances passées ne garantissent pas les résultats futurs.</i>"
     )
 
 
@@ -1095,7 +1096,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"Signaux vérifiés · Auto-trade · Track record public.\n"
                 f"{L}\n"
                 f"<b>Étape 1/4</b> — Connecte ton wallet Polymarket :\n"
-                f"<code>Envoie ton adresse 0x...</code>",
+                f"<code>Envoie ton adresse 0x...</code>\n"
+                f"{L}\n"
+                f"⚠️ <i>Ceci ne constitue pas un conseil en investissement. Tradez de manière responsable.</i>",
                 parse_mode="HTML",
             )
             return
@@ -1925,7 +1928,8 @@ async def _run_buy_order(pending: dict, size_usd: float) -> str:
                 f"<b>✅ PAPER TRADE ENREGISTRÉ</b>\n{L}\n"
                 f"<b>{question}</b>\n"
                 f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
-                f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>"
+                f"{L}\n<i>Mode SIMULATION — aucun vrai ordre placé</i>\n"
+                f"⚠️ <i>Pas un conseil en investissement.</i>"
             )
         return (
             f"<b>⚠️ NON AJOUTÉ</b>\n{L}\n"
@@ -1948,7 +1952,8 @@ async def _run_buy_order(pending: dict, size_usd: float) -> str:
                 f"<b>✅ ORDRE PLACÉ</b>\n{L}\n"
                 f"<b>{question}</b>\n"
                 f"{side} @ ${price:.2f}  taille ${size_usd:.0f}\n"
-                f"Order: <code>{order_id}</code>\n{L}"
+                f"Order: <code>{order_id}</code>\n{L}\n"
+                f"⚠️ <i>Pas un conseil en investissement.</i>"
             )
         return (
             f"<b>❌ ÉCHEC ORDRE</b>\n{L}\n"

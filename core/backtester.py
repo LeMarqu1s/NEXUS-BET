@@ -142,7 +142,15 @@ async def _find_token_id(market_slug: str) -> tuple[str, str, str]:
                 data = r2.json()
                 markets = data if isinstance(data, list) else data.get("data", [])
                 if markets:
-                    m = markets[0]
+                    slug_lower = market_slug.lower()
+                    # Exact match on slug first, then title, then fallback to first result
+                    m = next(
+                        (x for x in markets if (x.get("slug") or "").lower() == slug_lower),
+                        None,
+                    ) or next(
+                        (x for x in markets if slug_lower in (x.get("question") or "").lower()),
+                        None,
+                    ) or markets[0]
                     mid = str(m.get("conditionId") or m.get("id") or "")
                     q = str(m.get("question") or market_slug)
                     tokens = m.get("clobTokenIds") or m.get("tokens") or []
