@@ -1373,12 +1373,18 @@ async def _get_referral_text(chat_id: str, bot_username: str = "") -> str:
         code = _hl.md5(chat_id.encode()).hexdigest()[:8].upper()
     bot_name = bot_username or os.getenv("TELEGRAM_BOT_USERNAME", "NexusCapitalBot")
     ref_link = f"https://t.me/{bot_name}?start=ref_{code}"
+    commission_pct = int(os.getenv("REFERRAL_COMMISSION_PCT", "20"))
+    earnings_est = referred_count * 9 * commission_pct // 100  # €9/mois × commission
     return (
-        f"🤝 <b>REFERRAL</b>\n{LINE}\n"
-        f"Ton code : <code>{code}</code>\n\n"
-        f"👥 Filleuls actifs : <b>{referred_count}</b>\n\n"
+        f"🤝 <b>AFFILIATION NEXUS BET</b>\n{LINE}\n\n"
+        f"💰 <b>Tu gagnes {commission_pct}% sur chaque abonné que tu ramènes</b>\n"
+        f"<i>Soit ~€{9 * commission_pct // 100}/mois par filleul (abonnement €9/mois)</i>\n\n"
+        f"👥 Filleuls actifs : <b>{referred_count}</b>\n"
+        f"💵 Gains estimés : <b>€{earnings_est}/mois</b>\n\n"
+        f"Ton code : <code>{code}</code>\n"
         f"🔗 Lien :\n<code>{ref_link}</code>\n\n"
-        f"<i>Partage ce lien — chaque abonné via ton lien te rapporte une commission.</i>\n{LINE}"
+        f"<i>Partage sur Discord, X, groupes Polymarket — "
+        f"les paiements sont versés chaque mois.</i>\n{LINE}"
     )
 
 
