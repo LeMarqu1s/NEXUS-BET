@@ -214,7 +214,7 @@ def _get_market_by_id_or_slug(identifier: str) -> dict | None:
             data = _fetch_url(url, timeout=API_TIMEOUT)
             if data:
                 m = data[0] if isinstance(data, list) and data else data
-                if isinstance(m, dict):
+                if isinstance(m, dict) and m.get("slug", "").lower() == identifier.lower():
                     return m
     # Essai 2: par condition_id
     for url in (
@@ -226,19 +226,18 @@ def _get_market_by_id_or_slug(identifier: str) -> dict | None:
             m = data[0] if isinstance(data, list) and data else data
             if isinstance(m, dict) and str(m.get("conditionId", m.get("id", ""))) == identifier:
                 return m
-    # Essai 3: recherche dans les marchés actifs (fallback)
+    # Essai 3: recherche textuelle ciblée
     try:
-        url = f"{gamma}/markets?limit=200&active=true&closed=false"
+        ident_lower = identifier.lower()
+        url = f"{gamma}/markets?limit=10&q={identifier}"
         data = _fetch_url(url, timeout=API_TIMEOUT)
         markets = data if isinstance(data, list) else (data.get("data", []) or []) if isinstance(data, dict) else []
-        ident_lower = identifier.lower()
         for m in markets:
             if not isinstance(m, dict):
                 continue
-            cid = str(m.get("conditionId", m.get("id", "")))
-            slug = str(m.get("slug", ""))
-            q = str(m.get("question", ""))
-            if cid == identifier or slug == identifier or ident_lower in q.lower():
+            slug = str(m.get("slug", "")).lower()
+            q = str(m.get("question", "")).lower()
+            if slug == ident_lower or ident_lower in q:
                 return m
     except Exception:
         pass
