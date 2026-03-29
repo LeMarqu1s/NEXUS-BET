@@ -12,7 +12,7 @@ from typing import Any
 
 log = logging.getLogger("nexus.strategist")
 
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 MAX_TOKENS   = 800
 TIMEOUT_SEC  = 20.0
 

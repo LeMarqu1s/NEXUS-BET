@@ -192,7 +192,7 @@ def selftest_to_telegram(result: dict) -> str:
         f"⚡ Signaux générés {result['signals_generated']}\n"
         f"📊 Hit rate        {result['hit_rate_pct']:.0f}%\n"
         f"💰 P&L attendu     ${result['expected_pnl_usd']:+.2f}\n"
-        f"📈 Win rate réel   {result['actual_win_rate']:.0f}%\n"
+        f"📈 Win rate réel   {str(int(result['actual_win_rate'])) + '%' if result['actual_win_rate'] > 0 else 'N/A'}\n"
         f"⏱️ Durée           {result['duration_s']}s"
         f"</code>\n{drift_line}\n"
         + (f"{L}\n<i>Top signaux :\n{top_sigs}</i>" if top_sigs else "")

@@ -136,7 +136,7 @@ async def _find_token_id(market_slug: str) -> tuple[str, str, str]:
             # Recherche textuelle
             r2 = await c.get(
                 f"{GAMMA_URL}/markets",
-                params={"limit": 5, "q": market_slug, "active": "true"},
+                params={"limit": 5, "q": market_slug},
             )
             if r2.status_code == 200:
                 data = r2.json()
@@ -150,7 +150,9 @@ async def _find_token_id(market_slug: str) -> tuple[str, str, str]:
                     ) or next(
                         (x for x in markets if slug_lower in (x.get("question") or "").lower()),
                         None,
-                    ) or markets[0]
+                    ) or None
+                    if m is None:
+                        return market_slug, "", market_slug
                     mid = str(m.get("conditionId") or m.get("id") or "")
                     q = str(m.get("question") or market_slug)
                     tokens = m.get("clobTokenIds") or m.get("tokens") or []
