@@ -276,11 +276,13 @@ async def run_backtest(market_slug: str, days: int = 7) -> BacktestResult:
     """
     days = max(1, min(days, 30))  # cap à 30 jours
     market_id, token_id, question = await _find_token_id(market_slug)
+    log.info("backtest: market_id=%s token_id=%s question=%s", market_id[:16] if market_id else "", token_id[:16] if token_id else "", question[:40])
 
     if not token_id:
         return BacktestResult(market_id, question, days, 0, [])
 
     raw = await _fetch_price_history(token_id, days)
+    log.info("backtest: raw candles=%d", len(raw))
     if not raw:
         return BacktestResult(market_id, question, days, 0, [])
 
@@ -289,6 +291,7 @@ async def run_backtest(market_slug: str, days: int = 7) -> BacktestResult:
         sorted_raw = sorted(raw, key=lambda c: c.get("t") or c.get("ts") or 0)
         prices = [float(c.get("p") or c.get("price") or 0) for c in sorted_raw]
         prices = [p for p in prices if 0 < p <= 1.0]
+        log.info("backtest: prices after filter=%d", len(prices))
     except Exception as e:
         log.warning("run_backtest price parse: %s", e)
         return BacktestResult(market_id, question, days, 0, [])
