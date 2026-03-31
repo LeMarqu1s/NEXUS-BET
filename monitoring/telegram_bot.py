@@ -2171,6 +2171,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await edit(f"<b>❌ SIGNAL PASSÉ</b>\n{L}\n<i>Signal ignoré.</i>", _scan_keyboard())
         return
 
+    if data.startswith("confirm_snipe_"):
+        market_id = data[14:]
+        from monitoring.push_alerts import resolve_confirm
+        resolve_confirm(market_id, True)
+        await edit("✅ <b>Trade confirmé — exécution en cours...</b>", None)
+        return
+
+    if data.startswith("cancel_snipe_"):
+        market_id = data[13:]
+        from monitoring.push_alerts import resolve_confirm
+        resolve_confirm(market_id, False)
+        await edit("❌ <b>Trade annulé.</b>", None)
+        return
+
     if data.startswith("ignore_"):
         await edit(f"<b>✕ SIGNAL IGNORÉ</b>\n{L}", _main_keyboard())
         return

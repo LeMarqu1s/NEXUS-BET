@@ -204,3 +204,55 @@ async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
     except Exception as e:
         log.debug("_send_safe(%s): %s", chat_id, e)
         return False
+
+
+# ── Confirmation model (trade > 10 USDC en live) ─────────────────────────────
+
+_confirm_futures: dict[str, "asyncio.Future[bool]"] = {}
+
+
+async def push_confirm_request(signal, size_usd: float, chat_ids: list[str]) -> bool:
+    """Envoie un bouton Confirmer/Annuler et attend 60s la réponse."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token or not chat_ids:
+        return False
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    _confirm_futures[signal.market_id] = fut
+    safe_q = html.escape(signal.question[:60])
+    text = (
+        f"🔐 <b>CONFIRMATION REQUISE</b>\n━━━━━━━━━━━━━━━\n"
+        f"<b>{safe_q}</b>\n\n"
+        f"<code>MONTANT  ${size_usd:.0f} USDC\n"
+        f"PRIX     {signal.price:.3f}\n"
+        f"TARGET   {signal.target_price:.3f}\n"
+        f"STOP     {signal.stop_price:.3f}</code>\n"
+        f"━━━━━━━━━━━━━━━\n⏱️ <i>Auto-annulation dans 60s</i>"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirmer", callback_data=f"confirm_snipe_{signal.market_id}"),
+        InlineKeyboardButton("❌ Annuler",   callback_data=f"cancel_snipe_{signal.market_id}"),
+    ]])
+    bot = Bot(token=token)
+    try:
+        await asyncio.gather(
+            *[_send_safe(bot, cid, text, kb) for cid in chat_ids],
+            return_exceptions=True,
+        )
+    finally:
+        await bot.close()
+    try:
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=60.0)
+    except asyncio.TimeoutError:
+        log.info("Confirmation timeout pour %s — annulé", signal.market_id[:16])
+        return False
+    finally:
+        _confirm_futures.pop(signal.market_id, None)
+
+
+def resolve_confirm(market_id: str, confirmed: bool) -> None:
+    """Résout la confirmation depuis le callback Telegram."""
+    fut = _confirm_futures.get(market_id)
+    if fut and not fut.done():
+        fut.set_result(confirmed)
