@@ -163,6 +163,19 @@ async def run_self_tester():
             await asyncio.sleep(60)
 
 
+async def run_scalper():
+    """Boucle scalper — marchés Up/Down < 30min, scan toutes les 30s."""
+    from core.scalper import run_scalper_forever
+    while True:
+        try:
+            await run_scalper_forever()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("Scalper crashed: %s, restart in 10s", e)
+            await asyncio.sleep(10)
+
+
 async def main():
     # ── Architecture IA ────────────────────────────────────────────────────────
     # Boucles temps réel (sniper, scanner) : ZÉRO appel Claude/Anthropic.
@@ -193,11 +206,12 @@ async def main():
     sniper_task     = asyncio.create_task(run_sniper(), name="sniper")
     optimizer_task  = asyncio.create_task(run_auto_optimizer(), name="auto_optimizer")
     self_test_task  = asyncio.create_task(run_self_tester(), name="self_tester")
+    scalper_task    = asyncio.create_task(run_scalper(),     name="scalper")
     stop_task       = asyncio.create_task(stop_event.wait(), name="stop")
 
     done, pending = await asyncio.wait(
         [scanner_task, telegram_task, monitor_task, report_task, sniper_task,
-         optimizer_task, self_test_task, stop_task],
+         optimizer_task, self_test_task, scalper_task, stop_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 

@@ -206,7 +206,7 @@ async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
         return False
 
 
-# ── Confirmation model (trade > 10 USDC en live) ─────────────────────────────
+# ── Permission model (confirmation trade > 10 USDC en live) ──────────────────
 
 _confirm_futures: dict[str, "asyncio.Future[bool]"] = {}
 
@@ -256,3 +256,103 @@ def resolve_confirm(market_id: str, confirmed: bool) -> None:
     fut = _confirm_futures.get(market_id)
     if fut and not fut.done():
         fut.set_result(confirmed)
+
+
+# ── Scalp alerts ──────────────────────────────────────────────────────────────
+
+async def push_scalp_signal(signal) -> None:
+    """Alerte Telegram enrichie pour un marché 'Up or Down' < 30min."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return
+
+    users = await get_active_subscribers()
+    fallback_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not users:
+        if fallback_id:
+            users = [{"telegram_chat_id": fallback_id}]
+        else:
+            return
+
+    safe_q   = html.escape(signal.question[:60])
+    yes_pct  = int(signal.yes_price * 100)
+    no_pct   = int(signal.no_price  * 100)
+    mins     = signal.minutes_remaining
+    L = "━━━━━━━━━━━━━━━"
+
+    text = (
+        f"🔪 <b>SCALP SIGNAL</b>\n{L}\n"
+        f"<b>{safe_q}</b>\n\n"
+        f"<code>"
+        f"YES   {yes_pct}¢\n"
+        f"NO    {no_pct}¢\n"
+        f"TEMPS {mins:.0f} min restantes"
+        f"</code>\n{L}\n"
+        f"⚠️ <i>Pas un conseil en investissement.</i>"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"✅ BUY YES {yes_pct}¢", callback_data=f"scalp_yes_{signal.market_id}|{signal.token_id_yes}"),
+        InlineKeyboardButton(f"✅ BUY NO {no_pct}¢",  callback_data=f"scalp_no_{signal.market_id}|{signal.token_id_no}"),
+    ]])
+
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, u["telegram_chat_id"], text, kb)
+             for u in users if u.get("telegram_chat_id")]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await bot.close()
+
+
+async def push_scalp_tp_alert(pos, current_price: float, pnl_pct: float) -> None:
+    """Alerte TP atteint avec bouton SELL."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token or not pos.chat_ids:
+        return
+    safe_q = html.escape(pos.question[:60])
+    L = "━━━━━━━━━━━━━━━"
+    text = (
+        f"🎯 <b>SCALP TP ATTEINT</b>\n{L}\n"
+        f"<b>{safe_q}</b>\n\n"
+        f"<code>"
+        f"SIDE    {pos.side}\n"
+        f"ENTRÉE  {pos.entry_price:.3f}\n"
+        f"ACTUEL  {current_price:.3f}\n"
+        f"P&L     {pnl_pct:+.1f}%"
+        f"</code>\n{L}"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💰 SELL", callback_data=f"scalp_sell_{pos.token_id}"),
+    ]])
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, cid, text, kb) for cid in pos.chat_ids]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await bot.close()
+
+
+async def push_scalp_sl_alert(pos, current_price: float, pnl_pct: float) -> None:
+    """Alerte SL atteint avec bouton SELL."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token or not pos.chat_ids:
+        return
+    safe_q = html.escape(pos.question[:60])
+    L = "━━━━━━━━━━━━━━━"
+    text = (
+        f"🛑 <b>SCALP SL ATTEINT</b>\n{L}\n"
+        f"<b>{safe_q}</b>\n\n"
+        f"<code>"
+        f"SIDE    {pos.side}\n"
+        f"ENTRÉE  {pos.entry_price:.3f}\n"
+        f"ACTUEL  {current_price:.3f}\n"
+        f"P&L     {pnl_pct:+.1f}%"
+        f"</code>\n{L}"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔴 SELL (stop loss)", callback_data=f"scalp_sell_{pos.token_id}"),
+    ]])
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, cid, text, kb) for cid in pos.chat_ids]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await bot.close()

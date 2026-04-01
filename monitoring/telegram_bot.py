@@ -1402,6 +1402,31 @@ async def cmd_emergency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _safe_reply(update, f"❌ <b>Erreur :</b> <code>{e}</code>")
 
 
+async def cmd_scalp_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/scalp_settings [tp] [sl] — Affiche ou modifie le TP/SL du scalper."""
+    from core.scalper import load_scalp_settings, save_scalp_settings
+    L = "━━━━━━━━━━━━━━━"
+    args = context.args or []
+    if len(args) >= 2:
+        try:
+            tp = max(0.01, min(float(args[0].replace("%", "")) / 100, 0.99))
+            sl = max(0.01, min(float(args[1].replace("%", "")) / 100, 0.99))
+            save_scalp_settings(tp, sl)
+            await _safe_reply(update,
+                f"⚙️ <b>SCALP SETTINGS SAUVEGARDÉS</b>\n{L}\n"
+                f"<code>Take Profit  +{tp*100:.0f}%\n"
+                f"Stop Loss    -{sl*100:.0f}%</code>")
+            return
+        except ValueError:
+            pass
+    cfg = load_scalp_settings()
+    await _safe_reply(update,
+        f"⚙️ <b>SCALP SETTINGS</b>\n{L}\n"
+        f"<code>Take Profit  +{cfg['tp']*100:.0f}%\n"
+        f"Stop Loss    -{cfg['sl']*100:.0f}%</code>\n{L}\n"
+        f"<i>Usage : /scalp_settings 20 15</i>")
+
+
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
     async def _get():
@@ -2172,17 +2197,69 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if data.startswith("confirm_snipe_"):
-        market_id = data[14:]
         from monitoring.push_alerts import resolve_confirm
-        resolve_confirm(market_id, True)
+        resolve_confirm(data[14:], True)
         await edit("✅ <b>Trade confirmé — exécution en cours...</b>", None)
         return
 
     if data.startswith("cancel_snipe_"):
-        market_id = data[13:]
         from monitoring.push_alerts import resolve_confirm
-        resolve_confirm(market_id, False)
+        resolve_confirm(data[13:], False)
         await edit("❌ <b>Trade annulé.</b>", None)
+        return
+
+    if data.startswith("scalp_yes_") or data.startswith("scalp_no_"):
+        is_yes = data.startswith("scalp_yes_")
+        rest   = data[10:] if is_yes else data[9:]
+        parts  = rest.split("|", 1)
+        market_id = parts[0]
+        token_id  = parts[1] if len(parts) > 1 else ""
+        side      = "YES" if is_yes else "NO"
+        try:
+            from core.scalper import get_tracker, ScalpPosition, load_scalp_settings
+            from config.settings import settings as _s
+            cfg      = load_scalp_settings()
+            cap      = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0)
+            size_usd = round(min(cap * 0.05, 50.0), 1)     # max 5% du capital ou 50 USD
+            om       = __import__("execution.order_manager", fromlist=["OrderManager", "OrderConfig"])
+            order_cfg = om.OrderConfig(
+                market_id=market_id, outcome=side, side="BUY",
+                size_usd=size_usd, limit_price=0.0,
+                take_profit_pct=cfg["tp"], stop_loss_pct=cfg["sl"],
+            )
+            order_id = await om.OrderManager().place_limit_order(order_cfg)
+            if order_id and token_id:
+                current_price = float(q.message.text.split(f"{side[:3]}")[1][:4].strip().replace("¢", "")) / 100 if q.message and q.message.text else 0.5
+                tp_price = current_price * (1 + cfg["tp"])
+                sl_price = current_price * (1 - cfg["sl"])
+                chat_id  = str(q.from_user.id) if q.from_user else ""
+                pos = ScalpPosition(
+                    market_id=market_id, question="", token_id=token_id,
+                    side=side, entry_price=current_price,
+                    tp_price=tp_price, sl_price=sl_price,
+                    size_usd=size_usd, chat_ids=[chat_id] if chat_id else [],
+                )
+                get_tracker().open_position(token_id, pos)
+            await edit(
+                f"⚡ <b>SCALP {side} PLACÉ</b>\n{L}\n"
+                f"<code>MONTANT  ${size_usd:.0f}\n"
+                f"TP       +{cfg['tp']*100:.0f}%\n"
+                f"SL       -{cfg['sl']*100:.0f}%</code>",
+                None,
+            )
+        except Exception as e:
+            log.exception("scalp_buy callback: %s", e)
+            await edit(f"<b>❌ ERREUR SCALP</b>\n{L}\n<code>{str(e)[:80]}</code>", None)
+        return
+
+    if data.startswith("scalp_sell_"):
+        token_id = data[11:]
+        try:
+            from core.scalper import get_tracker
+            get_tracker().positions.pop(token_id, None)
+            await edit(f"💰 <b>SCALP POSITION FERMÉE</b>\n{L}\n<i>Position retirée du suivi.</i>", None)
+        except Exception as e:
+            await edit(f"<b>❌ ERREUR</b>\n<code>{str(e)[:80]}</code>", None)
         return
 
     if data.startswith("ignore_"):
@@ -2844,7 +2921,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CommandHandler("strategy",  cmd_strategy))
     app.add_handler(CommandHandler("selftest",  cmd_selftest))
-    app.add_handler(CommandHandler("emergency", cmd_emergency))
+    app.add_handler(CommandHandler("emergency",      cmd_emergency))
+    app.add_handler(CommandHandler("scalp_settings", cmd_scalp_settings))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -2892,8 +2970,9 @@ async def run_forever() -> None:
             BotCommand("backtest",  "📊 Backtester un marché"),
             BotCommand("selftest",  "🔬 Auto-test du système"),
             BotCommand("exit",      "🔴 Sortir d'une position"),
-            BotCommand("emergency", "🚨 Annuler tous les ordres"),
-            BotCommand("activate",  "👑 [Admin] Activer un utilisateur"),
+            BotCommand("emergency",      "🚨 Annuler tous les ordres"),
+            BotCommand("scalp_settings", "🔪 TP/SL du scalper"),
+            BotCommand("activate",       "👑 [Admin] Activer un utilisateur"),
         ])
 
         log.info("Telegram poller démarré (async-native, no run_polling)")
