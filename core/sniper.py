@@ -356,6 +356,26 @@ class PolymarketSniper:
                 except Exception as e:
                     log.error("push_sniper_alert failed: %s", e)
                 return
+            # Permission model : confirmation requise si live + montant > 10 USDC
+            sim_mode = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+            if not sim_mode:
+                from config.settings import settings as _s
+                cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0)
+                size_usd = max(1.0, round(cap * signal.confidence * 0.10, 1))
+                if size_usd > 10:
+                    try:
+                        from monitoring.push_alerts import push_confirm_request, get_active_subscribers
+                        subs = await get_active_subscribers()
+                        chat_ids = [u["telegram_chat_id"] for u in subs if u.get("telegram_chat_id")]
+                        if not chat_ids and os.getenv("TELEGRAM_CHAT_ID"):
+                            chat_ids = [os.getenv("TELEGRAM_CHAT_ID")]
+                        confirmed = await push_confirm_request(signal, size_usd, chat_ids)
+                        if not confirmed:
+                            log.info("Trade $%.0f annulé — timeout ou refus", size_usd)
+                            return
+                    except Exception as e:
+                        log.error("push_confirm_request: %s", e)
+                        return
             # 1. Exécuter immédiatement
             order_id = await self._execute_entry(signal)
             if order_id:
