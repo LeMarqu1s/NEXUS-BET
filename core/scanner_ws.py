@@ -213,7 +213,7 @@ class WebSocketScanner:
 
         try:
             markets = await self._fetch_markets_gamma()
-            logger.info(
+            logger.debug(
                 "Scanner: Fetched %d raw markets from Gamma API | thresholds: MIN_VOLUME=%.0f, MIN_LIQUIDITY=%.0f",
                 len(markets), get_min_market_volume(), get_min_liquidity(),
             )
@@ -221,7 +221,7 @@ class WebSocketScanner:
                 logger.warning("Scanner: Gamma API returned 0 markets")
                 return
             sample = markets[0]
-            logger.info(
+            logger.debug(
                 "Scanner: sample market keys=%s | volume=%s liquidity=%s clobTokenIds=%s",
                 list(sample.keys())[:15],
                 sample.get("volume") or sample.get("volume24hr"),
@@ -229,7 +229,7 @@ class WebSocketScanner:
                 str(sample.get("clobTokenIds", []))[:100],
             )
             for i, m in enumerate(markets[:3]):
-                logger.info(
+                logger.debug(
                     "RAW outcomePrices: %s | outcomes: %s",
                     m.get("outcomePrices"),
                     m.get("outcomes"),
@@ -267,7 +267,7 @@ class WebSocketScanner:
             self._last_markets_refresh = time.monotonic()
             n_tokens = len(self._token_to_market)
             n_markets_tracked = n_tokens // 2
-            logger.info(
+            logger.debug(
                 "Scanner: markets TRACKED=%d (%d tokens) | rejected=%d | no_tokens=%d",
                 n_markets_tracked, n_tokens, filtered_count, no_tokens_count,
             )
