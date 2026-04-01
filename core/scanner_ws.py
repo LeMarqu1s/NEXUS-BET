@@ -110,7 +110,7 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
     try:
         from paperclip_bridge import PENDING_SIGNALS_FILE, PENDING_SIGNALS_PATH
         p = PENDING_SIGNALS_FILE
-        logger.info("Writing signals to: %s", PENDING_SIGNALS_PATH)
+        logger.debug("Writing signals to: %s", PENDING_SIGNALS_PATH)
         ts = time.time()
         data: dict = {"last_scan_ts": ts, "market_count": market_count, "signals": [], "count": 0}
         if p.exists():
@@ -135,7 +135,7 @@ def _write_scan_ts(market_count: int, new_signals: list[EdgeSignal] | None = Non
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         tmp.replace(p)
-        logger.info("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
+        logger.debug("Wrote scan timestamp: %s | File now has %d signals", int(ts), len(data["signals"]))
     except Exception as e:
         logger.warning("_write_scan_ts failed: %s", e)
 
