@@ -83,6 +83,14 @@ class ScalperTracker:
         self.positions: dict[str, ScalpPosition] = {}   # token_id → position
         self._alerted_markets: set[str] = set()         # éviter les doublons d'alerte
         self._last_scan: float = 0.0
+        self._market_cache: dict[str, dict] = {}        # market_id → raw market dict pour le sniper
+        self._sniper: Optional["PolymarketSniper"] = None  # instance partagée
+
+    def _get_sniper(self) -> "PolymarketSniper":
+        if self._sniper is None:
+            from core.sniper import PolymarketSniper
+            self._sniper = PolymarketSniper()
+        return self._sniper
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -209,6 +217,7 @@ class ScalperTracker:
                 minutes_remaining=round(minutes, 1),
                 end_ts=end_ts,
             ))
+            self._market_cache[market_id] = m
 
         return signals
 
@@ -272,13 +281,28 @@ class ScalperTracker:
                 signals = await self.scan_cycle()
                 if signals:
                     log.info("scalper: %d marchés Up/Down détectés < %dmin", len(signals), MAX_RESOLUTION_MINUTES)
+                    sniper = self._get_sniper()
                     from monitoring.push_alerts import push_scalp_signal
                     for sig in signals:
-                        try:
-                            await push_scalp_signal(sig)
-                            self.mark_alerted(sig.market_id)
-                        except Exception as e:
-                            log.error("push_scalp_signal: %s", e)
+                        m = self._market_cache.get(sig.market_id, {})
+                        sniper_fired = False
+                        if m:
+                            try:
+                                sniper_sig = await sniper.monitor_market(m)
+                                if sniper_sig:
+                                    sniper_fired = True
+                                    log.info("scalper+sniper confluence: %s %s",
+                                             sig.question[:40], sniper_sig.signals)
+                                    await sniper._on_signal_detected(sniper_sig)
+                            except Exception as e:
+                                log.error("sniper analysis: %s", e)
+                        if not sniper_fired:
+                            # Fallback : alerte manuelle (boutons YES/NO)
+                            try:
+                                await push_scalp_signal(sig)
+                            except Exception as e:
+                                log.error("push_scalp_signal: %s", e)
+                        self.mark_alerted(sig.market_id)
 
                 # Monitor positions
                 if self.positions and time.time() - last_monitor >= MONITOR_INTERVAL:
