@@ -1431,6 +1431,50 @@ async def cmd_scalp_settings(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _safe_reply(update, f"⚙️ <b>SCALP SETTINGS</b>\n━━━━━━━━━━━━━━━\n<code>ERREUR — {e}</code>")
 
 
+async def cmd_scalp_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/scalp_stats — Win rate réel, P&L et breakdown par signal."""
+    try:
+        from core.scalper import get_tracker, load_scalp_settings
+        L = "━━━━━━━━━━━━━━━"
+        stats = get_tracker().get_stats(days=7)
+        cfg   = load_scalp_settings()
+
+        if stats["trades"] == 0:
+            await _safe_reply(update,
+                f"📊 <b>SCALP STATS (7j)</b>\n{L}\n"
+                f"<i>Aucun trade fermé pour l'instant.\n"
+                f"Les stats apparaîtront après le premier TP/SL.</i>")
+            return
+
+        lines = [
+            f"📊 <b>SCALP STATS (7j)</b>",
+            L,
+            f"<code>Trades fermés  {stats['trades']}",
+            f"Win rate       {stats['win_rate']:.0f}%",
+            f"P&L total      {'%+.2f' % stats['total_pnl']} USDC</code>",
+            L,
+        ]
+
+        # Breakdown par type de signal
+        for sig_type, d in stats["by_signal"].items():
+            wr = round(d["wins"] / d["count"] * 100) if d["count"] else 0
+            lines.append(f"<code>{sig_type[:12]:<12} {d['count']} trades | {wr}% win</code>")
+
+        if stats["best"]:
+            b = stats["best"]
+            lines.append(L)
+            lines.append(f"<code>Meilleur  {'%+.2f' % b['pnl_usd']}$ {b['question'][:28]}</code>")
+        if stats["worst"]:
+            w = stats["worst"]
+            lines.append(f"<code>Pire      {'%+.2f' % w['pnl_usd']}$ {w['question'][:28]}</code>")
+
+        lines += [L, f"<code>TP actuel  +{cfg['tp']*100:.0f}%  |  SL actuel -{cfg['sl']*100:.0f}%</code>"]
+        await _safe_reply(update, "\n".join(lines))
+    except Exception as e:
+        log.exception("cmd_scalp_stats: %s", e)
+        await _safe_reply(update, f"📊 <b>SCALP STATS</b>\n━━━━━━━━━━━━━━━\n<code>ERREUR — {e}</code>")
+
+
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
     async def _get():
@@ -2242,6 +2286,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     side=side, entry_price=current_price,
                     tp_price=tp_price, sl_price=sl_price,
                     size_usd=size_usd, chat_ids=[chat_id] if chat_id else [],
+                    order_id=order_id or "",
+                    signal_type="manual",
                 )
                 get_tracker().open_position(token_id, pos)
             await edit(
@@ -2860,6 +2906,20 @@ async def send_daily_report(bot) -> None:
     wr = pp.get("win_rate", 0)
     invested = pp.get("invested", 0)
     open_count = len(pp.get("open_trades", []))
+    # Scalp stats (24h)
+    scalp_section = ""
+    try:
+        from core.scalper import get_tracker
+        sc = get_tracker().get_stats(days=1)
+        if sc["trades"] > 0:
+            scalp_section = (
+                f"\n{L}\n"
+                f"<code>🔪 SCALP (24h)\n"
+                f"Trades   {sc['trades']}  |  Win rate {sc['win_rate']:.0f}%\n"
+                f"P&L      {'%+.2f' % sc['total_pnl']} USDC</code>"
+            )
+    except Exception:
+        pass
     text = (
         f"<b>📊 RAPPORT DU JOUR — NEXUS BET</b>\n{L}\n"
         f"<code>Signaux détectés : {signals_today}\n"
@@ -2867,6 +2927,7 @@ async def send_daily_report(bot) -> None:
         f"Investi (paper)   : ${invested:.2f}\n"
         f"P&L total         : {'+'if pnl>=0 else ''}{pnl:.2f} USDC\n"
         f"Win rate          : {wr:.0f}%</code>\n"
+        f"{scalp_section}\n"
         f"{L}\n<i>NEXUS BET · Rapport automatique 21h00 UTC</i>"
     )
     chat_ids = await _get_active_chat_ids()
@@ -2927,6 +2988,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("selftest",  cmd_selftest))
     app.add_handler(CommandHandler("emergency",      cmd_emergency))
     app.add_handler(CommandHandler("scalp_settings", cmd_scalp_settings))
+    app.add_handler(CommandHandler("scalp_stats",    cmd_scalp_stats))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
@@ -2976,6 +3038,7 @@ async def run_forever() -> None:
             BotCommand("exit",      "🔴 Sortir d'une position"),
             BotCommand("emergency",      "🚨 Annuler tous les ordres"),
             BotCommand("scalp_settings", "🔪 TP/SL du scalper"),
+            BotCommand("scalp_stats",    "📊 Perf scalp win rate P&L"),
             BotCommand("activate",       "👑 [Admin] Activer un utilisateur"),
         ])
 

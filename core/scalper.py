@@ -1,7 +1,8 @@
 """
 NEXUS BET - Scalper
 Scanner dédié aux marchés "Up or Down" (BTC/ETH) sur fenêtres < 30 minutes.
-Suivi de position toutes les 60s avec alerte TP/SL.
+Stratégie principale : lag Binance → Polymarket (exécution avant ajustement du marché).
+Suivi de position toutes les 60s avec alerte TP/SL + auto-ajustement.
 """
 from __future__ import annotations
 
@@ -18,15 +19,22 @@ import httpx
 
 log = logging.getLogger("nexus.scalper")
 
-GAMMA_URL      = "https://gamma-api.polymarket.com"
-CLOB_URL       = "https://clob.polymarket.com"
-SCAN_INTERVAL  = 30   # secondes entre chaque scan
-MONITOR_INTERVAL = 60 # secondes entre chaque check de position
+GAMMA_URL        = "https://gamma-api.polymarket.com"
+CLOB_URL         = "https://clob.polymarket.com"
+SCAN_INTERVAL    = 30   # secondes entre chaque scan
+MONITOR_INTERVAL = 60   # secondes entre chaque check de position
 MAX_RESOLUTION_MINUTES = 30
 
 SETTINGS_FILE  = Path(__file__).resolve().parent.parent / "scalp_settings.json"
+HISTORY_FILE   = Path(__file__).resolve().parent.parent / "scalp_history.json"
 DEFAULT_TP     = 0.20   # +20%
 DEFAULT_SL     = 0.15   # -15%
+
+# Seuils stratégie lag Binance
+DRIFT_THRESHOLD  = 0.004   # 0.4% de drift minimum pour déclencher
+POLY_LAG_MAX_YES = 0.68    # si drift > 0 mais YES < 68% → lag → BUY YES
+POLY_LAG_MIN_YES = 0.32    # si drift < 0 mais YES > 32% → lag → BUY NO
+AUTO_ADJUST_EVERY = 10     # ajuster TP/SL tous les N trades fermés
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -56,6 +64,8 @@ class ScalpPosition:
     chat_ids:    list[str]
     opened_at:   float = field(default_factory=time.time)
     alerted:     bool  = False
+    order_id:    str   = ""   # CLOB order ID pour tracking Supabase
+    signal_type: str   = "manual"  # "drift", "sniper", "manual"
 
 
 # ── Settings TP/SL ────────────────────────────────────────────────────────────
@@ -76,15 +86,38 @@ def save_scalp_settings(tp: float, sl: float) -> None:
     )
 
 
+# ── Historique trades ─────────────────────────────────────────────────────────
+
+def load_scalp_history() -> list[dict]:
+    try:
+        if HISTORY_FILE.exists():
+            data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+
+def save_scalp_history(history: list[dict]) -> None:
+    try:
+        HISTORY_FILE.write_text(
+            json.dumps(history[-200:], indent=2),  # garder les 200 derniers
+            encoding="utf-8",
+        )
+    except Exception as e:
+        log.debug("save_scalp_history: %s", e)
+
+
 # ── Scalper ───────────────────────────────────────────────────────────────────
 
 class ScalperTracker:
     def __init__(self) -> None:
-        self.positions: dict[str, ScalpPosition] = {}   # token_id → position
-        self._alerted_markets: set[str] = set()         # éviter les doublons d'alerte
+        self.positions: dict[str, ScalpPosition] = {}
+        self._alerted_markets: set[str] = set()
         self._last_scan: float = 0.0
-        self._market_cache: dict[str, dict] = {}        # market_id → raw market dict pour le sniper
-        self._sniper: Optional["PolymarketSniper"] = None  # instance partagée
+        self._market_cache: dict[str, dict] = {}
+        self._sniper: Optional["PolymarketSniper"] = None
+        self._trade_history: list[dict] = load_scalp_history()
 
     def _get_sniper(self) -> "PolymarketSniper":
         if self._sniper is None:
@@ -95,7 +128,6 @@ class ScalperTracker:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _fetch_markets(self) -> list[dict]:
-        """Récupère les marchés actifs depuis Gamma API."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
                 r = await c.get(
@@ -116,7 +148,6 @@ class ScalperTracker:
         return []
 
     def _minutes_remaining(self, market: dict) -> Optional[float]:
-        """Retourne les minutes restantes avant résolution, ou None si inconnu."""
         from datetime import datetime, timezone
         end_date = market.get("endDate") or market.get("end_date_iso") or ""
         if not end_date:
@@ -131,7 +162,6 @@ class ScalperTracker:
             return None
 
     def _extract_tokens(self, market: dict) -> tuple[str, str]:
-        """Retourne (yes_token_id, no_token_id)."""
         tokens = market.get("clobTokenIds") or market.get("tokens") or []
         if isinstance(tokens, str):
             try:
@@ -147,7 +177,6 @@ class ScalperTracker:
         return yes_id, no_id
 
     def _get_prices(self, market: dict) -> tuple[float, float]:
-        """Retourne (yes_price, no_price) depuis outcomePrices."""
         prices = market.get("outcomePrices") or '["0.5","0.5"]'
         if isinstance(prices, str):
             try:
@@ -159,7 +188,6 @@ class ScalperTracker:
         return yes_p, no_p
 
     async def _fetch_current_price(self, token_id: str) -> Optional[float]:
-        """Récupère le prix actuel depuis le CLOB."""
         if not token_id:
             return None
         try:
@@ -173,6 +201,161 @@ class ScalperTracker:
         except Exception:
             pass
         return None
+
+    # ── Stratégie : lag Binance → Polymarket ──────────────────────────────────
+
+    async def _compute_drift_signal(
+        self, sig: "ScalpSignal"
+    ) -> Optional[tuple[str, str]]:
+        """
+        Compare le prix Binance au prix de référence du marché.
+        Retourne (direction, label) ou None.
+        direction = "YES" si BTC déjà en hausse mais Poly pas encore ajusté,
+                    "NO"  si BTC déjà en baisse mais Poly pas encore ajusté.
+        """
+        from core.price_feed import get_binance_price, extract_reference_price, get_symbol_from_question
+        symbol    = get_symbol_from_question(sig.question)
+        ref_price = extract_reference_price(sig.question)
+        if not ref_price:
+            return None
+
+        btc_price = await get_binance_price(symbol)
+        if not btc_price:
+            return None
+
+        drift = (btc_price - ref_price) / ref_price
+
+        if drift > DRIFT_THRESHOLD and sig.yes_price < POLY_LAG_MAX_YES:
+            label = f"DRIFT_+{drift*100:.2f}%"
+            log.info("scalper drift signal: %s +%.2f%% | Poly YES=%.2f → BUY YES",
+                     symbol, drift * 100, sig.yes_price)
+            return "YES", label
+
+        if drift < -DRIFT_THRESHOLD and sig.yes_price > POLY_LAG_MIN_YES:
+            label = f"DRIFT_{drift*100:.2f}%"
+            log.info("scalper drift signal: %s %.2f%% | Poly YES=%.2f → BUY NO",
+                     symbol, drift * 100, sig.yes_price)
+            return "NO", label
+
+        return None
+
+    async def _auto_execute_scalp(
+        self, sig: "ScalpSignal", direction: str, signal_type: str
+    ) -> Optional[str]:
+        """
+        Exécute automatiquement un trade scalp (drift ou sniper).
+        Retourne l'order_id ou None.
+        """
+        from execution.order_manager import OrderManager, OrderConfig
+        cfg = load_scalp_settings()
+        cap = float(os.getenv("POLYMARKET_CAPITAL_USD", "1000"))
+        size_usd = round(min(cap * 0.05, 50.0), 1)
+
+        token_id    = sig.token_id_yes if direction == "YES" else sig.token_id_no
+        entry_price = sig.yes_price    if direction == "YES" else sig.no_price
+
+        order_cfg = OrderConfig(
+            market_id=sig.market_id,
+            outcome=direction,
+            side="BUY",
+            size_usd=size_usd,
+            limit_price=entry_price,
+            take_profit_pct=cfg["tp"],
+            stop_loss_pct=cfg["sl"],
+        )
+        order_id = await OrderManager().place_limit_order(order_cfg)
+        if order_id:
+            tp_price = round(entry_price * (1 + cfg["tp"]), 4)
+            sl_price = round(entry_price * (1 - cfg["sl"]), 4)
+            pos = ScalpPosition(
+                market_id=sig.market_id,
+                question=sig.question,
+                token_id=token_id,
+                side=direction,
+                entry_price=entry_price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                size_usd=size_usd,
+                chat_ids=[],
+                order_id=order_id,
+                signal_type=signal_type,
+            )
+            self.open_position(token_id, pos)
+            log.info("scalp auto-exec: %s %s @ %.3f tp=%.3f sl=%.3f [%s]",
+                     direction, sig.question[:35], entry_price, tp_price, sl_price, signal_type)
+        return order_id
+
+    # ── Tracking & auto-ajustement ────────────────────────────────────────────
+
+    def _record_trade_result(
+        self, pos: "ScalpPosition", exit_price: float, exit_reason: str
+    ) -> None:
+        """Enregistre le résultat d'un trade dans l'historique local."""
+        pnl_usd = round((exit_price - pos.entry_price) / pos.entry_price * pos.size_usd, 4)
+        record = {
+            "ts": time.time(),
+            "question": pos.question[:60],
+            "side": pos.side,
+            "entry": pos.entry_price,
+            "exit": exit_price,
+            "pnl_usd": pnl_usd,
+            "exit_reason": exit_reason,
+            "signal_type": pos.signal_type,
+        }
+        self._trade_history.append(record)
+        save_scalp_history(self._trade_history)
+        self._auto_adjust_settings()
+
+    def _auto_adjust_settings(self) -> None:
+        """
+        Ajuste TP/SL après chaque tranche de AUTO_ADJUST_EVERY trades.
+        win_rate > 65% → TP +2% (max 35%)
+        win_rate < 45% → TP -2% (min 10%)
+        """
+        closed = self._trade_history
+        if len(closed) < AUTO_ADJUST_EVERY or len(closed) % AUTO_ADJUST_EVERY != 0:
+            return
+        last_n = closed[-AUTO_ADJUST_EVERY:]
+        wins = sum(1 for t in last_n if t.get("pnl_usd", 0) > 0)
+        win_rate = wins / len(last_n)
+        cfg = load_scalp_settings()
+        tp, sl = cfg["tp"], cfg["sl"]
+        old_tp = tp
+        if win_rate > 0.65:
+            tp = round(min(tp + 0.02, 0.35), 2)
+        elif win_rate < 0.45:
+            tp = round(max(tp - 0.02, 0.10), 2)
+        if tp != old_tp:
+            save_scalp_settings(tp, sl)
+            log.info("scalp auto-adjust: win_rate=%.0f%% → TP %.0f%% → %.0f%%",
+                     win_rate * 100, old_tp * 100, tp * 100)
+
+    def get_stats(self, days: int = 7) -> dict:
+        """Retourne les stats scalp des N derniers jours."""
+        cutoff = time.time() - days * 86400
+        recent = [t for t in self._trade_history if t.get("ts", 0) > cutoff]
+        if not recent:
+            return {"trades": 0, "win_rate": 0, "total_pnl": 0.0,
+                    "best": None, "worst": None, "by_signal": {}}
+        wins = sum(1 for t in recent if t.get("pnl_usd", 0) > 0)
+        total_pnl = sum(t.get("pnl_usd", 0) for t in recent)
+        best  = max(recent, key=lambda t: t.get("pnl_usd", 0))
+        worst = min(recent, key=lambda t: t.get("pnl_usd", 0))
+        by_signal: dict[str, dict] = {}
+        for t in recent:
+            sig = t.get("signal_type", "manual")
+            entry = by_signal.setdefault(sig, {"count": 0, "wins": 0})
+            entry["count"] += 1
+            if t.get("pnl_usd", 0) > 0:
+                entry["wins"] += 1
+        return {
+            "trades": len(recent),
+            "win_rate": round(wins / len(recent) * 100, 1),
+            "total_pnl": round(total_pnl, 2),
+            "best": best,
+            "worst": worst,
+            "by_signal": by_signal,
+        }
 
     # ── Scan ─────────────────────────────────────────────────────────────────
 
@@ -239,6 +422,7 @@ class ScalperTracker:
             if current >= pos.tp_price:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
                 log.info("scalp TP atteint: %s +%.1f%%", pos.question[:40], pnl_pct)
+                self._record_trade_result(pos, current, "TP")
                 try:
                     await push_scalp_tp_alert(pos, current, pnl_pct)
                 except Exception as e:
@@ -248,15 +432,16 @@ class ScalperTracker:
             elif current <= pos.sl_price:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
                 log.info("scalp SL atteint: %s %.1f%%", pos.question[:40], pnl_pct)
+                self._record_trade_result(pos, current, "SL")
                 try:
                     await push_scalp_sl_alert(pos, current, pnl_pct)
                 except Exception as e:
                     log.error("push_scalp_sl_alert: %s", e)
                 closed.append(token_id)
 
-            # Marché expiré → clôture forcée
             elif time.time() > pos.opened_at + MAX_RESOLUTION_MINUTES * 60:
                 log.info("scalp expiré (temps max): %s", pos.question[:40])
+                self._record_trade_result(pos, pos.entry_price, "EXPIRED")
                 closed.append(token_id)
 
         for token_id in closed:
@@ -271,40 +456,59 @@ class ScalperTracker:
     # ── Boucle principale ─────────────────────────────────────────────────────
 
     async def run_forever(self) -> None:
-        log.info("🔪 Scalper started — scan every %ds, monitor every %ds | max_resolution=%dmin",
-                 SCAN_INTERVAL, MONITOR_INTERVAL, MAX_RESOLUTION_MINUTES)
+        log.info(
+            "🔪 Scalper started — scan every %ds | drift_threshold=%.1f%% | max_resolution=%dmin",
+            SCAN_INTERVAL, DRIFT_THRESHOLD * 100, MAX_RESOLUTION_MINUTES,
+        )
         last_monitor = 0.0
+        auto_snipe   = os.getenv("AUTO_SNIPE", "false").lower() == "true"
 
         while True:
             try:
-                # Scan
                 signals = await self.scan_cycle()
                 if signals:
-                    log.info("scalper: %d marchés Up/Down détectés < %dmin", len(signals), MAX_RESOLUTION_MINUTES)
+                    log.info("scalper: %d marchés Up/Down détectés < %dmin",
+                             len(signals), MAX_RESOLUTION_MINUTES)
                     sniper = self._get_sniper()
                     from monitoring.push_alerts import push_scalp_signal
+
                     for sig in signals:
-                        m = self._market_cache.get(sig.market_id, {})
-                        sniper_fired = False
-                        if m:
+                        executed = False
+
+                        # ── Priorité 1 : signal drift Binance ─────────────────
+                        if auto_snipe:
                             try:
-                                sniper_sig = await sniper.monitor_market(m)
-                                if sniper_sig:
-                                    sniper_fired = True
-                                    log.info("scalper+sniper confluence: %s %s",
-                                             sig.question[:40], sniper_sig.signals)
-                                    await sniper._on_signal_detected(sniper_sig)
+                                drift_result = await self._compute_drift_signal(sig)
+                                if drift_result:
+                                    direction, label = drift_result
+                                    order_id = await self._auto_execute_scalp(sig, direction, label)
+                                    executed = bool(order_id)
                             except Exception as e:
-                                log.error("sniper analysis: %s", e)
-                        if not sniper_fired:
-                            # Fallback : alerte manuelle (boutons YES/NO)
+                                log.error("drift signal: %s", e)
+
+                        # ── Priorité 2 : confluence sniper ────────────────────
+                        if not executed:
+                            m = self._market_cache.get(sig.market_id, {})
+                            if m:
+                                try:
+                                    sniper_sig = await sniper.monitor_market(m)
+                                    if sniper_sig:
+                                        log.info("scalper+sniper confluence: %s %s",
+                                                 sig.question[:40], sniper_sig.signals)
+                                        await sniper._on_signal_detected(sniper_sig)
+                                        executed = True
+                                except Exception as e:
+                                    log.error("sniper analysis: %s", e)
+
+                        # ── Priorité 3 : alerte manuelle (fallback) ───────────
+                        if not executed:
                             try:
                                 await push_scalp_signal(sig)
                             except Exception as e:
                                 log.error("push_scalp_signal: %s", e)
+
                         self.mark_alerted(sig.market_id)
 
-                # Monitor positions
                 if self.positions and time.time() - last_monitor >= MONITOR_INTERVAL:
                     await self.monitor_positions()
                     last_monitor = time.time()
@@ -323,7 +527,6 @@ _tracker: Optional[ScalperTracker] = None
 
 
 def get_tracker() -> ScalperTracker:
-    """Retourne l'instance globale du scalper (pour les callbacks Telegram)."""
     global _tracker
     if _tracker is None:
         _tracker = ScalperTracker()
