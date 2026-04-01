@@ -1404,27 +1404,31 @@ async def cmd_emergency(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_scalp_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/scalp_settings [tp] [sl] — Affiche ou modifie le TP/SL du scalper."""
-    from core.scalper import load_scalp_settings, save_scalp_settings
-    L = "━━━━━━━━━━━━━━━"
-    args = context.args or []
-    if len(args) >= 2:
-        try:
-            tp = max(0.01, min(float(args[0].replace("%", "")) / 100, 0.99))
-            sl = max(0.01, min(float(args[1].replace("%", "")) / 100, 0.99))
-            save_scalp_settings(tp, sl)
-            await _safe_reply(update,
-                f"⚙️ <b>SCALP SETTINGS SAUVEGARDÉS</b>\n{L}\n"
-                f"<code>Take Profit  +{tp*100:.0f}%\n"
-                f"Stop Loss    -{sl*100:.0f}%</code>")
-            return
-        except ValueError:
-            pass
-    cfg = load_scalp_settings()
-    await _safe_reply(update,
-        f"⚙️ <b>SCALP SETTINGS</b>\n{L}\n"
-        f"<code>Take Profit  +{cfg['tp']*100:.0f}%\n"
-        f"Stop Loss    -{cfg['sl']*100:.0f}%</code>\n{L}\n"
-        f"<i>Usage : /scalp_settings 20 15</i>")
+    try:
+        from core.scalper import load_scalp_settings, save_scalp_settings
+        L = "━━━━━━━━━━━━━━━"
+        args = context.args or []
+        if len(args) >= 2:
+            try:
+                tp = max(0.01, min(float(args[0].replace("%", "")) / 100, 0.99))
+                sl = max(0.01, min(float(args[1].replace("%", "")) / 100, 0.99))
+                save_scalp_settings(tp, sl)
+                await _safe_reply(update,
+                    f"⚙️ <b>SCALP SETTINGS SAUVEGARDÉS</b>\n{L}\n"
+                    f"<code>Take Profit  +{tp*100:.0f}%\n"
+                    f"Stop Loss    -{sl*100:.0f}%</code>")
+                return
+            except ValueError:
+                pass
+        cfg = load_scalp_settings()
+        await _safe_reply(update,
+            f"⚙️ <b>SCALP SETTINGS</b>\n{L}\n"
+            f"<code>Take Profit  +{cfg['tp']*100:.0f}%\n"
+            f"Stop Loss    -{cfg['sl']*100:.0f}%</code>\n{L}\n"
+            f"<i>Usage : /scalp_settings 20 15</i>")
+    except Exception as e:
+        log.exception("cmd_scalp_settings: %s", e)
+        await _safe_reply(update, f"⚙️ <b>SCALP SETTINGS</b>\n━━━━━━━━━━━━━━━\n<code>ERREUR — {e}</code>")
 
 
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
