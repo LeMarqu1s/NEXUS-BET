@@ -377,6 +377,8 @@ class ScalperTracker:
             if market_id in self._alerted_markets:
                 continue
 
+            log.info("scalper: marché Up/Down trouvé — question=%r", question)
+
             yes_token, no_token = self._extract_tokens(m)
             if not yes_token:
                 continue
