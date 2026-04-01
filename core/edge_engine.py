@@ -327,7 +327,7 @@ class EdgeEngine:
             t = tokens[best_idx]
             best_token_id = t.get("token_id", t) if isinstance(t, dict) else str(t)
 
-        log.info(
+        log.debug(
             "MULTI_OUTCOME: sum=%.3f best=[%s] edge=%.2f%%",
             sum_prices, best_outcome, edge_pct * 100,
         )
@@ -434,7 +434,7 @@ class EdgeEngine:
             t = tokens[best_idx]
             best_token_id = t.get("token_id", t) if isinstance(t, dict) else str(t)
 
-        log.info(
+        log.debug(
             "SCALAR: bin=[%s] fair=%.3f market=%.3f edge=%.2f%%",
             bin_str, best_fair, best_price, best_edge * 100,
         )
@@ -491,7 +491,7 @@ class EdgeEngine:
 
         question = (market.get("question") or "")[:120]
         market_id = str(market.get("conditionId", market.get("condition_id", market.get("id", ""))))
-        log.info(
+        log.debug(
             "BOND: %s @ %.1f%% · %.1f days · return=%.1f%%",
             question[:40], polymarket_price * 100, days, edge_pct * 100,
         )
