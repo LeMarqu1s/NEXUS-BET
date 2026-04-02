@@ -389,6 +389,9 @@ class ScalperTracker:
 
     async def scan_cycle(self) -> list[ScalpSignal]:
         markets = await self._fetch_markets()
+        log.info("scan_cycle: %d marchés bruts récupérés | exemples: %s",
+                 len(markets),
+                 [m.get("question","")[:40] for m in markets[:3]])
         signals: list[ScalpSignal] = []
         for m in markets:
             question = m.get("question") or ""
