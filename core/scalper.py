@@ -413,6 +413,8 @@ class ScalperTracker:
                 if signals:
                     log.info("scalper: %d marchés Up/Down détectés < %dmin",
                              len(signals), MAX_RESOLUTION_MINUTES)
+                else:
+                    log.debug("scalper: 0 marchés Up/Down actifs (hors horaires ou pas encore créés)")
                     sniper = self._get_sniper()
                     from monitoring.push_alerts import push_scalp_signal
                     for sig in signals:
