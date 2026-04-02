@@ -29,6 +29,7 @@ MAX_RESOLUTION_MINUTES = 30
 
 SETTINGS_FILE  = Path(__file__).resolve().parent.parent / "scalp_settings.json"
 HISTORY_FILE   = Path(__file__).resolve().parent.parent / "scalp_history.json"
+CAPITAL_FILE   = Path(__file__).resolve().parent.parent / "scalp_capital.json"
 DEFAULT_TP     = 0.20
 DEFAULT_SL     = 0.15
 
@@ -36,6 +37,13 @@ DRIFT_THRESHOLD  = 0.004   # 0.4% drift minimum pour déclencher
 POLY_LAG_MAX_YES = 0.68    # drift>0 mais YES < 68% → lag → BUY YES
 POLY_LAG_MIN_YES = 0.32    # drift<0 mais YES > 32% → lag → BUY NO
 AUTO_ADJUST_EVERY = 10
+
+# ── Gestion du capital avec réinvestissement ──────────────────────────────────
+KELLY_FRACTION   = 0.05    # 5% du capital par trade
+REINVEST_RATIO   = 0.80    # 80% des profits réinvestis
+WITHDRAW_RATIO   = 0.20    # 20% des profits retirés (non-réinvestis)
+MIN_TRADE_USD    = 5.0     # taille minimale
+MAX_TRADE_USD    = 200.0   # plafond de sécurité par trade
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -103,6 +111,31 @@ def save_scalp_history(history: list[dict]) -> None:
         log.debug("save_scalp_history: %s", e)
 
 
+# ── Capital avec réinvestissement ─────────────────────────────────────────────
+
+def load_scalp_capital() -> dict:
+    try:
+        if CAPITAL_FILE.exists():
+            return json.loads(CAPITAL_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    base = float(os.getenv("POLYMARKET_CAPITAL_USD", "500"))
+    return {"capital": base, "total_withdrawn": 0.0, "total_reinvested": 0.0}
+
+
+def save_scalp_capital(data: dict) -> None:
+    try:
+        CAPITAL_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.debug("save_scalp_capital: %s", e)
+
+
+def compute_trade_size(capital: float) -> float:
+    """Taille du trade = KELLY_FRACTION × capital, entre MIN et MAX."""
+    size = capital * KELLY_FRACTION
+    return round(max(MIN_TRADE_USD, min(size, MAX_TRADE_USD)), 2)
+
+
 # ── ScalperTracker ────────────────────────────────────────────────────────────
 
 class ScalperTracker:
@@ -113,6 +146,11 @@ class ScalperTracker:
         self._market_cache: dict[str, dict] = {}
         self._sniper: Optional["PolymarketSniper"] = None
         self._trade_history: list[dict] = load_scalp_history()
+        self._capital_data: dict = load_scalp_capital()
+        log.info("scalp capital: %.2f USDC (retiré: %.2f | réinvesti: %.2f)",
+                 self._capital_data["capital"],
+                 self._capital_data["total_withdrawn"],
+                 self._capital_data["total_reinvested"])
 
     def _get_sniper(self) -> "PolymarketSniper":
         if self._sniper is None:
@@ -248,8 +286,7 @@ class ScalperTracker:
         """Exécute un trade scalp automatiquement. Retourne l'order_id ou None."""
         from execution.order_manager import OrderManager, OrderConfig
         cfg      = load_scalp_settings()
-        cap      = float(os.getenv("POLYMARKET_CAPITAL_USD", "1000"))
-        size_usd = round(min(cap * 0.05, 50.0), 1)
+        size_usd = compute_trade_size(self._capital_data["capital"])
         token_id    = sig.token_id_yes if direction == "YES" else sig.token_id_no
         entry_price = sig.yes_price    if direction == "YES" else sig.no_price
         order_cfg = OrderConfig(
@@ -276,11 +313,26 @@ class ScalperTracker:
 
     def _record_trade_result(self, pos: ScalpPosition, exit_price: float, exit_reason: str) -> None:
         pnl_usd = round((exit_price - pos.entry_price) / pos.entry_price * pos.size_usd, 4)
+        # Compounding : réinvestir 80% des profits, retirer 20%
+        cap = self._capital_data
+        if pnl_usd > 0:
+            reinvest  = round(pnl_usd * REINVEST_RATIO, 4)
+            withdrawn = round(pnl_usd * WITHDRAW_RATIO, 4)
+            cap["capital"]          = round(cap["capital"] + reinvest, 4)
+            cap["total_reinvested"] = round(cap.get("total_reinvested", 0) + reinvest, 4)
+            cap["total_withdrawn"]  = round(cap.get("total_withdrawn", 0) + withdrawn, 4)
+            log.info("scalp compounding: +%.2f USDC | capital=%.2f | retiré cumulé=%.2f",
+                     reinvest, cap["capital"], cap["total_withdrawn"])
+        elif pnl_usd < 0:
+            cap["capital"] = round(max(cap["capital"] + pnl_usd, 0), 4)
+            log.info("scalp perte: %.2f USDC | capital restant=%.2f", pnl_usd, cap["capital"])
+        save_scalp_capital(cap)
         self._trade_history.append({
             "ts": time.time(), "question": pos.question[:60],
             "side": pos.side, "entry": pos.entry_price, "exit": exit_price,
             "pnl_usd": pnl_usd, "exit_reason": exit_reason,
             "signal_type": pos.signal_type,
+            "capital_after": cap["capital"],
         })
         save_scalp_history(self._trade_history)
         self._auto_adjust_settings()
@@ -324,6 +376,10 @@ class ScalperTracker:
             "best":  max(recent, key=lambda t: t.get("pnl_usd", 0)),
             "worst": min(recent, key=lambda t: t.get("pnl_usd", 0)),
             "by_signal": by_signal,
+            "capital": self._capital_data["capital"],
+            "total_withdrawn": self._capital_data.get("total_withdrawn", 0.0),
+            "total_reinvested": self._capital_data.get("total_reinvested", 0.0),
+            "next_trade_size": compute_trade_size(self._capital_data["capital"]),
         }
 
     # ── Scan ─────────────────────────────────────────────────────────────────
