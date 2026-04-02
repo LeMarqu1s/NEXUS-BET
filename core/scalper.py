@@ -312,6 +312,9 @@ class ScalperTracker:
     # ── Tracking & auto-ajustement ────────────────────────────────────────────
 
     def _record_trade_result(self, pos: ScalpPosition, exit_price: float, exit_reason: str) -> None:
+        if pos.entry_price <= 0:
+            log.warning("entry_price invalide pour %s, trade ignoré", pos.question[:40])
+            return
         pnl_usd = round((exit_price - pos.entry_price) / pos.entry_price * pos.size_usd, 4)
         # Compounding : réinvestir 80% des profits, retirer 20%
         cap = self._capital_data
@@ -400,7 +403,7 @@ class ScalperTracker:
             if minutes is None or minutes <= 0:
                 continue
             # Fenêtre courte pour up/down 5-15min, large pour journaliers
-            max_mins = MAX_RESOLUTION_MINUTES if is_updown and "am et" in q_lower else 480
+            max_mins = MAX_RESOLUTION_MINUTES if is_updown and minutes <= 60 else 480
             if minutes > max_mins:
                 continue
             market_id = str(m.get("conditionId") or m.get("id") or "")
@@ -433,6 +436,9 @@ class ScalperTracker:
         for token_id, pos in self.positions.items():
             current = await self._fetch_current_price(token_id)
             if current is None:
+                continue
+            if pos.entry_price <= 0:
+                closed.append(token_id)
                 continue
             if current >= pos.tp_price:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
@@ -481,8 +487,6 @@ class ScalperTracker:
                 if signals:
                     log.info("scalper: %d marchés Up/Down détectés < %dmin",
                              len(signals), MAX_RESOLUTION_MINUTES)
-                else:
-                    log.debug("scalper: 0 marchés Up/Down actifs (hors horaires ou pas encore créés)")
                     sniper = self._get_sniper()
                     from monitoring.push_alerts import push_scalp_signal
                     for sig in signals:
@@ -521,6 +525,9 @@ class ScalperTracker:
                                 log.error("push_scalp_signal: %s", e)
 
                         self.mark_alerted(sig.market_id)
+
+                else:
+                    log.debug("scalper: 0 marchés actifs (hors horaires ou pas encore créés)")
 
                 if self.positions and time.time() - last_monitor >= MONITOR_INTERVAL:
                     await self.monitor_positions()

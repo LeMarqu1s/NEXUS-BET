@@ -275,6 +275,8 @@ async def push_scalp_signal(signal) -> None:
         else:
             return
 
+    sim_mode = os.getenv("SIMULATION_MODE", "true").lower() != "false"
+    sim_tag  = " <b>[SIM]</b>" if sim_mode else ""
     safe_q   = html.escape(signal.question[:60])
     yes_pct  = int(signal.yes_price * 100)
     no_pct   = int(signal.no_price  * 100)
@@ -282,7 +284,7 @@ async def push_scalp_signal(signal) -> None:
     L = "━━━━━━━━━━━━━━━"
 
     text = (
-        f"🔪 <b>SCALP SIGNAL</b>\n{L}\n"
+        f"🔪 <b>SCALP SIGNAL</b>{sim_tag}\n{L}\n"
         f"<b>{safe_q}</b>\n\n"
         f"<code>"
         f"YES   {yes_pct}¢\n"

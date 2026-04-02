@@ -66,9 +66,9 @@ def _parse_market_start_ts(question: str) -> Optional[float]:
         offset = -4 if 4 <= month_num <= 10 else -5
         dt_utc = dt.replace(tzinfo=timezone(timedelta(hours=offset)))
         ts = dt_utc.timestamp()
-        # Sanity check : le timestamp doit être récent (< 24h dans le passé)
-        if time.time() - ts > 86400:
-            ts += 365 * 86400  # essayer l'année suivante
+        # Sanity check : refuser les timestamps > 7 jours dans le passé
+        if time.time() - ts > 7 * 86400:
+            return None
         return ts
     except Exception as e:
         log.debug("_parse_market_start_ts: %s", e)
@@ -81,7 +81,7 @@ async def get_reference_price(question: str, symbol: str = "BTCUSDT") -> Optiona
     Utilise les klines Binance 1-minute au timestamp de début du marché.
     Cache par question pour éviter les appels répétés.
     """
-    cache_key = f"{symbol}:{question[:40]}"
+    cache_key = f"{symbol}:{question[:80]}"
     cached = _ref_cache.get(cache_key)
     if cached and time.time() - cached[1] < 300:   # cache 5min
         return cached[0]
@@ -104,7 +104,7 @@ async def get_reference_price(question: str, symbol: str = "BTCUSDT") -> Optiona
             )
             if r.status_code == 200:
                 klines = r.json()
-                if klines and isinstance(klines, list) and len(klines[0]) > 1:
+                if klines and isinstance(klines, list) and len(klines) > 0 and len(klines[0]) > 1:
                     ref = float(klines[0][1])   # open price du chandelier
                     _ref_cache[cache_key] = (ref, time.time())
                     log.debug("get_reference_price %s @ %s = %.2f", symbol, question[22:40], ref)
