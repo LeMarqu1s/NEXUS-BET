@@ -416,6 +416,9 @@ class ScalperTracker:
             market_id = str(m.get("conditionId") or m.get("id") or "")
             if market_id in self._alerted_markets:
                 continue
+            # Dédup par question (évite doublons si même marché avec ID différent)
+            if question in self._alerted_markets:
+                continue
             yes_token, no_token = self._extract_tokens(m)
             if not yes_token:
                 continue
@@ -507,10 +510,17 @@ class ScalperTracker:
                             except Exception as e:
                                 log.error("drift signal: %s", e)
 
-                        # Priorité 2 : meilleur prix disponible (NO si yes_price < 0.20)
+                        # Priorité 2 : côté le moins cher (plus de potentiel upside)
+                        # Ignore si les deux côtés sont > 0.80 (TP irréaliste sur Polymarket)
                         if direction is None:
-                            direction = "NO" if sig.yes_price < 0.20 else "YES"
-                            label = "BEST_PRICE"
+                            if sig.yes_price > 0.80 and sig.no_price > 0.80:
+                                log.debug("scalper: skip %s — prix trop élevés (YES=%.2f NO=%.2f)",
+                                          sig.question[:40], sig.yes_price, sig.no_price)
+                                self.mark_alerted(sig.market_id)
+                                self.mark_alerted(sig.question)
+                                continue
+                            direction = "YES" if sig.yes_price <= sig.no_price else "NO"
+                            label = "CHEAP_SIDE"
 
                         # Auto-exécution systématique
                         try:
@@ -524,6 +534,7 @@ class ScalperTracker:
                             log.error("auto_execute: %s", e)
 
                         self.mark_alerted(sig.market_id)
+                        self.mark_alerted(sig.question)  # dédup par question
                         await asyncio.sleep(2)  # anti-flood entre signaux
 
                 else:
