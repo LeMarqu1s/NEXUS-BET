@@ -525,6 +525,7 @@ class ScalperTracker:
                                 log.error("push_scalp_signal: %s", e)
 
                         self.mark_alerted(sig.market_id)
+                        await asyncio.sleep(2)  # anti-flood entre signaux
 
                 else:
                     log.debug("scalper: 0 marchés actifs (hors horaires ou pas encore créés)")
