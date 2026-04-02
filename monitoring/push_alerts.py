@@ -8,11 +8,15 @@ import asyncio
 import html
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
 
 log = logging.getLogger("nexus.push_alerts")
+
+# ── Flood control global ──────────────────────────────────────────────────────
+_flood_until: float = 0.0  # timestamp UNIX jusqu'auquel on ne tente plus d'envoyer
 
 
 # ── Helpers Supabase ──────────────────────────────────────────────────────────
@@ -150,7 +154,10 @@ async def push_sniper_alert(signal) -> None:
             "push_sniper_alert: sent to %d/%d subscribers | signals=%s",
             ok, len(tasks), signal.signals,
         )
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
 
 
 async def push_auto_snipe_notification(signal, order_id: str | None) -> None:
@@ -188,11 +195,19 @@ async def push_auto_snipe_notification(signal, order_id: str | None) -> None:
     tasks = [_send_safe(bot, u.get("telegram_chat_id", ""), message, None)
              for u in users if u.get("telegram_chat_id")]
     await asyncio.gather(*tasks, return_exceptions=True)
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
 
 
 async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
     """Envoie un message sans lever d'exception (utilisateur bloqué, etc.)."""
+    global _flood_until
+    if time.time() < _flood_until:
+        remaining = int(_flood_until - time.time())
+        log.warning("_send_safe: flood control actif encore %ds — message ignoré", remaining)
+        return False
     try:
         await bot.send_message(
             chat_id=chat_id,
@@ -202,7 +217,15 @@ async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
         )
         return True
     except Exception as e:
-        log.debug("_send_safe(%s): %s", chat_id, e)
+        err = str(e)
+        if "Flood control" in err or "retry after" in err.lower():
+            import re
+            m = re.search(r"(\d+)", err)
+            retry_secs = int(m.group(1)) if m else 60
+            _flood_until = time.time() + retry_secs
+            log.warning("_send_safe: flood control Telegram — pause %ds", retry_secs)
+        else:
+            log.debug("_send_safe(%s): %s", chat_id, e)
         return False
 
 
@@ -241,7 +264,10 @@ async def push_confirm_request(signal, size_usd: float, chat_ids: list[str]) -> 
             return_exceptions=True,
         )
     finally:
-        await bot.close()
+        try:
+            await bot.close()
+        except Exception:
+            pass
     try:
         return await asyncio.wait_for(asyncio.shield(fut), timeout=60.0)
     except asyncio.TimeoutError:
@@ -303,7 +329,10 @@ async def push_scalp_signal(signal) -> None:
              for u in users if u.get("telegram_chat_id")]
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
 
 
 async def push_scalp_tp_alert(pos, current_price: float, pnl_pct: float) -> None:
@@ -330,7 +359,10 @@ async def push_scalp_tp_alert(pos, current_price: float, pnl_pct: float) -> None
     bot = Bot(token=token)
     tasks = [_send_safe(bot, cid, text, kb) for cid in pos.chat_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
 
 
 async def push_scalp_sl_alert(pos, current_price: float, pnl_pct: float) -> None:
@@ -357,7 +389,10 @@ async def push_scalp_sl_alert(pos, current_price: float, pnl_pct: float) -> None
     bot = Bot(token=token)
     tasks = [_send_safe(bot, cid, text, kb) for cid in pos.chat_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
 
 
 async def push_sniper_position_update(
@@ -392,4 +427,7 @@ async def push_sniper_position_update(
              for u in users if u.get("telegram_chat_id")]
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    await bot.close()
+    try:
+        await bot.close()
+    except Exception:
+        pass
