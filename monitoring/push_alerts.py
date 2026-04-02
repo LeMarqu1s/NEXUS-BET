@@ -15,8 +15,25 @@ import httpx
 
 log = logging.getLogger("nexus.push_alerts")
 
-# ── Flood control global ──────────────────────────────────────────────────────
-_flood_until: float = 0.0  # timestamp UNIX jusqu'auquel on ne tente plus d'envoyer
+# ── Flood control persistant (survit aux redémarrages) ────────────────────────
+_FLOOD_FILE = "/tmp/tg_flood_until.txt"
+_flood_until: float = 0.0
+
+def _load_flood_until() -> float:
+    try:
+        with open(_FLOOD_FILE) as f:
+            return float(f.read().strip())
+    except Exception:
+        return 0.0
+
+def _save_flood_until(ts: float) -> None:
+    try:
+        with open(_FLOOD_FILE, "w") as f:
+            f.write(str(ts))
+    except Exception:
+        pass
+
+_flood_until = _load_flood_until()  # charge au démarrage du module
 
 
 # ── Helpers Supabase ──────────────────────────────────────────────────────────
@@ -223,7 +240,8 @@ async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
             m = re.search(r"(\d+)", err)
             retry_secs = int(m.group(1)) if m else 60
             _flood_until = time.time() + retry_secs
-            log.warning("_send_safe: flood control Telegram — pause %ds", retry_secs)
+            _save_flood_until(_flood_until)
+            log.warning("_send_safe: flood control Telegram — pause %ds (persisté)", retry_secs)
         else:
             log.warning("_send_safe(%s): %s", chat_id, e)
         return False
@@ -332,7 +350,12 @@ async def push_scalp_signal(signal) -> None:
     tasks = [_send_safe(bot, u["telegram_chat_id"], text, kb)
              for u in users if u.get("telegram_chat_id")]
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        log.info("push_scalp_signal: envoi à %d destinataire(s) — %s", len(tasks), signal.question[:40])
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        ok = sum(1 for r in results if r is True)
+        log.info("push_scalp_signal: %d/%d envoyés avec succès", ok, len(tasks))
+    else:
+        log.warning("push_scalp_signal: aucun destinataire trouvé")
     try:
         await bot.close()
     except Exception:
