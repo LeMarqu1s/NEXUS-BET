@@ -358,3 +358,38 @@ async def push_scalp_sl_alert(pos, current_price: float, pnl_pct: float) -> None
     tasks = [_send_safe(bot, cid, text, kb) for cid in pos.chat_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
     await bot.close()
+
+
+async def push_sniper_position_update(
+    token_id: str, entry: float, current: float, pnl_pct: float, reason: str
+) -> None:
+    """Notification TP/SL d'une position sniper active."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return
+    users = await get_active_subscribers()
+    fallback_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not users:
+        if fallback_id:
+            users = [{"telegram_chat_id": fallback_id}]
+        else:
+            return
+    sim_tag = " [SIM]" if os.getenv("SIMULATION_MODE", "true").lower() != "false" else ""
+    icon = "🎯" if reason == "TP" else "🛑"
+    L = "━━━━━━━━━━━━━━━"
+    text = (
+        f"{icon} <b>SNIPE {reason}</b>{sim_tag}\n{L}\n"
+        f"<code>"
+        f"TOKEN  {token_id[:16]}...\n"
+        f"ENTRÉE {entry:.4f}\n"
+        f"ACTUEL {current:.4f}\n"
+        f"P&L    {pnl_pct:+.1f}%"
+        f"</code>\n{L}"
+    )
+    from telegram import Bot
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, u["telegram_chat_id"], text, None)
+             for u in users if u.get("telegram_chat_id")]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await bot.close()

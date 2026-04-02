@@ -430,6 +430,7 @@ class PolymarketSniper:
         log.info("🎯 Sniper started — scanning every %ds | VOLUME_SPIKE x%.0f | MOMENTUM >%.0f%% | SPREAD >%.0f%% | WHALE >$%.0f",
                  SCAN_INTERVAL, VOLUME_SPIKE_MULTIPLIER, MOMENTUM_THRESHOLD * 100,
                  SPREAD_THRESHOLD * 100, WHALE_THRESHOLD_USD)
+        last_position_check = 0.0
         while True:
             try:
                 markets = await self._fetch_markets()
@@ -447,8 +448,43 @@ class PolymarketSniper:
                         log.info("Sniper: %d signal(s) fired on %d markets", fired, len(markets))
                     else:
                         log.debug("Sniper: 0 signals on %d markets", len(markets))
+
+                # Monitoring des positions actives toutes les 60s
+                if self.active_positions and time.time() - last_position_check >= 60:
+                    await self._monitor_active_positions()
+                    last_position_check = time.time()
+
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.error("Sniper loop error: %s", e)
             await asyncio.sleep(SCAN_INTERVAL)
+
+    async def _monitor_active_positions(self) -> None:
+        """Vérifie TP/SL/EXPIRY sur les positions sniper actives."""
+        from monitoring.push_alerts import push_sniper_position_update
+        TP_PCT = 0.40
+        SL_PCT = 0.25
+        closed = []
+        for token_id, entry_price in list(self.active_positions.items()):
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as c:
+                    r = await c.get(f"{CLOB_URL}/last-trade-price", params={"token_id": token_id})
+                    if r.status_code != 200:
+                        continue
+                    current = float(r.json().get("price", 0))
+                if not current:
+                    continue
+                pnl_pct = (current - entry_price) / entry_price * 100
+                if current >= entry_price * (1 + TP_PCT):
+                    log.info("sniper TP atteint: token=%s +%.1f%%", token_id[:12], pnl_pct)
+                    await push_sniper_position_update(token_id, entry_price, current, pnl_pct, "TP")
+                    closed.append(token_id)
+                elif current <= entry_price * (1 - SL_PCT):
+                    log.info("sniper SL atteint: token=%s %.1f%%", token_id[:12], pnl_pct)
+                    await push_sniper_position_update(token_id, entry_price, current, pnl_pct, "SL")
+                    closed.append(token_id)
+            except Exception as e:
+                log.debug("_monitor_active_positions %s: %s", token_id[:12], e)
+        for token_id in closed:
+            self.active_positions.pop(token_id, None)
