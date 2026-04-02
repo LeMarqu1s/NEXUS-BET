@@ -123,39 +123,46 @@ class ScalperTracker:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _fetch_markets(self) -> list[dict]:
-        """Deux requêtes : marchés récents (Up/Down 5min) + top volume."""
+        """
+        Récupère les marchés crypto scalp-able via l'endpoint /events.
+        Retourne une liste de dicts compatibles avec scan_cycle (chaque dict
+        représente un sub-market extrait de son event parent).
+        """
+        SCALP_KEYWORDS = ("up or down", "bitcoin above", "btc above",
+                          "ethereum above", "bitcoin price on", "ethereum price on",
+                          "btc 5 minute", "bitcoin 5 minute")
         results: list[dict] = []
         seen_ids: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
-                # Requête 1 : marchés récemment créés → capture les Up/Down 5min
-                r1 = await c.get(
-                    f"{GAMMA_URL}/markets",
-                    params={"limit": 200, "active": "true", "closed": "false",
-                            "order": "startDate", "ascending": "false"},
-                )
-                if r1.status_code == 200:
-                    data = r1.json()
-                    for m in (data if isinstance(data, list) else data.get("data", [])):
-                        mid = str(m.get("conditionId") or m.get("id") or "")
-                        if mid and mid not in seen_ids:
-                            seen_ids.add(mid)
-                            results.append(m)
-                # Requête 2 : top volume (marchés généraux)
-                r2 = await c.get(
-                    f"{GAMMA_URL}/markets",
-                    params={"limit": 100, "active": "true", "closed": "false",
+                r = await c.get(
+                    f"{GAMMA_URL}/events",
+                    params={"limit": 300, "active": "true", "closed": "false",
                             "order": "volume24hr", "ascending": "false"},
                 )
-                if r2.status_code == 200:
-                    data = r2.json()
-                    for m in (data if isinstance(data, list) else data.get("data", [])):
+                if r.status_code != 200:
+                    return []
+                events = r.json()
+                if isinstance(events, dict):
+                    events = events.get("data", [])
+                for event in events:
+                    title = (event.get("title") or "").lower()
+                    if not any(kw in title for kw in SCALP_KEYWORDS):
+                        continue
+                    sub_markets = event.get("markets") or []
+                    for m in sub_markets:
                         mid = str(m.get("conditionId") or m.get("id") or "")
-                        if mid and mid not in seen_ids:
-                            seen_ids.add(mid)
-                            results.append(m)
+                        if not mid or mid in seen_ids:
+                            continue
+                        # Injecter endDate du parent si absent du sub-market
+                        if not m.get("endDate") and event.get("endDate"):
+                            m = dict(m)
+                            m["endDate"] = event["endDate"]
+                        seen_ids.add(mid)
+                        results.append(m)
         except Exception as e:
             log.warning("_fetch_markets: %s", e)
+        log.debug("_fetch_markets: %d sub-marchés crypto extraits", len(results))
         return results
 
     def _minutes_remaining(self, market: dict) -> Optional[float]:
@@ -326,10 +333,19 @@ class ScalperTracker:
         signals: list[ScalpSignal] = []
         for m in markets:
             question = m.get("question") or ""
-            if "up or down" not in question.lower():
+            q_lower = question.lower()
+            # Accepter : up/down court terme, above/price journalier crypto
+            is_updown  = "up or down" in q_lower
+            is_above   = any(kw in q_lower for kw in ("bitcoin above", "ethereum above", "btc above"))
+            is_range   = any(kw in q_lower for kw in ("bitcoin price on", "ethereum price on"))
+            if not (is_updown or is_above or is_range):
                 continue
             minutes = self._minutes_remaining(m)
-            if minutes is None or minutes <= 0 or minutes > MAX_RESOLUTION_MINUTES:
+            if minutes is None or minutes <= 0:
+                continue
+            # Fenêtre courte pour up/down 5-15min, large pour journaliers
+            max_mins = MAX_RESOLUTION_MINUTES if is_updown and "am et" in q_lower else 480
+            if minutes > max_mins:
                 continue
             market_id = str(m.get("conditionId") or m.get("id") or "")
             if market_id in self._alerted_markets:
