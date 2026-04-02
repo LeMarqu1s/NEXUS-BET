@@ -123,27 +123,25 @@ class ScalperTracker:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _fetch_markets(self) -> list[dict]:
-        """Deux requêtes : une ciblée 'up or down', une générale par volume."""
+        """Deux requêtes : marchés récents (Up/Down 5min) + top volume."""
         results: list[dict] = []
         seen_ids: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
-                # Requête 1 : marchés "up or down" spécifiquement
+                # Requête 1 : marchés récemment créés → capture les Up/Down 5min
                 r1 = await c.get(
                     f"{GAMMA_URL}/markets",
-                    params={"limit": 100, "active": "true", "closed": "false",
-                            "tag_slug": "crypto", "order": "endDate", "ascending": "true"},
+                    params={"limit": 200, "active": "true", "closed": "false",
+                            "order": "startDate", "ascending": "false"},
                 )
                 if r1.status_code == 200:
                     data = r1.json()
-                    markets = data if isinstance(data, list) else data.get("data", [])
-                    for m in markets:
-                        if "up or down" in (m.get("question") or "").lower():
-                            mid = str(m.get("conditionId") or m.get("id") or "")
-                            if mid and mid not in seen_ids:
-                                seen_ids.add(mid)
-                                results.append(m)
-                # Requête 2 : top 100 par volume (fallback)
+                    for m in (data if isinstance(data, list) else data.get("data", [])):
+                        mid = str(m.get("conditionId") or m.get("id") or "")
+                        if mid and mid not in seen_ids:
+                            seen_ids.add(mid)
+                            results.append(m)
+                # Requête 2 : top volume (marchés généraux)
                 r2 = await c.get(
                     f"{GAMMA_URL}/markets",
                     params={"limit": 100, "active": "true", "closed": "false",
@@ -151,15 +149,13 @@ class ScalperTracker:
                 )
                 if r2.status_code == 200:
                     data = r2.json()
-                    markets = data if isinstance(data, list) else data.get("data", [])
-                    for m in markets:
+                    for m in (data if isinstance(data, list) else data.get("data", [])):
                         mid = str(m.get("conditionId") or m.get("id") or "")
                         if mid and mid not in seen_ids:
                             seen_ids.add(mid)
                             results.append(m)
         except Exception as e:
             log.warning("_fetch_markets: %s", e)
-        log.debug("_fetch_markets: %d marchés total (%d up/down ciblés)", len(results), len(seen_ids))
         return results
 
     def _minutes_remaining(self, market: dict) -> Optional[float]:
