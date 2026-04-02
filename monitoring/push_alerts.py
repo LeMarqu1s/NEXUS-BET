@@ -225,7 +225,7 @@ async def _send_safe(bot, chat_id: str, text: str, markup) -> bool:
             _flood_until = time.time() + retry_secs
             log.warning("_send_safe: flood control Telegram — pause %ds", retry_secs)
         else:
-            log.debug("_send_safe(%s): %s", chat_id, e)
+            log.warning("_send_safe(%s): %s", chat_id, e)
         return False
 
 
@@ -319,9 +319,13 @@ async def push_scalp_signal(signal) -> None:
         f"</code>\n{L}\n"
         f"⚠️ <i>Pas un conseil en investissement.</i>"
     )
+    # callback_data limité à 64 octets par Telegram — on tronque les IDs
+    mid_short = signal.market_id[-20:]
+    yes_short = signal.token_id_yes[-20:]
+    no_short  = signal.token_id_no[-20:]
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"✅ BUY YES {yes_pct}¢", callback_data=f"scalp_yes_{signal.market_id}|{signal.token_id_yes}"),
-        InlineKeyboardButton(f"✅ BUY NO {no_pct}¢",  callback_data=f"scalp_no_{signal.market_id}|{signal.token_id_no}"),
+        InlineKeyboardButton(f"✅ BUY YES {yes_pct}¢", callback_data=f"sy_{mid_short}|{yes_short}"),
+        InlineKeyboardButton(f"✅ BUY NO {no_pct}¢",  callback_data=f"sn_{mid_short}|{no_short}"),
     ]])
 
     bot = Bot(token=token)
