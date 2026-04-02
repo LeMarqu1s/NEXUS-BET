@@ -393,6 +393,10 @@ class ScalperTracker:
         for m in markets:
             question = m.get("question") or ""
             q_lower = question.lower()
+            # Crypto only — exclure S&P, indices, sports, etc.
+            is_crypto  = any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth", "crypto"))
+            if not is_crypto:
+                continue
             # Accepter : up/down court terme, above/price journalier crypto
             is_updown  = "up or down" in q_lower
             is_above   = any(kw in q_lower for kw in ("bitcoin above", "ethereum above", "btc above"))
@@ -487,41 +491,34 @@ class ScalperTracker:
                 if signals:
                     log.info("scalper: %d marchés Up/Down détectés < %dmin",
                              len(signals), MAX_RESOLUTION_MINUTES)
-                    sniper = self._get_sniper()
-                    from monitoring.push_alerts import push_scalp_signal
+                    from monitoring.push_alerts import push_scalp_executed
                     for sig in signals:
-                        executed = False
+                        direction, label = None, "DEFAULT"
 
-                        # Priorité 1 : signal drift Binance (AUTO_SNIPE requis)
+                        # Priorité 1 : drift Binance
                         if auto_snipe:
                             try:
                                 drift = await self._compute_drift_signal(sig)
                                 if drift:
                                     direction, label = drift
-                                    order_id = await self._auto_execute_scalp(sig, direction, label)
-                                    executed = bool(order_id)
                             except Exception as e:
                                 log.error("drift signal: %s", e)
 
-                        # Priorité 2 : confluence sniper
-                        if not executed:
-                            m = self._market_cache.get(sig.market_id, {})
-                            if m:
-                                try:
-                                    sniper_sig = await sniper.monitor_market(m)
-                                    if sniper_sig:
-                                        log.info("scalper+sniper confluence: %s %s",
-                                                 sig.question[:40], sniper_sig.signals)
-                                        await sniper._on_signal_detected(sniper_sig)
-                                        executed = True
-                                except Exception as e:
-                                    log.error("sniper analysis: %s", e)
+                        # Priorité 2 : meilleur prix disponible (NO si yes_price < 0.20)
+                        if direction is None:
+                            direction = "NO" if sig.yes_price < 0.20 else "YES"
+                            label = "BEST_PRICE"
 
-                        # Toujours notifier (auto-exec ou manuel)
+                        # Auto-exécution systématique
                         try:
-                            await push_scalp_signal(sig)
+                            order_id = await self._auto_execute_scalp(sig, direction, label)
+                            if order_id:
+                                cfg      = load_scalp_settings()
+                                cfg["size_usd"] = compute_trade_size(self._capital_data["capital"])
+                                entry    = sig.yes_price if direction == "YES" else sig.no_price
+                                await push_scalp_executed(sig, direction, entry, order_id, cfg)
                         except Exception as e:
-                            log.error("push_scalp_signal: %s", e)
+                            log.error("auto_execute: %s", e)
 
                         self.mark_alerted(sig.market_id)
                         await asyncio.sleep(2)  # anti-flood entre signaux

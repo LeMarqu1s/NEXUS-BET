@@ -362,6 +362,48 @@ async def push_scalp_signal(signal) -> None:
         pass
 
 
+async def push_scalp_executed(signal, direction: str, entry: float, order_id: str, cfg: dict) -> None:
+    """Notification d'un trade scalp auto-exécuté (pas de boutons — info uniquement)."""
+    from telegram import Bot
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        return
+    users = await get_active_subscribers()
+    fallback_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not users:
+        if fallback_id:
+            users = [{"telegram_chat_id": fallback_id}]
+        else:
+            return
+
+    sim_tag = " <b>[SIM]</b>" if os.getenv("SIMULATION_MODE", "true").lower() != "false" else ""
+    tp_price = round(entry * (1 + cfg.get("tp", 0.40)), 3)
+    sl_price = round(entry * (1 - cfg.get("sl", 0.25)), 3)
+    size_usd = cfg.get("size_usd", 25.0)
+    icon = "🟢" if direction == "YES" else "🔴"
+    L = "━━━━━━━━━━━━━━━"
+    safe_q = html.escape(signal.question[:60])
+    text = (
+        f"🔪 <b>SCALP AUTO-EXÉCUTÉ</b>{sim_tag}\n{L}\n"
+        f"<b>{safe_q}</b>\n\n"
+        f"<code>"
+        f"{icon} {direction}  @ {entry:.2f}\n"
+        f"TP       {tp_price:.2f}  (+{cfg.get('tp',0.40)*100:.0f}%)\n"
+        f"SL       {sl_price:.2f}  (-{cfg.get('sl',0.25)*100:.0f}%)\n"
+        f"TAILLE   ${size_usd:.0f} USDC"
+        f"</code>\n{L}"
+    )
+    bot = Bot(token=token)
+    tasks = [_send_safe(bot, u["telegram_chat_id"], text, None)
+             for u in users if u.get("telegram_chat_id")]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await bot.close()
+    except Exception:
+        pass
+
+
 async def push_scalp_tp_alert(pos, current_price: float, pnl_pct: float) -> None:
     """Alerte TP atteint avec bouton SELL."""
     from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
