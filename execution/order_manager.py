@@ -191,7 +191,7 @@ class OrderManager:
                 from monitoring.trade_logger import TradeLogger
                 logger_inst = TradeLogger()
                 positions = logger_inst.get_positions() or []
-                log.info("monitor_open_positions: checking %d position(s) [TP=+%.0f%% SL=-%.0f%%]",
+                log.debug("monitor_open_positions: checking %d position(s) [TP=+%.0f%% SL=-%.0f%%]",
                          len(positions), tp_pct * 100, sl_pct * 100)
                 for pos in positions:
                     market_id = pos.get("market_id") or pos.get("conditionId") or ""

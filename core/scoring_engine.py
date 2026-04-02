@@ -318,10 +318,10 @@ class NexusScoringEngine:
             log.debug("Odds fetch %s HTTP %d", sport_key, r.status_code)
             if r.status_code == 401:
                 NexusScoringEngine._cb_failures += 1
-                log.error("API key invalide pour %s", sport_key)
+                log.warning("Odds API 401 pour %s (clé invalide ou quota dépassé)", sport_key)
                 if NexusScoringEngine._cb_failures >= NexusScoringEngine._CB_THRESHOLD:
                     NexusScoringEngine._cb_disabled_until = now + NexusScoringEngine._CB_COOLDOWN
-                    log.error("CRITICAL: circuit breaker OPEN")
+                    log.warning("Odds API: circuit breaker ouvert — pause 10min")
                 self._odds_cache[cache_key] = (now, None)
                 return None
             r.raise_for_status()
