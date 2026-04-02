@@ -402,8 +402,8 @@ class ScalperTracker:
                 continue
             # Accepter : up/down court terme, above/price journalier crypto
             is_updown  = "up or down" in q_lower
-            is_above   = any(kw in q_lower for kw in ("bitcoin above", "ethereum above", "btc above"))
-            is_range   = any(kw in q_lower for kw in ("bitcoin price on", "ethereum price on"))
+            is_above   = "above" in q_lower and any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth"))
+            is_range   = any(kw in q_lower for kw in ("bitcoin price on", "ethereum price on", "btc price on"))
             if not (is_updown or is_above or is_range):
                 continue
             minutes = self._minutes_remaining(m)
