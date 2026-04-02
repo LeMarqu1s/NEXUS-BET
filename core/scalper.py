@@ -517,12 +517,11 @@ class ScalperTracker:
                                 except Exception as e:
                                     log.error("sniper analysis: %s", e)
 
-                        # Priorité 3 : alerte manuelle (fallback)
-                        if not executed:
-                            try:
-                                await push_scalp_signal(sig)
-                            except Exception as e:
-                                log.error("push_scalp_signal: %s", e)
+                        # Toujours notifier (auto-exec ou manuel)
+                        try:
+                            await push_scalp_signal(sig)
+                        except Exception as e:
+                            log.error("push_scalp_signal: %s", e)
 
                         self.mark_alerted(sig.market_id)
                         await asyncio.sleep(2)  # anti-flood entre signaux
