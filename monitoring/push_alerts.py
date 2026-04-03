@@ -377,7 +377,7 @@ async def push_scalp_executed(signal, direction: str, entry: float, order_id: st
             return
 
     sim_tag = " <b>[SIM]</b>" if os.getenv("SIMULATION_MODE", "true").lower() != "false" else ""
-    tp_price = round(entry * (1 + cfg.get("tp", 0.40)), 3)
+    tp_price = round(min(entry * (1 + cfg.get("tp", 0.40)), 0.99), 3)
     sl_price = round(entry * (1 - cfg.get("sl", 0.25)), 3)
     size_usd = cfg.get("size_usd", 25.0)
     icon = "🟢" if direction == "YES" else "🔴"
