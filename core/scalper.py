@@ -58,6 +58,7 @@ class ScalpSignal:
     no_price:          float
     minutes_remaining: float
     end_ts:            float
+    direction:         str = ""   # "YES" | "NO" — déterminé par la stratégie
 
 
 @dataclass
@@ -147,6 +148,7 @@ class ScalperTracker:
         self._sniper: Optional["PolymarketSniper"] = None
         self._trade_history: list[dict] = load_scalp_history()
         self._capital_data: dict = load_scalp_capital()
+        self._opening_prices: dict[str, dict] = {}   # market_id → {price, symbol, ts}
         log.info("scalp capital: %.2f USDC (retiré: %.2f | réinvesti: %.2f)",
                  self._capital_data["capital"],
                  self._capital_data["total_withdrawn"],
@@ -157,6 +159,26 @@ class ScalperTracker:
             from core.sniper import PolymarketSniper
             self._sniper = PolymarketSniper()
         return self._sniper
+
+    # ── CoinGecko ─────────────────────────────────────────────────────────────
+
+    async def _fetch_coingecko(self) -> dict:
+        """Retourne {bitcoin: usd_price, ethereum: usd_price} depuis CoinGecko."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as c:
+                r = await c.get(
+                    "https://api.coingecko.com/api/v3/simple/price",
+                    params={"ids": "bitcoin,ethereum", "vs_currencies": "usd"},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    return {
+                        "bitcoin":  data.get("bitcoin",  {}).get("usd", 0.0),
+                        "ethereum": data.get("ethereum", {}).get("usd", 0.0),
+                    }
+        except Exception as e:
+            log.warning("CoinGecko fetch error: %s", e)
+        return {}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -388,52 +410,107 @@ class ScalperTracker:
     # ── Scan ─────────────────────────────────────────────────────────────────
 
     async def scan_cycle(self) -> list[ScalpSignal]:
+        from datetime import datetime, timezone
         markets = await self._fetch_markets()
-        log.info("scan_cycle: %d marchés bruts récupérés | exemples: %s",
-                 len(markets),
-                 [m.get("question","")[:40] for m in markets[:3]])
+        # Fetch CoinGecko une seule fois pour tout le cycle
+        cg = await self._fetch_coingecko()
+
         signals: list[ScalpSignal] = []
         for m in markets:
             question = m.get("question") or ""
-            q_lower = question.lower()
-            # Crypto only — exclure S&P, indices, sports, etc.
-            is_crypto  = any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth", "crypto"))
-            if not is_crypto:
+            q_lower  = question.lower()
+
+            # Crypto Up/Down uniquement
+            if not any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth")):
                 continue
-            # Accepter : up/down court terme, above/price journalier crypto
-            is_updown  = "up or down" in q_lower
-            is_above   = "above" in q_lower and any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth"))
-            is_range   = any(kw in q_lower for kw in ("bitcoin price on", "ethereum price on", "btc price on"))
-            if not (is_updown or is_above or is_range):
+            if "up or down" not in q_lower:
                 continue
+
             minutes = self._minutes_remaining(m)
             if minutes is None or minutes <= 0:
                 continue
-            # Fenêtre courte pour up/down 5-15min, large pour journaliers
-            max_mins = MAX_RESOLUTION_MINUTES if is_updown and minutes <= 60 else 480
-            if minutes > max_mins:
-                continue
+
             market_id = str(m.get("conditionId") or m.get("id") or "")
-            if market_id in self._alerted_markets:
+            if market_id in self._alerted_markets or question in self._alerted_markets:
                 continue
-            # Dédup par question (évite doublons si même marché avec ID différent)
-            if question in self._alerted_markets:
-                continue
+
             yes_token, no_token = self._extract_tokens(m)
             if not yes_token:
                 continue
             yes_price, no_price = self._get_prices(m)
-            from datetime import datetime, timezone
+
+            # Stocker le prix CoinGecko à la première apparition du marché
+            if market_id not in self._opening_prices and cg:
+                symbol = "ethereum" if any(kw in q_lower for kw in ("eth", "ethereum")) else "bitcoin"
+                self._opening_prices[market_id] = {
+                    "price": cg.get(symbol, 0.0),
+                    "symbol": symbol,
+                    "ts": time.time(),
+                }
+                log.debug("opening price stored: %s $%.0f for %s", symbol,
+                          cg.get(symbol, 0.0), question[:40])
+
+            # ── Règle 1 : timing 20–90 secondes avant résolution ─────────────
+            seconds = minutes * 60
+            if not (20 <= seconds <= 90):
+                continue
+
+            # ── Règle 2 : prix du contrat dans [0.82, 0.95], skip 50/50 ─────
+            if 0.40 <= yes_price <= 0.60:
+                log.debug("R2 skip (50/50): %s yes=%.2f", question[:35], yes_price)
+                continue
+            if yes_price >= 0.82:
+                candidate_side, candidate_price = "YES", yes_price
+            elif no_price >= 0.82:
+                candidate_side, candidate_price = "NO", no_price
+            else:
+                log.debug("R2 skip (hors range): %s yes=%.2f no=%.2f",
+                          question[:35], yes_price, no_price)
+                continue
+            if not (0.82 <= candidate_price <= 0.95):
+                log.debug("R2 skip (prix=%.2f hors [0.82,0.95]): %s",
+                          candidate_price, question[:35])
+                continue
+
+            # ── Règle 3 : direction confirmée par BTC/ETH (drift > 0.3%) ─────
+            opening = self._opening_prices.get(market_id, {})
+            open_px = opening.get("price", 0.0)
+            symbol  = opening.get("symbol", "bitcoin")
+            curr_px = cg.get(symbol, 0.0)
+            if not open_px or not curr_px:
+                log.debug("R3 skip (pas de prix CG): %s", question[:35])
+                continue
+            drift = (curr_px - open_px) / open_px
+            if drift > 0.003:
+                cg_direction = "YES"
+            elif drift < -0.003:
+                cg_direction = "NO"
+            else:
+                log.debug("R3 skip (drift=%.3f%% < 0.3%%): %s",
+                          drift * 100, question[:35])
+                continue
+
+            # ── Règle 4 : double confirmation ────────────────────────────────
+            if cg_direction != candidate_side:
+                log.debug("R4 skip (CG=%s ≠ side=%s): %s",
+                          cg_direction, candidate_side, question[:35])
+                continue
+
+            # ── Signal validé ─────────────────────────────────────────────────
             end_date = m.get("endDate") or ""
             try:
                 end_ts = datetime.fromisoformat(str(end_date).replace("Z", "+00:00")).timestamp()
             except Exception:
-                end_ts = time.time() + minutes * 60
+                end_ts = time.time() + seconds
+
+            log.info("scalper SIGNAL: %s %s @ %.2f | drift=%.2f%% | %ds restantes",
+                     cg_direction, question[:40], candidate_price, drift * 100, int(seconds))
             signals.append(ScalpSignal(
                 market_id=market_id, question=question,
                 token_id_yes=yes_token, token_id_no=no_token,
                 yes_price=yes_price, no_price=no_price,
-                minutes_remaining=round(minutes, 1), end_ts=end_ts,
+                minutes_remaining=round(minutes, 3), end_ts=end_ts,
+                direction=cg_direction,
             ))
             self._market_cache[market_id] = m
         return signals
@@ -499,42 +576,18 @@ class ScalperTracker:
                              len(signals), MAX_RESOLUTION_MINUTES)
                     from monitoring.push_alerts import push_scalp_executed
                     for sig in signals:
-                        direction, label = None, "DEFAULT"
-
-                        # Priorité 1 : drift Binance
-                        if auto_snipe:
-                            try:
-                                drift = await self._compute_drift_signal(sig)
-                                if drift:
-                                    direction, label = drift
-                            except Exception as e:
-                                log.error("drift signal: %s", e)
-
-                        # Priorité 2 : côté le moins cher (plus de potentiel upside)
-                        # Ignore si les deux côtés sont > 0.80 (TP irréaliste sur Polymarket)
-                        if direction is None:
-                            if sig.yes_price > 0.80 and sig.no_price > 0.80:
-                                log.debug("scalper: skip %s — prix trop élevés (YES=%.2f NO=%.2f)",
-                                          sig.question[:40], sig.yes_price, sig.no_price)
-                                self.mark_alerted(sig.market_id)
-                                self.mark_alerted(sig.question)
-                                continue
-                            direction = "YES" if sig.yes_price <= sig.no_price else "NO"
-                            label = "CHEAP_SIDE"
-
-                        # Auto-exécution systématique
                         try:
-                            order_id = await self._auto_execute_scalp(sig, direction, label)
+                            order_id = await self._auto_execute_scalp(sig, sig.direction, "DRIFT_CG")
                             if order_id:
-                                cfg      = load_scalp_settings()
+                                cfg = load_scalp_settings()
                                 cfg["size_usd"] = compute_trade_size(self._capital_data["capital"])
-                                entry    = sig.yes_price if direction == "YES" else sig.no_price
-                                await push_scalp_executed(sig, direction, entry, order_id, cfg)
+                                entry = sig.yes_price if sig.direction == "YES" else sig.no_price
+                                await push_scalp_executed(sig, sig.direction, entry, order_id, cfg)
                         except Exception as e:
                             log.error("auto_execute: %s", e)
 
                         self.mark_alerted(sig.market_id)
-                        self.mark_alerted(sig.question)  # dédup par question
+                        self.mark_alerted(sig.question)
                         await asyncio.sleep(2)  # anti-flood entre signaux
 
                 else:
