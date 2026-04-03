@@ -195,6 +195,9 @@ class PolymarketSniper:
                 except Exception:
                     prices = ["0.5"]
             price = float(prices[0]) if prices else 0.5
+            # Skip marchés quasi-résolus (sans potentiel de mouvement)
+            if not (0.15 <= price <= 0.85):
+                return None
             volume = float(market.get("volume24hr") or market.get("volume") or 0)
 
             self._update_history(token_id, price, volume)
@@ -247,7 +250,7 @@ class PolymarketSniper:
                 price=price,
                 signals=signals,
                 entry_price=price,
-                target_price=round(price * 1.40, 4),
+                target_price=round(min(price * 1.40, 0.99), 4),
                 stop_price=round(price * 0.75, 4),
                 confidence=round(len(signals) / 4, 2),
             )
