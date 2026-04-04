@@ -416,6 +416,7 @@ class ScalperTracker:
         cg = await self._fetch_coingecko()
 
         signals: list[ScalpSignal] = []
+        crypto_count = 0
         for m in markets:
             question = m.get("question") or ""
             q_lower  = question.lower()
@@ -439,6 +440,10 @@ class ScalperTracker:
                 continue
             yes_price, no_price = self._get_prices(m)
 
+            crypto_count += 1
+            seconds = minutes * 60
+            label = question[:45]
+
             # Stocker le prix CoinGecko à la première apparition du marché
             if market_id not in self._opening_prices and cg:
                 symbol = "ethereum" if any(kw in q_lower for kw in ("eth", "ethereum")) else "bitcoin"
@@ -447,47 +452,39 @@ class ScalperTracker:
                     "symbol": symbol,
                     "ts": time.time(),
                 }
-                log.debug("opening price stored: %s $%.0f for %s", symbol,
-                          cg.get(symbol, 0.0), question[:40])
 
-            # ── Règle 1 : timing 20–90 secondes avant résolution ─────────────
-            seconds = minutes * 60
-            if not (20 <= seconds <= 90):
+            # ── Règle 1 : timing 30s – 5min avant résolution ─────────────────
+            if not (30 <= seconds <= 300):
+                log.info("R1 skip timing (%.0fs) : %s", seconds, label)
                 continue
 
-            # ── Règle 2 : prix du contrat dans [0.82, 0.95], skip 50/50 ─────
-            if 0.40 <= yes_price <= 0.60:
-                log.debug("R2 skip (50/50): %s yes=%.2f", question[:35], yes_price)
-                continue
-            if yes_price >= 0.82:
+            # ── Règle 2 : prix du contrat dans [0.55, 0.92] ──────────────────
+            if yes_price >= 0.55:
                 candidate_side, candidate_price = "YES", yes_price
-            elif no_price >= 0.82:
+            elif no_price >= 0.55:
                 candidate_side, candidate_price = "NO", no_price
             else:
-                log.debug("R2 skip (hors range): %s yes=%.2f no=%.2f",
-                          question[:35], yes_price, no_price)
+                log.info("R2 skip prix (yes=%.2f no=%.2f) : %s", yes_price, no_price, label)
                 continue
-            if not (0.82 <= candidate_price <= 0.95):
-                log.debug("R2 skip (prix=%.2f hors [0.82,0.95]): %s",
-                          candidate_price, question[:35])
+            if not (0.55 <= candidate_price <= 0.92):
+                log.info("R2 skip prix (%.2f hors [0.55,0.92]) : %s", candidate_price, label)
                 continue
 
-            # ── Règle 3 : direction confirmée par BTC/ETH (drift > 0.3%) ─────
+            # ── Règle 3 : drift BTC/ETH > 0.15% ─────────────────────────────
             opening = self._opening_prices.get(market_id, {})
             open_px = opening.get("price", 0.0)
             symbol  = opening.get("symbol", "bitcoin")
             curr_px = cg.get(symbol, 0.0)
             if not open_px or not curr_px:
-                log.debug("R3 skip (pas de prix CG): %s", question[:35])
+                log.info("R3 skip (pas de prix CG) : %s", label)
                 continue
             drift = (curr_px - open_px) / open_px
-            if drift > 0.003:
+            if drift > 0.0015:
                 cg_direction = "YES"
-            elif drift < -0.003:
+            elif drift < -0.0015:
                 cg_direction = "NO"
             else:
-                log.debug("R3 skip (drift=%.3f%% < 0.3%%): %s",
-                          drift * 100, question[:35])
+                log.info("R3 skip drift (%.3f%% < 0.15%%) : %s", drift * 100, label)
                 continue
 
             # ── Règle 4 : double confirmation ────────────────────────────────
@@ -513,6 +510,8 @@ class ScalperTracker:
                 direction=cg_direction,
             ))
             self._market_cache[market_id] = m
+        log.info("scan_cycle: %d marchés crypto Up/Down trouvés | %d signal(s) validé(s) | BTC=$%.0f",
+                 crypto_count, len(signals), cg.get("bitcoin", 0))
         return signals
 
     # ── Position monitor ──────────────────────────────────────────────────────
