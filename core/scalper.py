@@ -30,20 +30,20 @@ MAX_RESOLUTION_MINUTES = 30
 SETTINGS_FILE  = Path(__file__).resolve().parent.parent / "scalp_settings.json"
 HISTORY_FILE   = Path(__file__).resolve().parent.parent / "scalp_history.json"
 CAPITAL_FILE   = Path(__file__).resolve().parent.parent / "scalp_capital.json"
-DEFAULT_TP     = 0.20
-DEFAULT_SL     = 0.15
+DEFAULT_TP     = 0.12
+DEFAULT_SL     = 0.08
 
 DRIFT_THRESHOLD  = 0.004   # 0.4% drift minimum pour déclencher
-POLY_LAG_MAX_YES = 0.68    # drift>0 mais YES < 68% → lag → BUY YES
-POLY_LAG_MIN_YES = 0.32    # drift<0 mais YES > 32% → lag → BUY NO
+POLY_LAG_MAX_YES = 0.68
+POLY_LAG_MIN_YES = 0.32
 AUTO_ADJUST_EVERY = 10
 
 # ── Gestion du capital avec réinvestissement ──────────────────────────────────
-KELLY_FRACTION   = 0.05    # 5% du capital par trade
-REINVEST_RATIO   = 0.80    # 80% des profits réinvestis
-WITHDRAW_RATIO   = 0.20    # 20% des profits retirés (non-réinvestis)
-MIN_TRADE_USD    = 5.0     # taille minimale
-MAX_TRADE_USD    = 200.0   # plafond de sécurité par trade
+KELLY_FRACTION   = 0.05
+REINVEST_RATIO   = 0.80
+WITHDRAW_RATIO   = 0.20
+MIN_TRADE_USD    = 5.0
+MAX_TRADE_USD    = 100.0   # plafond paper trading
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -149,6 +149,7 @@ class ScalperTracker:
         self._trade_history: list[dict] = load_scalp_history()
         self._capital_data: dict = load_scalp_capital()
         self._opening_prices: dict[str, dict] = {}   # market_id → {price, symbol, ts}
+        self._sl_cooldown_until: float = 0.0          # timestamp fin de cooldown post-SL
         log.info("scalp capital: %.2f USDC (retiré: %.2f | réinvesti: %.2f)",
                  self._capital_data["capital"],
                  self._capital_data["total_withdrawn"],
@@ -458,7 +459,7 @@ class ScalperTracker:
                 log.info("R1 skip timing (%.0fs) : %s", seconds, label)
                 continue
 
-            # ── Règle 2 : prix du contrat dans [0.55, 0.92] ──────────────────
+            # ── Règle 2 : prix du contrat dans [0.55, 0.88] ──────────────────
             if yes_price >= 0.55:
                 candidate_side, candidate_price = "YES", yes_price
             elif no_price >= 0.55:
@@ -466,8 +467,8 @@ class ScalperTracker:
             else:
                 log.info("R2 skip prix (yes=%.2f no=%.2f) : %s", yes_price, no_price, label)
                 continue
-            if not (0.55 <= candidate_price <= 0.92):
-                log.info("R2 skip prix (%.2f hors [0.55,0.92]) : %s", candidate_price, label)
+            if not (0.55 <= candidate_price <= 0.88):
+                log.info("R2 skip prix (%.2f hors [0.55,0.88]) : %s", candidate_price, label)
                 continue
 
             # ── Règle 3 : drift BTC/ETH > 0.15% ─────────────────────────────
@@ -539,6 +540,7 @@ class ScalperTracker:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
                 log.info("scalp SL atteint: %s %.1f%%", pos.question[:40], pnl_pct)
                 self._record_trade_result(pos, current, "SL")
+                self._sl_cooldown_until = time.time() + 300  # cooldown 5min
                 try:
                     await push_scalp_sl_alert(pos, current, pnl_pct)
                 except Exception as e:
@@ -546,7 +548,8 @@ class ScalperTracker:
                 closed.append(token_id)
             elif time.time() > pos.opened_at + MAX_RESOLUTION_MINUTES * 60:
                 log.info("scalp expiré: %s", pos.question[:40])
-                self._record_trade_result(pos, pos.entry_price, "EXPIRED")
+                # Utilise le prix courant (pas entry) pour refléter la résolution réelle
+                self._record_trade_result(pos, current, "EXPIRED")
                 closed.append(token_id)
         for token_id in closed:
             self.positions.pop(token_id, None)
@@ -575,6 +578,15 @@ class ScalperTracker:
                              len(signals), MAX_RESOLUTION_MINUTES)
                     from monitoring.push_alerts import push_scalp_executed
                     for sig in signals:
+                        # Cooldown post-SL (5min)
+                        if time.time() < self._sl_cooldown_until:
+                            remaining = int(self._sl_cooldown_until - time.time())
+                            log.info("scalper: cooldown SL actif (%ds restantes) — skip", remaining)
+                            continue
+                        # Max 4 positions simultanées
+                        if len(self.positions) >= 4:
+                            log.info("scalper: max 4 positions atteint — skip %s", sig.question[:35])
+                            continue
                         try:
                             order_id = await self._auto_execute_scalp(sig, sig.direction, "DRIFT_CG")
                             if order_id:
