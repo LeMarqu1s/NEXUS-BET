@@ -1466,6 +1466,47 @@ async def cmd_scalp_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _safe_reply(update, f"📊 <b>SCALP STATS</b>\n━━━━━━━━━━━━━━━\n<code>ERREUR — {e}</code>")
 
 
+async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mode [sim|live] — affiche ou change le mode trading."""
+    L = "━━━━━━━━━━━━━━━"
+    sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+    args = context.args or []
+    arg = args[0].lower() if args else ""
+
+    if not arg:
+        mode_label = "🟡 SIMULATION" if sim else "🔴 LIVE RÉEL"
+        await _safe_reply(
+            update,
+            f"🔄 <b>MODE ACTUEL</b>\n{L}\n"
+            f"<code>{mode_label}</code>\n{L}\n"
+            f"<i>/mode sim  → passer en simulation\n"
+            f"/mode live → passer en live réel</i>",
+        )
+        return
+
+    if arg == "sim":
+        set_env_value("SIMULATION_MODE", "true")
+        await _safe_reply(
+            update,
+            f"✅ <b>MODE SIMULATION ACTIVÉ</b>\n{L}\n"
+            f"<i>Tous les trades sont simulés.\nAucun vrai ordre ne sera placé.</i>",
+        )
+        return
+
+    if arg == "live":
+        context.user_data["awaiting"] = "mode_live_confirm"
+        await _safe_reply(
+            update,
+            f"⚠️ <b>ACTIVATION LIVE RÉEL</b>\n{L}\n"
+            f"<i>Tu es sur le point d'activer le trading avec de vrais fonds.\n\n"
+            f"Tape <b>CONFIRMER</b> pour activer le live trading.\n"
+            f"Tape autre chose ou /mode sim pour annuler.</i>",
+        )
+        return
+
+    await _safe_reply(update, f"❌ Argument invalide. Utilise <code>/mode</code>, <code>/mode sim</code> ou <code>/mode live</code>.")
+
+
 async def cmd_exit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Affiche les positions ouvertes avec boutons [🔴 Exit]."""
     async def _get():
@@ -1943,6 +1984,24 @@ async def handle_settings_text(update: Update, context: ContextTypes.DEFAULT_TYP
         ok = set_env_value("AUTO_TRADE_KEYWORDS_BLACKLIST", ",".join(parts))
         context.user_data.pop("awaiting", None)
         await update.message.reply_text(f"{'<b>✅ MIS À JOUR</b>' if ok else '<b>❌ INVALIDE</b>'}\n\n{_get_settings_text()}", parse_mode="HTML", reply_markup=_settings_advanced_keyboard())
+        return
+
+    if awaiting == "mode_live_confirm":
+        context.user_data.pop("awaiting", None)
+        L2 = "━━━━━━━━━━━━━━━"
+        if text.strip().upper() == "CONFIRMER":
+            set_env_value("SIMULATION_MODE", "false")
+            await update.message.reply_text(
+                f"🔴 <b>LIVE RÉEL ACTIVÉ</b>\n{L2}\n"
+                f"<i>Les prochains trades utiliseront de vrais fonds.\n"
+                f"Tape /mode sim pour revenir en simulation.</i>",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text(
+                f"✅ <b>ANNULÉ</b>\n{L2}\n<i>Mode simulation conservé.</i>",
+                parse_mode="HTML",
+            )
         return
 
     if awaiting == "buy_amount":
@@ -2982,6 +3041,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("emergency",      cmd_emergency))
     app.add_handler(CommandHandler("scalp_settings", cmd_scalp_settings))
     app.add_handler(CommandHandler("scalp_stats",    cmd_scalp_stats))
+    app.add_handler(CommandHandler("mode",           cmd_mode))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(
         MessageHandler(
