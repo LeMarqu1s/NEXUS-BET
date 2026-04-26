@@ -124,9 +124,9 @@ async def test_clob_connection() -> bool:
 
 
 async def run_sniper():
-    """Boucle sniper — mathématique pure, scan toutes les 10s."""
-    from core.sniper import PolymarketSniper
-    sniper = PolymarketSniper()
+    """Boucle sniper — SIM uniquement, scan toutes les 10s."""
+    from core.sniper import get_sniper
+    sniper = get_sniper()
     while True:
         try:
             await sniper.run_forever()

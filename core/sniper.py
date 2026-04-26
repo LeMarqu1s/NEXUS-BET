@@ -74,6 +74,8 @@ class PolymarketSniper:
         self._alert_cooldown = COOLDOWN_BETWEEN_TRADES
         # Anti-overtrading: timestamps des trades placés dans la dernière heure
         self._trades_hour: deque = deque()  # timestamps des auto-snipe exécutés
+        # SIM stats tracking
+        self._sim_history: list[dict] = []
 
     # ── Historique ────────────────────────────────────────────────────────────
 
@@ -359,43 +361,11 @@ class PolymarketSniper:
                 except Exception as e:
                     log.error("push_sniper_alert failed: %s", e)
                 return
-            # Permission model : confirmation requise si live + montant > 10 USDC
-            sim_mode = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
-            if not sim_mode:
-                from config.settings import settings as _s
-                cap = getattr(_s, "POLYMARKET_CAPITAL_USD", 1000.0)
-                size_usd = max(1.0, round(cap * signal.confidence * 0.10, 1))
-                if size_usd > 10:
-                    try:
-                        from monitoring.push_alerts import push_confirm_request, get_active_subscribers
-                        subs = await get_active_subscribers()
-                        chat_ids = [u["telegram_chat_id"] for u in subs if u.get("telegram_chat_id")]
-                        if not chat_ids and os.getenv("TELEGRAM_CHAT_ID"):
-                            chat_ids = [os.getenv("TELEGRAM_CHAT_ID")]
-                        confirmed = await push_confirm_request(signal, size_usd, chat_ids)
-                        if not confirmed:
-                            log.info("Trade $%.0f annulé — timeout ou refus", size_usd)
-                            return
-                    except Exception as e:
-                        log.error("push_confirm_request: %s", e)
-                        return
-            # 1. Exécuter immédiatement
-            order_id = await self._execute_entry(signal)
-            if order_id:
-                self._trades_hour.append(time.time())
-            # 2. Notifier "exécuté"
-            try:
-                from monitoring.push_alerts import push_auto_snipe_notification
-                await push_auto_snipe_notification(signal, order_id)
-            except Exception as e:
-                log.error("push_auto_snipe_notification failed: %s", e)
+            # SIM-only : jamais d'ordre réel, enregistre la position pour suivi TP/SL
+            self._record_sim_open(signal)
         else:
-            # Envoyer l'alerte avec bouton SNIPE / PASS
-            try:
-                from monitoring.push_alerts import push_sniper_alert
-                await push_sniper_alert(signal)
-            except Exception as e:
-                log.error("push_sniper_alert failed: %s", e)
+            # SIM-only : enregistre la position sans alerte Telegram
+            self._record_sim_open(signal)
 
     async def _execute_entry(self, signal: SniperSignal) -> str | None:
         """Exécute l'entrée automatique (AUTO_SNIPE=true). Retourne order_id ou None."""
@@ -429,10 +399,8 @@ class PolymarketSniper:
     # ── Boucle principale ─────────────────────────────────────────────────────
 
     async def run_forever(self) -> None:
-        """Boucle principale du sniper — scan toutes les 10 secondes."""
-        log.info("🎯 Sniper désactivé — skipping")
-        return
-        log.info("🎯 Sniper started — scanning every %ds | VOLUME_SPIKE x%.0f | MOMENTUM >%.0f%% | SPREAD >%.0f%% | WHALE >$%.0f",
+        """Boucle principale du sniper — scan toutes les 10 secondes (SIM uniquement)."""
+        log.info("🎯 Sniper SIM démarré — scanning every %ds | VOLUME_SPIKE x%.0f | MOMENTUM >%.0f%% | SPREAD >%.0f%% | WHALE >$%.0f",
                  SCAN_INTERVAL, VOLUME_SPIKE_MULTIPLIER, MOMENTUM_THRESHOLD * 100,
                  SPREAD_THRESHOLD * 100, WHALE_THRESHOLD_USD)
         last_position_check = 0.0
@@ -482,14 +450,60 @@ class PolymarketSniper:
                     continue
                 pnl_pct = (current - entry_price) / entry_price * 100
                 if current >= entry_price * (1 + TP_PCT):
-                    log.info("sniper TP atteint: token=%s +%.1f%%", token_id[:12], pnl_pct)
-                    await push_sniper_position_update(token_id, entry_price, current, pnl_pct, "TP")
+                    log.info("sniper SIM TP: token=%s +%.1f%%", token_id[:12], pnl_pct)
+                    self._record_sim_close(token_id, current, "TP")
                     closed.append(token_id)
                 elif current <= entry_price * (1 - SL_PCT):
-                    log.info("sniper SL atteint: token=%s %.1f%%", token_id[:12], pnl_pct)
-                    await push_sniper_position_update(token_id, entry_price, current, pnl_pct, "SL")
+                    log.info("sniper SIM SL: token=%s %.1f%%", token_id[:12], pnl_pct)
+                    self._record_sim_close(token_id, current, "SL")
                     closed.append(token_id)
             except Exception as e:
                 log.debug("_monitor_active_positions %s: %s", token_id[:12], e)
         for token_id in closed:
             self.active_positions.pop(token_id, None)
+
+    _SIM_SIZE_USD = 50.0  # taille fixe pour le calcul P&L SIM
+
+    def _record_sim_open(self, signal: SniperSignal) -> None:
+        if signal.token_id in self.active_positions:
+            return
+        self.active_positions[signal.token_id] = signal.entry_price
+        self._sim_history.append({
+            "ts": time.time(), "token_id": signal.token_id,
+            "question": signal.question[:60], "entry": signal.entry_price,
+            "status": "OPEN",
+        })
+        log.info("sniper SIM: position ouverte %s @ %.3f", signal.token_id[:12], signal.entry_price)
+
+    def _record_sim_close(self, token_id: str, exit_price: float, reason: str) -> None:
+        entry_price = self.active_positions.get(token_id, exit_price)
+        pnl_usd = round((exit_price - entry_price) / entry_price * self._SIM_SIZE_USD, 2) if entry_price else 0.0
+        for t in self._sim_history:
+            if t.get("token_id") == token_id and t.get("status") == "OPEN":
+                t["status"] = reason
+                t["exit"] = exit_price
+                t["pnl_usd"] = pnl_usd
+                t["closed_ts"] = time.time()
+                break
+
+    def get_sim_stats(self, days: int = 7) -> dict:
+        cutoff = time.time() - days * 86400
+        recent = [t for t in self._sim_history if t.get("ts", 0) > cutoff and t.get("status") != "OPEN"]
+        if not recent:
+            return {"trades": 0, "win_rate": 0.0, "total_pnl": 0.0}
+        wins = sum(1 for t in recent if t.get("pnl_usd", 0) > 0)
+        return {
+            "trades": len(recent),
+            "win_rate": round(wins / len(recent) * 100, 1),
+            "total_pnl": round(sum(t.get("pnl_usd", 0) for t in recent), 2),
+        }
+
+
+_SNIPER_INSTANCE: PolymarketSniper | None = None
+
+
+def get_sniper() -> PolymarketSniper:
+    global _SNIPER_INSTANCE
+    if _SNIPER_INSTANCE is None:
+        _SNIPER_INSTANCE = PolymarketSniper()
+    return _SNIPER_INSTANCE

@@ -1432,34 +1432,47 @@ async def cmd_scalp_settings(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cmd_scalp_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/scalp_stats — Win rate réel, P&L et breakdown par signal."""
+    """/scalp_stats — Comparatif SCALPER vs SNIPER sur 7 jours."""
     try:
         from core.scalper import get_tracker, load_scalp_settings
+        from core.sniper import get_sniper
         L = "━━━━━━━━━━━━━━━"
-        stats = get_tracker().get_stats(days=7)
-        cfg   = load_scalp_settings()
-        if stats["trades"] == 0:
-            await _safe_reply(update,
-                f"📊 <b>SCALP STATS (7j)</b>\n{L}\n"
-                f"<i>Aucun trade fermé pour l'instant.\n"
-                f"Les stats apparaîtront après le premier TP/SL.</i>")
-            return
-        lines = [
-            f"📊 <b>SCALP STATS (7j)</b>", L,
-            f"<code>Trades fermés  {stats['trades']}",
-            f"Win rate       {stats['win_rate']:.0f}%",
-            f"P&L total      {'%+.2f' % stats['total_pnl']} USDC</code>", L,
+        sc = get_tracker().get_stats(days=7)
+        sn = get_sniper().get_sim_stats(days=7)
+        cfg = load_scalp_settings()
+        total_trades = sc["trades"] + sn["trades"]
+        total_pnl = round(sc["total_pnl"] + sn["total_pnl"], 2)
+        lines = [f"📊 <b>COMPARATIF 7 JOURS [SIM]</b>", L]
+        # Scalper
+        if sc["trades"] > 0:
+            lines += [
+                f"<code>🔪 SCALPER BTC/ETH",
+                f"Trades fermés  {sc['trades']}",
+                f"Win rate       {sc['win_rate']:.0f}%",
+                f"P&L total      {'%+.2f' % sc['total_pnl']} USDC</code>",
+            ]
+        else:
+            lines.append(f"<code>🔪 SCALPER BTC/ETH\nAucun trade fermé</code>")
+        lines.append(L)
+        # Sniper
+        if sn["trades"] > 0:
+            lines += [
+                f"<code>🎯 SNIPER CLASSIQUE",
+                f"Trades fermés  {sn['trades']}",
+                f"Win rate       {sn['win_rate']:.0f}%",
+                f"P&L total      {'%+.2f' % sn['total_pnl']} USDC</code>",
+            ]
+        else:
+            lines.append(f"<code>🎯 SNIPER CLASSIQUE\nAucun trade fermé</code>")
+        lines.append(L)
+        # Total
+        lines += [
+            f"<code>📈 TOTAL",
+            f"Trades         {total_trades}",
+            f"P&L combiné    {'%+.2f' % total_pnl} USDC</code>",
+            L,
+            f"<code>TP scalp  +{cfg['tp']*100:.0f}%  |  SL scalp -{cfg['sl']*100:.0f}%</code>",
         ]
-        for sig_type, d in stats["by_signal"].items():
-            wr = round(d["wins"] / d["count"] * 100) if d["count"] else 0
-            lines.append(f"<code>{sig_type[:12]:<12} {d['count']} trades | {wr}% win</code>")
-        if stats["best"]:
-            b = stats["best"]
-            lines += [L, f"<code>Meilleur  {'%+.2f' % b['pnl_usd']}$ {b['question'][:28]}</code>"]
-        if stats["worst"]:
-            w = stats["worst"]
-            lines.append(f"<code>Pire      {'%+.2f' % w['pnl_usd']}$ {w['question'][:28]}</code>")
-        lines += [L, f"<code>TP actuel  +{cfg['tp']*100:.0f}%  |  SL actuel -{cfg['sl']*100:.0f}%</code>"]
         await _safe_reply(update, "\n".join(lines))
     except Exception as e:
         log.exception("cmd_scalp_stats: %s", e)
@@ -2925,20 +2938,24 @@ async def broadcast_signal(bot, signal: dict) -> int:
 
 
 def _scalp_daily_section() -> str:
-    """Retourne la section scalp du rapport quotidien (24h)."""
+    """Retourne la section comparatif scalper/sniper du rapport quotidien (24h)."""
     try:
         from core.scalper import get_tracker
+        from core.sniper import get_sniper
         sc = get_tracker().get_stats(days=1)
-        if sc["trades"] > 0:
-            return (
-                f"{L}\n"
-                f"<code>🔪 SCALP (24h)\n"
-                f"Trades   {sc['trades']}  |  Win rate {sc['win_rate']:.0f}%\n"
-                f"P&L      {'%+.2f' % sc['total_pnl']} USDC</code>\n"
-            )
+        sn = get_sniper().get_sim_stats(days=1)
+        total_pnl = round(sc["total_pnl"] + sn["total_pnl"], 2)
+        sc_line = (f"🔪 SCALPER  {sc['trades']} trades | {sc['win_rate']:.0f}% win | {'%+.2f' % sc['total_pnl']} USDC"
+                   if sc["trades"] > 0 else "🔪 SCALPER  0 trade")
+        sn_line = (f"🎯 SNIPER   {sn['trades']} trades | {sn['win_rate']:.0f}% win | {'%+.2f' % sn['total_pnl']} USDC"
+                   if sn["trades"] > 0 else "🎯 SNIPER   0 trade")
+        total_line = f"📈 TOTAL    P&L {'%+.2f' % total_pnl} USDC"
+        return (
+            f"{L}\n"
+            f"<code>{sc_line}\n{sn_line}\n{total_line}</code>\n"
+        )
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 async def send_daily_report(bot) -> None:
