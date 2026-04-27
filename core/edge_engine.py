@@ -45,7 +45,7 @@ def detect_market_type(market: dict[str, Any]) -> str:
         if "yes" in out_lower and "no" in out_lower:
             return "binary"
 
-    if any(kw in q for kw in scalar_keywords):
+    if len(outcomes) != 2 and any(kw in q for kw in scalar_keywords):
         return "scalar"
 
     if len(outcomes) > 2:
@@ -390,8 +390,7 @@ class EdgeEngine:
                 if "k" in out_str.lower() or "000" in out_str:
                     low, high = low * 1000, high * 1000
             elif len(nums) == 1:
-                val = float(nums[0])
-                low, high = val * 0.95, val * 1.05
+                continue
 
             if low is None or high is None or low <= 0 or high <= 0:
                 continue
@@ -405,7 +404,7 @@ class EdgeEngine:
 
             if market_price <= 0:
                 continue
-            raw_edge = abs(fair - market_price) / market_price
+            raw_edge = abs(fair - market_price) / max(fair, market_price)
             # Sanity: fair price must not be more than 20% from market price
             if abs(fair - market_price) > 0.20:
                 continue
