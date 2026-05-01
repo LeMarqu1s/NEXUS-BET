@@ -41,7 +41,7 @@ _flood_until = _load_flood_until()  # charge au démarrage du module
 async def get_active_subscribers() -> list[dict[str, Any]]:
     """Retourne les utilisateurs actifs (is_active=true) depuis Supabase."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         log.warning("push_alerts: Supabase non configuré")
         return []

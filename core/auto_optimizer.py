@@ -60,7 +60,7 @@ async def _fetch_supabase_signals(days: int = 7) -> list[dict]:
     Priorité : Supabase signals table → fallback fichier local paperclip_pending_signals.json.
     """
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if url and key:
         try:
             cutoff_iso = datetime.fromtimestamp(
@@ -343,7 +343,7 @@ async def _insert_optimizer_run(
     config_snapshot: dict[str, float],
 ) -> None:
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return
     payload = {

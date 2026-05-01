@@ -186,7 +186,7 @@ async def _get_user_wallet_address(telegram_id: int | None) -> str:
     """Retourne l'adresse Polygon de l'utilisateur : Supabase d'abord, puis RELAYER_API_KEY_ADDRESS."""
     if telegram_id:
         url = os.getenv("SUPABASE_URL", "").rstrip("/")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
         if url and key:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as c:
@@ -1036,7 +1036,7 @@ async def _safe_reply(update: Update, text: str, reply_markup=None, parse_mode="
 async def _register_referred_user(chat_id: str, ref_code: str) -> None:
     """Enregistre un nouvel utilisateur avec son parrain dans Supabase."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return
     try:
@@ -1232,7 +1232,7 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         risk_profile = "conservative"
         try:
             url = os.getenv("SUPABASE_URL", "").rstrip("/")
-            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+            key = os.getenv("SUPABASE_SERVICE_KEY")
             if tg_id and url and key:
                 async with httpx.AsyncClient(timeout=3.0) as c:
                     r = await c.get(
@@ -1302,7 +1302,7 @@ async def cmd_whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def _get_referral_text(chat_id: str, bot_username: str = "") -> str:
     """Récupère ou génère le code referral de l'utilisateur."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     code = ""
     referred_count = 0
     if url and key:
@@ -1558,7 +1558,7 @@ async def _upsert_user_token(telegram_chat_id: str) -> tuple[str, bool]:
     """
     token = uuid.uuid4().hex[:8].lower()
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         log.warning("Supabase non configuré pour /access")
         return token, False
@@ -1657,7 +1657,7 @@ async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     target_chat_id = args[0].strip()
     plan = args[1].strip() if len(args) > 1 else "premium"
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         await _safe_reply(update, "❌ Supabase non configuré.")
         return
@@ -1731,7 +1731,7 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not chat_id:
         return
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     dashboard_url = os.getenv("DASHBOARD_URL", "https://nexus-terminal.vercel.app")
 
     if not url or not key:
@@ -1785,7 +1785,7 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Status du système : scanner, signaux, abonnés."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
 
     signals_today = 0
     last_signal = "—"
@@ -2539,7 +2539,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Try to get or generate a token from Supabase
         token = ""
         url_sb = os.getenv("SUPABASE_URL", "").rstrip("/")
-        key_sb = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        key_sb = os.getenv("SUPABASE_SERVICE_KEY")
         if url_sb and key_sb and chat_id:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
@@ -2771,7 +2771,7 @@ def _payment_keyboard() -> InlineKeyboardMarkup:
 async def _is_new_user(chat_id: str) -> bool:
     """Returns True if the user doesn't exist yet in Supabase."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return False
     try:
@@ -2790,7 +2790,7 @@ async def _start_trial(chat_id: str) -> bool:
     """Creates user row with 7-day trial in Supabase. Returns True on success."""
     from datetime import datetime, timezone, timedelta
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return False
     trial_ends = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
@@ -2820,7 +2820,7 @@ async def _check_trial_status(chat_id: str) -> dict:
     """Returns {exists, is_active, is_trial, days_left, expired, plan}."""
     from datetime import datetime, timezone
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     default = {"exists": False, "is_active": False, "is_trial": False, "days_left": 0, "expired": False, "plan": "free"}
     if not url or not key:
         return default
@@ -2861,7 +2861,7 @@ async def _check_trial_status(chat_id: str) -> dict:
 async def _save_user_field(chat_id: str, **fields) -> bool:
     """Upsert fields into Supabase users table."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return False
     try:
@@ -2883,7 +2883,7 @@ async def _save_user_field(chat_id: str, **fields) -> bool:
 async def _get_active_chat_ids() -> list[str]:
     """Returns list of telegram_chat_id for all is_active=true users (for broadcast)."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return []
     try:

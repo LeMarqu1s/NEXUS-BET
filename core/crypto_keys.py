@@ -53,7 +53,7 @@ async def get_user_clob_client(telegram_id: int):
     from py_clob_client.client import ClobClient
 
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         log.warning("get_user_clob_client: Supabase non configuré")
         return None

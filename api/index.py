@@ -36,7 +36,7 @@ def _validate_token(token: str) -> bool:
     if not token or len(token) < 6:
         return False
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return False
     try:
@@ -109,7 +109,7 @@ def _get_wallet_value():
 def _supabase_fetch(table: str, limit: int = 50, extra: str = ""):
     """Fetch from Supabase. Returns list or empty list on error."""
     url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
         return []
     try:
@@ -558,7 +558,7 @@ def _ls_verify_signature(body: bytes, signature: str) -> bool:
 def _ls_activate_user(telegram_chat_id: str, plan: str, order_id: str) -> bool:
     """Set is_active=True + plan in Supabase for the given Telegram chat_id."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key or not telegram_chat_id:
         return False
     try:
@@ -649,9 +649,7 @@ def _get_public_stats() -> dict:
     if not recent:
         try:
             url = os.getenv("SUPABASE_URL", "").rstrip("/")
-            key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-                   or os.getenv("SUPABASE_SERVICE_KEY")
-                   or os.getenv("SUPABASE_ANON_KEY"))
+            key = os.getenv("SUPABASE_SERVICE_KEY")
             if url and key:
                 from urllib.request import Request as _Req, urlopen as _ul
                 cutoff_iso = datetime.fromtimestamp(

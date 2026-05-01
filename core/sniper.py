@@ -318,7 +318,7 @@ class PolymarketSniper:
             return False
         # Vérification Supabase : au moins 1 user actif avec auto_snipe=true
         url = os.getenv("SUPABASE_URL", "").rstrip("/")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
         if not url or not key:
             log.warning("AUTO_SNIPE=true mais Supabase non configuré — auto-exécution bloquée")
             return False

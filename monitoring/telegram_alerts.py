@@ -282,7 +282,7 @@ async def alert_anti_sybil(details: str) -> bool:
 async def _get_active_subscriber_chat_ids() -> list[str]:
     """Retourne les telegram_chat_id de tous les abonnés actifs (Supabase)."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
     if url and key:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
