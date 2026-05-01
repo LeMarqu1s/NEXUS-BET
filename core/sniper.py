@@ -364,8 +364,13 @@ class PolymarketSniper:
             # SIM-only : jamais d'ordre réel, enregistre la position pour suivi TP/SL
             self._record_sim_open(signal)
         else:
-            # SIM-only : enregistre la position sans alerte Telegram
+            # SIM-only : enregistre la position + alerte Telegram
             self._record_sim_open(signal)
+            try:
+                from monitoring.push_alerts import push_sniper_alert
+                await push_sniper_alert(signal)
+            except Exception as e:
+                log.error("push_sniper_alert SIM failed: %s", e)
 
     async def _execute_entry(self, signal: SniperSignal) -> str | None:
         """Exécute l'entrée automatique (AUTO_SNIPE=true). Retourne order_id ou None."""
