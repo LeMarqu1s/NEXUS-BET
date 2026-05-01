@@ -467,7 +467,7 @@ class EdgeEngine:
         """
         Bond Strategy: near-certain positions resolving within 7 days.
         Looks for markets at > 90% probability with < 7 days to resolution.
-        Return = (1 - price) / price. E.g. 0.93 YES → 7.5% in <7 days.
+        Return = abs(fair - price) / max(fair, price). E.g. 0.93 YES → 7.0% in <7 days.
         signal_type = "BOND" in metadata.
         """
         # Only consider high-confidence markets near resolution
@@ -477,15 +477,15 @@ class EdgeEngine:
         if days <= 0 or days > 7:
             return None
 
-        # Potential return if resolves as expected
-        edge_pct = round((1.0 - polymarket_price) / polymarket_price, 4)
+        # fair=1.0 pour Bond : edge = abs(fair - price) / max(fair, price), cappé à 0.50
+        edge_pct = round(min(abs(1.0 - polymarket_price) / max(1.0, polymarket_price), 0.50), 4)
         min_edge = settings.MIN_EDGE_PCT / 100.0
         if edge_pct < min_edge:
             return None
 
         # Kelly: assume 95% confidence it resolves as current leader
         p_win = 0.95
-        b = (1.0 - polymarket_price) / polymarket_price
+        b = (1.0 - polymarket_price) / max(polymarket_price, 0.01)
         kelly = self._kelly(p_win, 1 - p_win, b, kelly_cap=0.10)  # conservative cap for bonds
 
         question = (market.get("question") or "")[:120]
