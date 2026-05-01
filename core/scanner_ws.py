@@ -97,7 +97,7 @@ def _signal_to_entry(sig: EdgeSignal) -> dict:
         "side": sig.side,
         "question": sig.metadata.get("question", "")[:120],
         "polymarket_price": sig.polymarket_price,
-        "edge_pct": sig.edge_pct * 100,
+        "edge_pct": round(min(sig.edge_pct if sig.edge_pct is not None else 0.0, 0.50) * 100, 2),
         "kelly_fraction": sig.kelly_fraction,
         "model": sig.model.value,
         "confidence": sig.confidence,
