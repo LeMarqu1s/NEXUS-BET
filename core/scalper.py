@@ -471,7 +471,7 @@ class ScalperTracker:
                 log.info("R2 skip prix (%.2f hors [0.55,0.88]) : %s", candidate_price, label)
                 continue
 
-            # ── Règle 3 : drift BTC/ETH > 0.15% ─────────────────────────────
+            # ── Règle 3 : drift BTC/ETH > 0.10% ─────────────────────────────
             opening = self._opening_prices.get(market_id, {})
             open_px = opening.get("price", 0.0)
             symbol  = opening.get("symbol", "bitcoin")
@@ -480,12 +480,12 @@ class ScalperTracker:
                 log.info("R3 skip (pas de prix CG) : %s", label)
                 continue
             drift = (curr_px - open_px) / open_px
-            if drift > 0.0015:
+            if drift > 0.0010:
                 cg_direction = "YES"
-            elif drift < -0.0015:
+            elif drift < -0.0010:
                 cg_direction = "NO"
             else:
-                log.info("R3 skip drift (%.3f%% < 0.15%%) : %s", drift * 100, label)
+                log.info("R3 skip drift (%.3f%% < 0.10%%) : %s", drift * 100, label)
                 continue
 
             # ── Règle 4 : double confirmation ────────────────────────────────
