@@ -527,6 +527,17 @@ class ScalperTracker:
             if pos.entry_price <= 0:
                 closed.append(token_id)
                 continue
+            # ── Trailing SL ──────────────────────────────────────────────────
+            if current >= pos.entry_price * 1.10:
+                new_sl = round(pos.entry_price * 1.05, 4)
+                if new_sl > pos.sl_price:
+                    pos.sl_price = new_sl
+                    log.info("trailing SL → +5%% @ %.3f (%s)", pos.sl_price, pos.question[:35])
+            elif current >= pos.entry_price * 1.05:
+                new_sl = round(pos.entry_price, 4)
+                if new_sl > pos.sl_price:
+                    pos.sl_price = new_sl
+                    log.info("trailing SL → breakeven @ %.3f (%s)", pos.sl_price, pos.question[:35])
             if current >= pos.tp_price:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
                 log.info("scalp TP atteint: %s +%.1f%%", pos.question[:40], pnl_pct)
