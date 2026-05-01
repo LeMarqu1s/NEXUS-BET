@@ -24,7 +24,7 @@ log = logging.getLogger("nexus.scalper")
 GAMMA_URL        = "https://gamma-api.polymarket.com"
 CLOB_URL         = "https://clob.polymarket.com"
 SCAN_INTERVAL    = 30
-MONITOR_INTERVAL = 60
+MONITOR_INTERVAL = 15
 MAX_RESOLUTION_MINUTES = 30
 
 SETTINGS_FILE  = Path(__file__).resolve().parent.parent / "scalp_settings.json"
