@@ -76,6 +76,9 @@ class ScalpPosition:
     alerted:     bool  = False
     order_id:    str   = ""
     signal_type: str   = "manual"
+    end_ts:      float = 0.0
+    last_price:  float = 0.0
+    last_move_ts: float = 0.0
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -325,7 +328,7 @@ class ScalperTracker:
                 tp_price=round(entry_price * (1 + cfg["tp"]), 4),
                 sl_price=round(entry_price * (1 - cfg["sl"]), 4),
                 size_usd=size_usd, chat_ids=[c for c in [os.getenv("TELEGRAM_CHAT_ID")] if c], order_id=order_id,
-                signal_type=signal_type,
+                signal_type=signal_type, end_ts=sig.end_ts,
             )
             self.open_position(token_id, pos)
             log.info("scalp auto-exec: %s %s @ %.3f [%s]",
@@ -557,6 +560,19 @@ class ScalperTracker:
                 except Exception as e:
                     log.error("push_scalp_sl_alert: %s", e)
                 closed.append(token_id)
+            # ── No Activity exit (<2min + 90s sans mouvement >0.5%) ──────────
+            now = time.time()
+            if pos.end_ts > 0 and (pos.end_ts - now) < 120:
+                if pos.last_move_ts == 0.0:
+                    pos.last_price = current; pos.last_move_ts = now
+                elif abs(current - pos.last_price) / pos.last_price > 0.005:
+                    pos.last_price = current; pos.last_move_ts = now
+                elif now - pos.last_move_ts > 90:
+                    pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
+                    log.info("scalp NO_ACTIVITY exit: %s %.1f%%", pos.question[:40], pnl_pct)
+                    self._record_trade_result(pos, current, "NO_ACTIVITY")
+                    closed.append(token_id)
+                    continue
             elif time.time() > pos.opened_at + MAX_RESOLUTION_MINUTES * 60:
                 log.info("scalp expiré: %s", pos.question[:40])
                 # Utilise le prix courant (pas entry) pour refléter la résolution réelle
