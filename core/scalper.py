@@ -581,6 +581,7 @@ class ScalperTracker:
                 except Exception as e:
                     log.error("push_scalp_sl_alert: %s", e)
                 closed.append(token_id)
+                continue
             # ── No Activity exit (<2min + 90s sans mouvement >0.5%) ──────────
             now = time.time()
             if pos.end_ts > 0 and (pos.end_ts - now) < 120:
