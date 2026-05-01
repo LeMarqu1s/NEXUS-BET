@@ -79,6 +79,9 @@ class ScalpPosition:
     end_ts:      float = 0.0
     last_price:  float = 0.0
     last_move_ts: float = 0.0
+    tp1_hit:     bool  = False
+    tp1_price:   float = 0.0
+    tp2_price:   float = 0.0
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -325,10 +328,12 @@ class ScalperTracker:
             pos = ScalpPosition(
                 market_id=sig.market_id, question=sig.question,
                 token_id=token_id, side=direction, entry_price=entry_price,
-                tp_price=round(entry_price * (1 + cfg["tp"]), 4),
+                tp_price=round(entry_price * 1.15, 4),
                 sl_price=round(entry_price * (1 - cfg["sl"]), 4),
                 size_usd=size_usd, chat_ids=[c for c in [os.getenv("TELEGRAM_CHAT_ID")] if c], order_id=order_id,
                 signal_type=signal_type, end_ts=sig.end_ts,
+                tp1_price=round(entry_price * 1.08, 4),
+                tp2_price=round(entry_price * 1.15, 4),
             )
             self.open_position(token_id, pos)
             log.info("scalp auto-exec: %s %s @ %.3f [%s]",
@@ -541,15 +546,31 @@ class ScalperTracker:
                 if new_sl > pos.sl_price:
                     pos.sl_price = new_sl
                     log.info("trailing SL → breakeven @ %.3f (%s)", pos.sl_price, pos.question[:35])
-            if current >= pos.tp_price:
+            if current >= pos.tp_price and (pos.tp1_hit or pos.tp1_price == 0):
+                # TP2 (40% restants) ou TP classique si pas de multi-TP
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
-                log.info("scalp TP atteint: %s +%.1f%%", pos.question[:40], pnl_pct)
-                self._record_trade_result(pos, current, "TP")
+                label = "TP2" if pos.tp1_hit else "TP"
+                log.info("scalp %s atteint: %s +%.1f%%", label, pos.question[:40], pnl_pct)
+                self._record_trade_result(pos, current, label)
                 try:
                     await push_scalp_tp_alert(pos, current, pnl_pct)
                 except Exception as e:
                     log.error("push_scalp_tp_alert: %s", e)
                 closed.append(token_id)
+            elif not pos.tp1_hit and pos.tp1_price > 0 and current >= pos.tp1_price:
+                # TP1 — ferme 60%, laisse courir 40% vers TP2
+                pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
+                log.info("scalp TP1 atteint (60%%): %s +%.1f%%", pos.question[:40], pnl_pct)
+                full_size = pos.size_usd
+                pos.size_usd = round(full_size * 0.60, 4)
+                self._record_trade_result(pos, current, "TP1")
+                pos.size_usd = round(full_size * 0.40, 4)
+                pos.tp1_hit  = True
+                pos.tp_price = pos.tp2_price
+                try:
+                    await push_scalp_tp_alert(pos, current, pnl_pct)
+                except Exception as e:
+                    log.error("push_scalp_tp_alert TP1: %s", e)
             elif current <= pos.sl_price:
                 pnl_pct = (current - pos.entry_price) / pos.entry_price * 100
                 log.info("scalp SL atteint: %s %.1f%%", pos.question[:40], pnl_pct)
