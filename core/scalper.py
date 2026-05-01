@@ -324,7 +324,7 @@ class ScalperTracker:
                 token_id=token_id, side=direction, entry_price=entry_price,
                 tp_price=round(entry_price * (1 + cfg["tp"]), 4),
                 sl_price=round(entry_price * (1 - cfg["sl"]), 4),
-                size_usd=size_usd, chat_ids=[], order_id=order_id,
+                size_usd=size_usd, chat_ids=[c for c in [os.getenv("TELEGRAM_CHAT_ID")] if c], order_id=order_id,
                 signal_type=signal_type,
             )
             self.open_position(token_id, pos)
