@@ -202,7 +202,7 @@ class ScalperTracker:
             async with httpx.AsyncClient(timeout=10.0) as c:
                 r = await c.get(
                     f"{GAMMA_URL}/events",
-                    params={"limit": 300, "active": "true", "closed": "false",
+                    params={"limit": 500, "active": "true", "closed": "false",
                             "order": "volume24hr", "ascending": "false"},
                 )
                 if r.status_code != 200:
@@ -460,8 +460,8 @@ class ScalperTracker:
                     "ts": time.time(),
                 }
 
-            # ── Règle 1 : timing 30s – 5min avant résolution ─────────────────
-            if not (30 <= seconds <= 300):
+            # ── Règle 1 : timing 60s – 1h avant résolution ───────────────────
+            if not (60 <= seconds <= 3600):
                 log.info("R1 skip timing (%.0fs) : %s", seconds, label)
                 continue
 
