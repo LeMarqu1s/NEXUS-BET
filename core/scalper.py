@@ -195,9 +195,9 @@ class ScalperTracker:
         Retourne une liste de dicts compatibles avec scan_cycle (chaque dict
         représente un sub-market extrait de son event parent).
         """
-        SCALP_KEYWORDS = ("up or down", "bitcoin above", "btc above",
-                          "ethereum above", "bitcoin price on", "ethereum price on",
-                          "btc 5 minute", "bitcoin 5 minute")
+        SCALP_KEYWORDS = ("vers le haut ou vers le bas", "up or down", "bitcoin up", "btc up",
+                          "hausse ou", "à la hausse")
+        DURATION_KEYWORDS = ("5 m", "15 m", "1 heure")
         results: list[dict] = []
         seen_ids: set[str] = set()
         try:
@@ -215,6 +215,8 @@ class ScalperTracker:
                 for event in events:
                     title = (event.get("title") or "").lower()
                     if not any(kw in title for kw in SCALP_KEYWORDS):
+                        continue
+                    if not any(dk in title for dk in DURATION_KEYWORDS):
                         continue
                     sub_markets = event.get("markets") or []
                     for m in sub_markets:
@@ -433,7 +435,7 @@ class ScalperTracker:
             # Crypto Up/Down uniquement
             if not any(kw in q_lower for kw in ("bitcoin", "btc", "ethereum", "eth")):
                 continue
-            if "up or down" not in q_lower:
+            if not any(kw in q_lower for kw in ("up or down", "vers le haut ou vers le bas")):
                 continue
 
             minutes = self._minutes_remaining(m)
