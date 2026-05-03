@@ -195,9 +195,7 @@ class ScalperTracker:
         Retourne une liste de dicts compatibles avec scan_cycle (chaque dict
         représente un sub-market extrait de son event parent).
         """
-        SCALP_KEYWORDS = ("vers le haut ou vers le bas", "up or down", "bitcoin up", "btc up",
-                          "hausse ou", "à la hausse")
-        DURATION_KEYWORDS = ("5 m", "15 m", "1 heure")
+        SCALP_KEYWORDS = ("up or down",)
         results: list[dict] = []
         seen_ids: set[str] = set()
         try:
@@ -205,7 +203,7 @@ class ScalperTracker:
                 r = await c.get(
                     f"{GAMMA_URL}/events",
                     params={"limit": 300, "active": "true", "closed": "false",
-                            "order": "volume24hr", "ascending": "false"},
+                            "order": "startDate", "ascending": "false"},
                 )
                 if r.status_code != 200:
                     return []
@@ -215,8 +213,6 @@ class ScalperTracker:
                 for event in events:
                     title = (event.get("title") or "").lower()
                     if not any(kw in title for kw in SCALP_KEYWORDS):
-                        continue
-                    if not any(dk in title for dk in DURATION_KEYWORDS):
                         continue
                     sub_markets = event.get("markets") or []
                     for m in sub_markets:
