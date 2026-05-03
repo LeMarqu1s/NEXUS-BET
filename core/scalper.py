@@ -203,7 +203,7 @@ class ScalperTracker:
                 r = await c.get(
                     f"{GAMMA_URL}/events",
                     params={"limit": 300, "active": "true", "closed": "false",
-                            "order": "startDate", "ascending": "false"},
+                            "order": "volume24hr", "ascending": "false"},
                 )
                 if r.status_code != 200:
                     return []
