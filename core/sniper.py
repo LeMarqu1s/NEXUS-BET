@@ -27,12 +27,12 @@ GAMMA_URL = "https://gamma-api.polymarket.com"
 CLOB_URL = "https://clob.polymarket.com"
 SCAN_INTERVAL = 10          # secondes
 HISTORY_WINDOW = 60         # nb de points conservés (~10min @ 10s)
-VOLUME_SPIKE_MULTIPLIER = 3.0
-MOMENTUM_THRESHOLD = 0.05   # 5%
+VOLUME_SPIKE_MULTIPLIER = 1.5
+MOMENTUM_THRESHOLD = 0.015  # 1.5%
 MOMENTUM_WINDOW_POINTS = 12 # 2min / 10s = 12 points
-SPREAD_THRESHOLD = 0.08     # 8%
+SPREAD_THRESHOLD = 0.02     # 2%
 WHALE_THRESHOLD_USD = 10_000
-MIN_SIGNALS_REQUIRED = 2    # Confluence : au moins 2 signaux pour trader
+MIN_SIGNALS_REQUIRED = 1    # 1 signal suffit pour entrer
 
 # ── Anti-overtrading ──────────────────────────────────────────────────────────
 MAX_CONCURRENT_POSITIONS = 3
