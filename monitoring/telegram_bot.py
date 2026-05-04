@@ -1432,48 +1432,44 @@ async def cmd_scalp_settings(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cmd_scalp_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/scalp_stats — Comparatif SCALPER vs SNIPER sur 7 jours."""
+    """/scalp_stats — Stats scalper aujourd'hui et cette semaine."""
     try:
         from core.scalper import get_tracker, load_scalp_settings
-        from core.sniper import get_sniper
         L = "━━━━━━━━━━━━━━━"
-        sc = get_tracker().get_stats(days=7)
-        sn = get_sniper().get_sim_stats(days=7)
-        cfg = load_scalp_settings()
-        total_trades = sc["trades"] + sn["trades"]
-        total_pnl = round(sc["total_pnl"] + sn["total_pnl"], 2)
-        lines = [f"📊 <b>COMPARATIF 7 JOURS [SIM]</b>", L]
-        # Scalper
-        if sc["trades"] > 0:
-            lines += [
-                f"<code>🔪 SCALPER BTC/ETH",
-                f"Trades fermés  {sc['trades']}",
-                f"Win rate       {sc['win_rate']:.0f}%",
-                f"P&L total      {'%+.2f' % sc['total_pnl']} USDC</code>",
-            ]
-        else:
-            lines.append(f"<code>🔪 SCALPER BTC/ETH\nAucun trade fermé</code>")
-        lines.append(L)
-        # Sniper
-        if sn["trades"] > 0:
-            lines += [
-                f"<code>🎯 SNIPER CLASSIQUE",
-                f"Trades fermés  {sn['trades']}",
-                f"Win rate       {sn['win_rate']:.0f}%",
-                f"P&L total      {'%+.2f' % sn['total_pnl']} USDC</code>",
-            ]
-        else:
-            lines.append(f"<code>🎯 SNIPER CLASSIQUE\nAucun trade fermé</code>")
-        lines.append(L)
-        # Total
-        lines += [
-            f"<code>📈 TOTAL",
-            f"Trades         {total_trades}",
-            f"P&L combiné    {'%+.2f' % total_pnl} USDC</code>",
-            L,
-            f"<code>TP scalp  +{cfg['tp']*100:.0f}%  |  SL scalp -{cfg['sl']*100:.0f}%</code>",
-        ]
-        await _safe_reply(update, "\n".join(lines))
+
+        history = get_tracker()._trade_history
+        cfg     = load_scalp_settings()
+
+        now_utc       = datetime.now(timezone.utc)
+        today_cutoff  = datetime(now_utc.year, now_utc.month, now_utc.day,
+                                 tzinfo=timezone.utc).timestamp()
+        week_cutoff   = today_cutoff - now_utc.weekday() * 86400  # lundi 00:00 UTC
+
+        def _stats(trades: list) -> dict:
+            if not trades:
+                return {"trades": 0, "win_rate": 0.0, "total_pnl": 0.0}
+            wins = sum(1 for t in trades if t.get("pnl_usd", 0) > 0)
+            return {
+                "trades":    len(trades),
+                "win_rate":  round(wins / len(trades) * 100, 1),
+                "total_pnl": round(sum(t.get("pnl_usd", 0) for t in trades), 2),
+            }
+
+        def _fmt(s: dict) -> str:
+            wr  = f"{s['win_rate']:.0f}%" if s["trades"] > 0 else "N/A"
+            pnl = f"{s['total_pnl']:+.2f} USDC"
+            return f"Trades     {s['trades']}\nWin rate   {wr}\nP&L        {pnl}"
+
+        td = _stats([t for t in history if t.get("ts", 0) >= today_cutoff])
+        wk = _stats([t for t in history if t.get("ts", 0) >= week_cutoff])
+
+        msg = (
+            f"📊 <b>SCALP STATS</b>\n{L}\n"
+            f"<code>📅 AUJOURD'HUI\n{_fmt(td)}</code>\n{L}\n"
+            f"<code>📆 CETTE SEMAINE\n{_fmt(wk)}</code>\n{L}\n"
+            f"<code>TP  +{cfg['tp']*100:.0f}%  |  SL  -{cfg['sl']*100:.0f}%</code>"
+        )
+        await _safe_reply(update, msg)
     except Exception as e:
         log.exception("cmd_scalp_stats: %s", e)
         await _safe_reply(update, f"📊 <b>SCALP STATS</b>\n━━━━━━━━━━━━━━━\n<code>ERREUR — {e}</code>")
