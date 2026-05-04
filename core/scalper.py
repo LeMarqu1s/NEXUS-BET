@@ -367,6 +367,33 @@ class ScalperTracker:
             "capital_after": cap["capital"],
         })
         save_scalp_history(self._trade_history)
+        # ── Supabase write (fire-and-forget, jamais bloquant) ─────────────────
+        try:
+            _sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            _sb_key = os.getenv("SUPABASE_SERVICE_KEY")
+            if _sb_url and _sb_key:
+                from datetime import datetime, timezone as _tz
+                _payload = {
+                    "token_id":    pos.token_id,
+                    "side":        pos.side,
+                    "entry_price": pos.entry_price,
+                    "exit_price":  exit_price,
+                    "pnl_usd":     pnl_usd,
+                    "result":      exit_reason,
+                    "opened_at":   datetime.fromtimestamp(pos.opened_at, tz=_tz.utc).isoformat(),
+                    "closed_at":   datetime.now(_tz.utc).isoformat(),
+                }
+                with httpx.Client(timeout=5.0) as _c:
+                    _r = _c.post(
+                        f"{_sb_url}/rest/v1/scalp_trades",
+                        headers={"apikey": _sb_key, "Authorization": f"Bearer {_sb_key}",
+                                 "Content-Type": "application/json", "Prefer": "return=minimal"},
+                        json=_payload,
+                    )
+                    if _r.status_code not in (200, 201):
+                        log.warning("scalp_trades insert: %d %s", _r.status_code, _r.text[:80])
+        except Exception as _e:
+            log.error("scalp_trades Supabase write failed (RAM ok): %s", _e)
         self._auto_adjust_settings()
 
     def _auto_adjust_settings(self) -> None:
@@ -388,6 +415,42 @@ class ScalperTracker:
                      win_rate * 100, old_tp * 100, tp * 100)
 
     def get_stats(self, days: int = 7) -> dict:
+        # ── Supabase read (fallback RAM si indisponible) ───────────────────────
+        try:
+            _sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            _sb_key = os.getenv("SUPABASE_SERVICE_KEY")
+            if _sb_url and _sb_key:
+                from datetime import datetime, timezone as _tz
+                _cutoff_iso = datetime.fromtimestamp(
+                    time.time() - days * 86400, tz=_tz.utc
+                ).isoformat()
+                with httpx.Client(timeout=5.0) as _c:
+                    _r = _c.get(
+                        f"{_sb_url}/rest/v1/scalp_trades",
+                        headers={"apikey": _sb_key, "Authorization": f"Bearer {_sb_key}"},
+                        params={"closed_at": f"gte.{_cutoff_iso}",
+                                "select": "*", "order": "closed_at.desc"},
+                    )
+                if _r.status_code == 200:
+                    _rows = _r.json()
+                    if isinstance(_rows, list) and _rows:
+                        _wins = sum(1 for r in _rows if (r.get("pnl_usd") or 0) > 0)
+                        _pnl  = sum(r.get("pnl_usd") or 0 for r in _rows)
+                        return {
+                            "trades":    len(_rows),
+                            "win_rate":  round(_wins / len(_rows) * 100, 1),
+                            "total_pnl": round(_pnl, 2),
+                            "best":  max(_rows, key=lambda r: r.get("pnl_usd") or 0),
+                            "worst": min(_rows, key=lambda r: r.get("pnl_usd") or 0),
+                            "by_signal": {},
+                            "capital":          self._capital_data["capital"],
+                            "total_withdrawn":  self._capital_data.get("total_withdrawn", 0.0),
+                            "total_reinvested": self._capital_data.get("total_reinvested", 0.0),
+                            "next_trade_size":  compute_trade_size(self._capital_data["capital"]),
+                        }
+        except Exception as _e:
+            log.debug("get_stats Supabase indisponible, RAM fallback: %s", _e)
+        # ── RAM fallback ──────────────────────────────────────────────────────
         cutoff = time.time() - days * 86400
         recent = [t for t in self._trade_history if t.get("ts", 0) > cutoff]
         if not recent:
