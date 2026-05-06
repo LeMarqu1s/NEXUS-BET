@@ -316,6 +316,12 @@ class ScalperTracker:
         size_usd = compute_trade_size(self._capital_data["capital"])
         token_id    = sig.token_id_yes if direction == "YES" else sig.token_id_no
         entry_price = sig.yes_price    if direction == "YES" else sig.no_price
+        _tp  = round(min(entry_price * 1.15, 0.99), 4)
+        _tp1 = round(min(entry_price * 1.08, 0.99), 4)
+        if _tp - entry_price < 0.02:
+            log.info("scalp skip: marge TP insuffisante (%.3f→%.3f < 2¢) : %s",
+                     entry_price, _tp, sig.question[:35])
+            return None
         order_cfg = OrderConfig(
             market_id=sig.market_id, outcome=direction, side="BUY",
             size_usd=size_usd, limit_price=entry_price,
@@ -326,12 +332,12 @@ class ScalperTracker:
             pos = ScalpPosition(
                 market_id=sig.market_id, question=sig.question,
                 token_id=token_id, side=direction, entry_price=entry_price,
-                tp_price=round(entry_price * 1.15, 4),
+                tp_price=_tp,
                 sl_price=round(entry_price * (1 - cfg["sl"]), 4),
                 size_usd=size_usd, chat_ids=[c for c in [os.getenv("TELEGRAM_CHAT_ID")] if c], order_id=order_id,
                 signal_type=signal_type, end_ts=sig.end_ts,
-                tp1_price=round(entry_price * 1.08, 4),
-                tp2_price=round(entry_price * 1.15, 4),
+                tp1_price=_tp1,
+                tp2_price=_tp,
             )
             self.open_position(token_id, pos)
             log.info("scalp auto-exec: %s %s @ %.3f [%s]",
