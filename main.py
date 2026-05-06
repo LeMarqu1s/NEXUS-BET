@@ -176,6 +176,68 @@ async def run_scalper():
             await asyncio.sleep(10)
 
 
+_MIGRATION_SQL = """
+CREATE TABLE IF NOT EXISTS bot_config (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS scalp_trades (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  token_id    TEXT,
+  side        TEXT,
+  entry_price FLOAT,
+  exit_price  FLOAT,
+  pnl_usd     FLOAT,
+  result      TEXT,
+  opened_at   TIMESTAMPTZ,
+  closed_at   TIMESTAMPTZ
+);
+"""
+
+
+async def _ensure_supabase_tables() -> None:
+    """Crée bot_config et scalp_trades si absentes. Appelé à chaque démarrage."""
+    import httpx
+    sb_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    sb_key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not sb_url or not sb_key:
+        log.warning("_ensure_supabase_tables: SUPABASE_URL/KEY manquants — skip")
+        return
+    # Vérifie si bot_config existe déjà
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            r = await c.get(f"{sb_url}/rest/v1/bot_config",
+                            headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                            params={"limit": "1"})
+        if r.status_code == 200:
+            log.info("Supabase: tables OK")
+            return
+        log.info("Supabase: bot_config absente (status %d) — tentative de création", r.status_code)
+    except Exception as e:
+        log.warning("_ensure_supabase_tables check: %s", e)
+        return
+    # Tente la création via Management API (fonctionne avec service key pour project owners)
+    ref = sb_url.replace("https://", "").split(".")[0]
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            r = await c.post(
+                f"https://api.supabase.com/v1/projects/{ref}/database/query",
+                headers={"Authorization": f"Bearer {sb_key}",
+                         "Content-Type": "application/json"},
+                json={"query": _MIGRATION_SQL.strip()},
+            )
+        if r.status_code in (200, 201):
+            log.info("Supabase: tables bot_config + scalp_trades créées")
+        else:
+            log.warning(
+                "Supabase migration échouée (%d) — exécute ce SQL dans Supabase > SQL Editor :\n%s",
+                r.status_code, _MIGRATION_SQL,
+            )
+    except Exception as e:
+        log.warning("_ensure_supabase_tables create: %s", e)
+
+
 async def main():
     # ── Architecture IA ────────────────────────────────────────────────────────
     # Boucles temps réel (sniper, scanner) : ZÉRO appel Claude/Anthropic.
@@ -184,6 +246,7 @@ async def main():
     #   • /agents Telegram    → lecture JSON ai_debates_log (aucun appel live)
     # ──────────────────────────────────────────────────────────────────────────
     log.info("NEXUS BET starting...")
+    await _ensure_supabase_tables()
     from monitoring.env_config import restore_simulation_mode
     restore_simulation_mode()
     await test_clob_connection()
