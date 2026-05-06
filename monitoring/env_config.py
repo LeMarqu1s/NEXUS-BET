@@ -77,6 +77,8 @@ def set_env_value(key: str, value: str | int | float | bool) -> bool:
         _refresh_settings()
         SCANNER_RESTART_REQUESTED = True
         log.info("env_config: %s=%s", key, val_str)
+        if key == "SIMULATION_MODE":
+            _sb_save_mode(val_str)
         return True
     except Exception as e:
         log.warning("env_config set_env_value error: %s", e)
@@ -103,3 +105,51 @@ def request_scanner_restart() -> bool:
         SCANNER_RESTART_REQUESTED = False
         return True
     return False
+
+
+# ── Persistance du mode SIM/LIVE dans Supabase ───────────────────────────────
+
+def _sb_save_mode(value: str) -> None:
+    """Upsert SIMULATION_MODE dans la table bot_config de Supabase."""
+    try:
+        import os, httpx
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
+        if not url or not key:
+            return
+        with httpx.Client(timeout=5.0) as c:
+            c.post(
+                f"{url}/rest/v1/bot_config",
+                headers={"apikey": key, "Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json",
+                         "Prefer": "resolution=merge-duplicates"},
+                json={"key": "SIMULATION_MODE", "value": value},
+            )
+        log.info("env_config: SIMULATION_MODE=%s persisté dans Supabase", value)
+    except Exception as e:
+        log.warning("_sb_save_mode: %s", e)
+
+
+def restore_simulation_mode() -> None:
+    """Lit SIMULATION_MODE depuis Supabase au démarrage et l'applique à os.environ."""
+    try:
+        import os, httpx
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
+        if not url or not key:
+            return
+        with httpx.Client(timeout=5.0) as c:
+            r = c.get(
+                f"{url}/rest/v1/bot_config",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                params={"key": "eq.SIMULATION_MODE", "select": "value", "limit": "1"},
+            )
+        if r.status_code == 200:
+            rows = r.json()
+            if rows and isinstance(rows, list):
+                val = rows[0].get("value", "true")
+                os.environ["SIMULATION_MODE"] = val
+                _refresh_settings()
+                log.info("restore_simulation_mode: SIMULATION_MODE=%s restauré depuis Supabase", val)
+    except Exception as e:
+        log.warning("restore_simulation_mode: %s (Railway env var utilisé)", e)

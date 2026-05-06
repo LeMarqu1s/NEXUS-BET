@@ -184,6 +184,8 @@ async def main():
     #   • /agents Telegram    → lecture JSON ai_debates_log (aucun appel live)
     # ──────────────────────────────────────────────────────────────────────────
     log.info("NEXUS BET starting...")
+    from monitoring.env_config import restore_simulation_mode
+    restore_simulation_mode()
     await test_clob_connection()
 
     loop = asyncio.get_running_loop()

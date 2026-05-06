@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Migration : crée la table scalp_trades dans Supabase via Management API.
+Migration : crée les tables scalp_trades et bot_config dans Supabase via Management API.
 Usage : python scripts/create_scalp_trades.py
 """
 import os
@@ -17,15 +17,21 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 SQL = """
 CREATE TABLE IF NOT EXISTS scalp_trades (
-  id         UUID          DEFAULT gen_random_uuid() PRIMARY KEY,
-  token_id   TEXT,
-  side       TEXT,
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  token_id    TEXT,
+  side        TEXT,
   entry_price FLOAT,
   exit_price  FLOAT,
-  pnl_usd    FLOAT,
-  result     TEXT,
-  opened_at  TIMESTAMPTZ,
-  closed_at  TIMESTAMPTZ
+  pnl_usd     FLOAT,
+  result      TEXT,
+  opened_at   TIMESTAMPTZ,
+  closed_at   TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS bot_config (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
 );
 """
 
@@ -48,7 +54,7 @@ def run() -> None:
         )
 
     if r.status_code in (200, 201):
-        print("✅ Table scalp_trades créée (ou déjà existante)")
+        print("✅ Tables scalp_trades + bot_config créées (ou déjà existantes)")
     else:
         print(f"❌ Management API {r.status_code}: {r.text[:300]}")
         print()
