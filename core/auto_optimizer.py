@@ -423,7 +423,8 @@ async def run_auto_optimizer() -> None:
                 else:
                     log.info("Auto-optimizer : aucun ajustement nécessaire")
 
-                await _send_report(stats, changes, new_cfg, current_capital=current_capital)
+                if changes:
+                    await _send_report(stats, changes, new_cfg, current_capital=current_capital)
             else:
                 log.info("Auto-optimizer : aucun signal — cycle ignoré")
 
