@@ -29,6 +29,52 @@ GAMMA_FETCH_TIMEOUT = 15.0
 WS_FAIL_THRESHOLD = 3
 WS_TOP_MARKETS = 20       # Focus WS subscription on top N most liquid markets (<500ms signals)
 
+PRICE_MIN = 0.12   # exclure marchés quasi-résolus sans marge rentable
+PRICE_MAX = 0.88
+
+_notified_signals: dict[str, float] = {}  # anti-spam: key → last_alert_ts
+
+
+async def _auto_alert_signal(sig: EdgeSignal) -> None:
+    """Envoie alerte Telegram si edge > 3% et signal pas déjà envoyé dans l'heure."""
+    import os
+    edge_pct = (sig.edge_pct or 0) * 100
+    if edge_pct <= 3:
+        return
+    key = f"{sig.market_id}_{sig.side}"
+    now = time.time()
+    if now - _notified_signals.get(key, 0) < 3600:
+        return
+    _notified_signals[key] = now
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+
+    question = (sig.metadata.get("question") or sig.market_id)[:60]
+    price = sig.polymarket_price
+    text = (
+        f"🎯 <b>SIGNAL DÉTECTÉ</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"<code>Marché : {question}\n"
+        f"{sig.side} @ ${price:.3f}  EDGE +{edge_pct:.1f}%</code>"
+    )
+    reply_markup = {"inline_keyboard": [[
+        {"text": "BUY $5", "callback_data": f"scan_buy:{sig.market_id}:{sig.side}:{price:.4f}"},
+        {"text": "PASS",   "callback_data": "scan_pass"},
+    ]]}
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            await c.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": text,
+                      "parse_mode": "HTML", "reply_markup": reply_markup},
+            )
+        logger.info("Auto-alert: %s %s edge=%.1f%%", sig.side, question[:35], edge_pct)
+    except Exception as e:
+        logger.warning("_auto_alert_signal: %s", e)
+
 
 def _mid_from_book(bids: list, asks: list) -> Optional[float]:
     """Compute mid price from bids/asks."""
@@ -337,7 +383,7 @@ class WebSocketScanner:
                             price = _mid_from_book(
                                 ob.get("bids") or [], ob.get("asks") or []
                             )
-                        if price is None or price <= 0.01 or price >= 0.99:
+                        if price is None or price <= PRICE_MIN or price >= PRICE_MAX:
                             continue
                         sig = self.edge_engine.compute_edge(
                             market, token_id, side, price, ob
@@ -349,6 +395,7 @@ class WebSocketScanner:
                         if sig:
                             logger.info("Storing signal: %s", q_short)
                             signals_found.append(sig)
+                            await _auto_alert_signal(sig)
                             if self.on_signal:
                                 if asyncio.iscoroutinefunction(self.on_signal):
                                     await self.on_signal(sig)
@@ -456,13 +503,14 @@ class WebSocketScanner:
                 price = _extract_market_price(market, side)
                 if price is None:
                     price = _mid_from_book(bids, asks)
-                if price is None or price <= 0.01 or price >= 0.99:
+                if price is None or price <= PRICE_MIN or price >= PRICE_MAX:
                     return
                 ob = _orderbook_from_event(bids, asks)
                 sig = self.edge_engine.compute_edge(market, asset_id, side, price, ob)
                 if sig:
                     n_markets = len(self._token_to_market) // 2
                     _write_scan_ts(n_markets, [sig])
+                    await _auto_alert_signal(sig)
                 if sig and self.on_signal:
                     try:
                         if asyncio.iscoroutinefunction(self.on_signal):
@@ -490,12 +538,13 @@ class WebSocketScanner:
                         except (ValueError, TypeError):
                             pass
                 price = new_price or _extract_market_price(market, side)
-                if price and 0.01 < price < 0.99:
+                if price and PRICE_MIN < price < PRICE_MAX:
                     ob: dict = {"bids": [], "asks": []}
                     sig = self.edge_engine.compute_edge(market, asset_id, side, price, ob)
                     if sig:
                         n_markets = len(self._token_to_market) // 2
                         _write_scan_ts(n_markets, [sig])
+                        await _auto_alert_signal(sig)
                         if self.on_signal:
                             try:
                                 if asyncio.iscoroutinefunction(self.on_signal):

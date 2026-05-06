@@ -2370,6 +2370,44 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await edit(f"<b>❌ ERREUR</b>\n<code>{str(e)[:80]}</code>", None)
         return
 
+    if data == "scan_pass":
+        await edit(f"<b>✕ SIGNAL IGNORÉ</b>\n{L}", None)
+        return
+
+    if data.startswith("scan_buy:"):
+        parts = data.split(":")
+        # scan_buy:{market_id}:{side}:{price}
+        if len(parts) < 4:
+            await edit(f"<b>❌ Données invalides</b>", None)
+            return
+        scan_market_id = parts[1]
+        scan_side      = parts[2]
+        try:
+            scan_price = float(parts[3])
+        except ValueError:
+            scan_price = 0.5
+        try:
+            from execution.order_manager import OrderManager, OrderConfig
+            order_cfg = OrderConfig(
+                market_id=scan_market_id, outcome=scan_side, side="BUY",
+                size_usd=5.0, limit_price=scan_price,
+                take_profit_pct=0.40, stop_loss_pct=0.25,
+            )
+            order_id = await OrderManager().place_limit_order(order_cfg)
+            status = "✅ ORDRE PLACÉ" if order_id else "🔵 SIM — LOG OK"
+            await edit(
+                f"<b>{status}</b>\n{L}\n"
+                f"<code>MARCHÉ  {scan_market_id[:38]}\n"
+                f"SIDE    {scan_side}\n"
+                f"PRIX    ${scan_price:.3f}\n"
+                f"MONTANT $5</code>",
+                None,
+            )
+        except Exception as e:
+            log.exception("scan_buy callback: %s", e)
+            await edit(f"<b>❌ ERREUR</b>\n{L}\n<code>{str(e)[:80]}</code>", None)
+        return
+
     if data.startswith("ignore_"):
         await edit(f"<b>✕ SIGNAL IGNORÉ</b>\n{L}", _main_keyboard())
         return
