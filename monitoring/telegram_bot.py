@@ -968,7 +968,6 @@ def _format_market_text(m: dict) -> tuple[str, InlineKeyboardMarkup]:
 def _get_settings_text() -> str:
     try:
         from config.settings import settings
-        cap = getattr(settings, "POLYMARKET_CAPITAL_USD", 1000)
         sim = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
         try:
             from monitoring.telegram_wealth_manager import get_auto_trade
@@ -980,9 +979,23 @@ def _get_settings_text() -> str:
         max_pos = os.getenv("AUTO_TRADE_MAX_POSITIONS", "3")
         drawdown = os.getenv("AUTO_TRADE_DAILY_DRAWDOWN_LIMIT", "20")
         confirm = os.getenv("AUTO_TRADE_CONFIRM_BUY", "true").lower() in ("true", "1", "yes")
+        # Live USDC balance from Polygon RPC (USDC contract, 6 decimals)
+        try:
+            _wallet = "0xbE5acfeaF005e2C683Cb78caFc74Bb8c34829450"
+            _data = "0x70a08231" + _wallet[2:].lower().zfill(64)
+            with httpx.Client(timeout=4.0) as _hc:
+                _r = _hc.post("https://1rpc.io/matic", json={
+                    "jsonrpc": "2.0", "method": "eth_call",
+                    "params": [{"to": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "data": _data}, "latest"],
+                    "id": 1,
+                })
+            _res = _r.json().get("result", "")
+            live_cap = f"${int(_res, 16) / 1_000_000:.2f}" if _res and _res not in ("0x", "0x0") else "N/A"
+        except Exception:
+            live_cap = "N/A"
         return (
             f"<b>⚙️ SETTINGS</b>\n{L}\n"
-            f"<code>CAPITAL     ${cap:,.0f}\n"
+            f"<code>CAPITAL     {live_cap}\n"
             f"SIMULATION  {'ON' if sim else 'OFF'}\n"
             f"AUTO-TRADE  {'ON' if at else 'OFF'}\n"
             f"MAX POS     {max_pos}  DRAWDOWN {drawdown}%\n"
