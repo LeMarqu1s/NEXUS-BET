@@ -710,9 +710,10 @@ class ScalperTracker:
                                 cfg["size_usd"] = compute_trade_size(self._capital_data["capital"])
                                 entry = sig.yes_price if sig.direction == "YES" else sig.no_price
                                 await push_scalp_executed(sig, sig.direction, entry, order_id, cfg)
-                            elif os.getenv("SIMULATION_MODE", "true").lower() == "false":
+                        except Exception as e:
+                            log.error("auto_execute: %s", e)
+                            if os.getenv("SIMULATION_MODE", "true").lower() == "false":
                                 entry = sig.yes_price if sig.direction == "YES" else sig.no_price
-                                log.error("[LIVE] ordre rejeté: %s %s @ %.3f", sig.direction, sig.question[:35], entry)
                                 _tok = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
                                 _cid = os.getenv("TELEGRAM_CHAT_ID")
                                 if _tok and _cid:
@@ -722,15 +723,13 @@ class ScalperTracker:
                                         f"━━━━━━━━━━━━━━━\n"
                                         f"<code>{_html.escape(sig.question[:50])}\n"
                                         f"{sig.direction} @ {entry:.3f}</code>\n"
-                                        f"<i>Raison : voir logs Railway</i>"
+                                        f"<i>Raison : {_html.escape(str(e)[:120])}</i>"
                                     )
                                     async with httpx.AsyncClient(timeout=5.0) as _c:
                                         await _c.post(
                                             f"https://api.telegram.org/bot{_tok}/sendMessage",
                                             json={"chat_id": _cid, "text": _txt, "parse_mode": "HTML"},
                                         )
-                        except Exception as e:
-                            log.error("auto_execute: %s", e)
 
                         self.mark_alerted(sig.market_id)
                         self.mark_alerted(sig.question)

@@ -115,7 +115,7 @@ class OrderManager:
             return order_id
         except Exception as e:
             log.exception("[LIVE] place_limit_order failed: %s", e)
-            return None
+            raise
 
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order."""
