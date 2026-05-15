@@ -404,7 +404,8 @@ class PolymarketSniper:
     # ── Boucle principale ─────────────────────────────────────────────────────
 
     async def run_forever(self) -> None:
-        """Boucle principale du sniper — scan toutes les 10 secondes (SIM uniquement)."""
+        """Boucle principale du sniper — désactivé."""
+        return
         log.info("🎯 Sniper SIM démarré — scanning every %ds | VOLUME_SPIKE x%.0f | MOMENTUM >%.0f%% | SPREAD >%.0f%% | WHALE >$%.0f",
                  SCAN_INTERVAL, VOLUME_SPIKE_MULTIPLIER, MOMENTUM_THRESHOLD * 100,
                  SPREAD_THRESHOLD * 100, WHALE_THRESHOLD_USD)

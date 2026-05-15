@@ -197,7 +197,8 @@ class ScalperTracker:
         Filtre côté client : garder uniquement les events expirant dans 60s-7200s.
         """
         from datetime import datetime, timezone as _tz
-        SCALP_KEYWORDS = ("up or down",)
+        SCALP_TICKERS = ("btc-updown-5m-", "eth-updown-5m-",
+                         "btc-updown-15m-", "eth-updown-15m-")
         now_ts = time.time()
         results: list[dict] = []
         seen_ids: set[str] = set()
@@ -217,8 +218,8 @@ class ScalperTracker:
                 if isinstance(events, dict):
                     events = events.get("data", [])
                 for event in events:
-                    title = (event.get("title") or "").lower()
-                    if not any(kw in title for kw in SCALP_KEYWORDS):
+                    ticker = (event.get("ticker") or event.get("slug") or "").lower()
+                    if not any(ticker.startswith(t) for t in SCALP_TICKERS):
                         continue
                     # Filtre temporel sur l'event : expiration dans 60s–7200s
                     end_raw = event.get("endDate") or ""

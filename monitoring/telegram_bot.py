@@ -996,7 +996,7 @@ def _get_settings_text() -> str:
         return (
             f"<b>⚙️ SETTINGS</b>\n{L}\n"
             f"<code>CAPITAL     {live_cap}\n"
-            f"SIMULATION  {'ON' if sim else 'OFF'}\n"
+            f"MODE        {'🟡 SIMULATION' if sim else '🔴 LIVE RÉEL'}\n"
             f"AUTO-TRADE  {'ON' if at else 'OFF'}\n"
             f"MAX POS     {max_pos}  DRAWDOWN {drawdown}%\n"
             f"CONFIRM BUY {'YES' if confirm else 'NO'}\n"

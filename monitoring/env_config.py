@@ -149,7 +149,14 @@ def restore_simulation_mode() -> None:
             if rows and isinstance(rows, list):
                 val = rows[0].get("value", "true")
                 os.environ["SIMULATION_MODE"] = val
-                _refresh_settings()
+                # Recharger le module settings SANS load_dotenv pour éviter
+                # qu'un éventuel .env override la valeur Supabase qu'on vient de poser.
+                try:
+                    import config.settings as _sm
+                    _sm.SETTINGS = _sm.load_settings()
+                    _sm.settings._s = _sm.SETTINGS
+                except Exception:
+                    pass
                 log.info("restore_simulation_mode: SIMULATION_MODE=%s restauré depuis Supabase", val)
     except Exception as e:
         log.warning("restore_simulation_mode: %s (Railway env var utilisé)", e)
