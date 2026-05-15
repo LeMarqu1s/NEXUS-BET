@@ -192,18 +192,24 @@ class ScalperTracker:
     async def _fetch_markets(self) -> list[dict]:
         """
         Récupère les marchés crypto scalp-able via l'endpoint /events.
-        Retourne une liste de dicts compatibles avec scan_cycle (chaque dict
-        représente un sub-market extrait de son event parent).
+        Trie par endDate croissant pour remonter les marchés 5min proches de
+        l'expiration (faible volume, invisibles dans un tri par volume24hr).
+        Filtre côté client : garder uniquement les events expirant dans 60s-7200s.
         """
+        from datetime import datetime, timezone as _tz
         SCALP_KEYWORDS = ("up or down",)
+        now_ts = time.time()
         results: list[dict] = []
         seen_ids: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
+                from datetime import datetime, timezone as _tz
+                now_iso = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 r = await c.get(
                     f"{GAMMA_URL}/events",
                     params={"limit": 500, "active": "true", "closed": "false",
-                            "order": "volume24hr", "ascending": "false"},
+                            "order": "endDate", "ascending": "true",
+                            "end_date_min": now_iso},
                 )
                 if r.status_code != 200:
                     return []
@@ -214,20 +220,31 @@ class ScalperTracker:
                     title = (event.get("title") or "").lower()
                     if not any(kw in title for kw in SCALP_KEYWORDS):
                         continue
+                    # Filtre temporel sur l'event : expiration dans 60s–7200s
+                    end_raw = event.get("endDate") or ""
+                    if end_raw:
+                        try:
+                            end_ts = datetime.fromisoformat(
+                                str(end_raw).replace("Z", "+00:00")
+                            ).timestamp()
+                            secs = end_ts - now_ts
+                            if secs < 60 or secs > 7200:
+                                continue
+                        except Exception:
+                            pass
                     sub_markets = event.get("markets") or []
                     for m in sub_markets:
                         mid = str(m.get("conditionId") or m.get("id") or "")
                         if not mid or mid in seen_ids:
                             continue
-                        # Injecter endDate du parent si absent du sub-market
-                        if not m.get("endDate") and event.get("endDate"):
+                        if not m.get("endDate") and end_raw:
                             m = dict(m)
-                            m["endDate"] = event["endDate"]
+                            m["endDate"] = end_raw
                         seen_ids.add(mid)
                         results.append(m)
         except Exception as e:
             log.warning("_fetch_markets: %s", e)
-        log.debug("_fetch_markets: %d sub-marchés crypto extraits", len(results))
+        log.info("_fetch_markets: %d sub-marchés crypto extraits (fenêtre 1min-2h)", len(results))
         return results
 
     def _minutes_remaining(self, market: dict) -> Optional[float]:
